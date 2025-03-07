@@ -1,25 +1,5 @@
 /* Styles for the Shadertoy editor */
 
-
-.shader-test-ui {
-    position: fixed;
-    top: 70px;
-    right: 10px;
-    z-index: 1000;
-    background-color: rgba(0,0,0,0.8);
-    border-radius: 5px;
-    width: 400px;
-    padding: 15px;
-    color: white;
-    font-family: sans-serif;
-    box-shadow: 0 0 10px rgba(0,0,0,0.5);
-    /* Change this line to make the editor visible by default */
-    transform: translateX(0) !important; 
-    transition: transform 0.3s ease;
-    max-height: 80vh;
-    overflow-y: auto;
-}
-
 .shader-editor-header {
     margin-bottom: 10px;
     border-bottom: 1px solid #444;
@@ -111,25 +91,41 @@
     display: none;
 }
 
-.toggle-shader-ui {
+
+/* Simple sidebar styling */
+.shader-test-ui {
     position: fixed;
-    top: 10px;
-    right: 10px;
-    z-index: 1001;
-    background: #333;
-    color: white;
-    border: none;
-    border-radius: 3px;
-    padding: 8px 12px;
-    cursor: pointer;
-    font-weight: bold;
-    transition: background 0.2s;
+    top: 0;
+    right: 0;
+    width: 350px;
+    height: 100vh;
+    background-color: rgba(20, 20, 20, 0.9);
+    color: #eee;
+    padding: 15px;
+    box-shadow: -2px 0 10px rgba(0, 0, 0, 0.5);
+    overflow-y: auto;
+    transition: transform 0.3s ease;
+    z-index: 100;
+    transform: translateX(100%); /* Start closed (off-screen) */
 }
 
-.toggle-shader-ui:hover {
-    background: #555;
+.shader-test-ui.active {
+    transform: translateX(0); /* Open (on-screen) */
+}
+
+.toggle-shader-ui {
+    position: fixed;
+    top: 15px;
+    right: 15px;
+    z-index: 101;
+    padding: 10px;
+    background-color: rgba(60, 60, 60, 0.8);
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
 }
 
 .toggle-shader-ui.active {
-    background: #4CAF50;
+    background-color: rgba(80, 80, 255, 0.8);
 }

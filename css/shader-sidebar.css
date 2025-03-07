@@ -1,0 +1,192 @@
+/* Shader Editor Sidebar Layout */
+.shader-ui-wrapper {
+    /* Wrapper to keep related elements together */
+    position: relative;
+    z-index: 100;
+}
+
+.shader-test-ui {
+    position: fixed;
+    top: 0;
+    right: 0;
+    width: 350px;
+    height: 100vh;
+    background-color: rgba(20, 20, 20, 0.95);
+    color: #eee;
+    padding: 15px;
+    box-sizing: border-box;
+    box-shadow: -2px 0 10px rgba(0, 0, 0, 0.5);
+    overflow-y: auto;
+    transition: transform 0.3s ease-out;
+    z-index: 100;
+    transform: translateX(100%); /* Start hidden (off-screen) */
+}
+
+.shader-test-ui.open {
+    transform: translateX(0); /* Visible (on-screen) */
+}
+
+.toggle-shader-ui {
+    position: fixed;
+    top: 15px;
+    right: 15px;
+    z-index: 101;
+    width: 40px;
+    height: 40px;
+    background-color: rgba(40, 40, 40, 0.85);
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background-color 0.2s;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+}
+
+.toggle-shader-ui:focus {
+    outline: 2px solid rgba(100, 180, 255, 0.8);
+    outline-offset: 2px;
+}
+
+.toggle-shader-ui .fa {
+    font-size: 18px;
+}
+
+.toggle-shader-ui:hover {
+    background-color: rgba(60, 60, 60, 0.95);
+}
+
+.toggle-shader-ui.active {
+    background-color: rgba(80, 100, 200, 0.9);
+}
+
+.shader-editor-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 15px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    padding-bottom: 10px;
+}
+
+.shader-editor-header h3 {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 500;
+}
+
+.sample-container {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 15px;
+}
+
+.sample-button {
+    padding: 6px 10px;
+    background-color: #444;
+    color: white;
+    border: none;
+    border-radius: 3px;
+    cursor: pointer;
+    font-size: 12px;
+    transition: background-color 0.2s;
+}
+
+.sample-button:hover {
+    background-color: #555;
+}
+
+.sample-button:focus {
+    outline: 2px solid rgba(100, 180, 255, 0.8);
+    outline-offset: 1px;
+}
+
+.shader-editor-textarea {
+    width: 100%;
+    min-height: 300px;
+    padding: 10px;
+    background-color: #222;
+    color: #eee;
+    border: 1px solid #444;
+    border-radius: 4px;
+    font-family: monospace;
+    font-size: 14px;
+    margin-bottom: 15px;
+    resize: vertical;
+    box-sizing: border-box;
+}
+
+.shader-editor-textarea:focus {
+    border-color: #666;
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(100, 180, 255, 0.3);
+}
+
+.shader-editor-controls {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 15px;
+}
+
+.shader-editor-button {
+    padding: 8px 15px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: all 0.2s;
+    flex: 1;
+}
+
+.shader-editor-button:focus {
+    outline: 2px solid rgba(100, 180, 255, 0.8);
+    outline-offset: 2px;
+}
+
+.apply-button {
+    background-color: #4CAF50;
+    color: white;
+}
+
+.apply-button:hover {
+    background-color: #3e8e41;
+}
+
+.reset-button {
+    background-color: #f44336;
+    color: white;
+}
+
+.reset-button:hover {
+    background-color: #d32f2f;
+}
+
+.error-display {
+    padding: 10px;
+    background-color: rgba(30, 30, 30, 0.7);
+    border-radius: 4px;
+    font-family: monospace;
+    font-size: 13px;
+    display: none;
+    margin-bottom: 15px;
+}
+
+/* Make sure the canvas doesn't get affected by the sidebar */
+#visualizer {
+    z-index: 1;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .shader-test-ui {
+        width: 85%;
+        max-width: 350px;
+    }
+    
+    .shader-editor-textarea {
+        min-height: 200px;
+    }
+}
