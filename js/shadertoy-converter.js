@@ -2,7 +2,7 @@
  * ShaderConverter - A utility for converting Shadertoy shaders to WebGL
  * 
  * This module handles the conversion of Shadertoy-style fragment shaders to
- * standard WebGL shaders, and provides a simple UI for testing shaders.
+ * standard WebGL shaders, and provides a modern UI for testing shaders.
  */
 
 import { SAMPLE_SHADERS } from './shaders.js';
@@ -75,8 +75,6 @@ window.ShaderConverter = (function() {
         return WEBGL_PREAMBLE + convertedCode + WEBGL_MAIN;
     }
     
-    SAMPLE_SHADERS;
-    
     /**
      * Creates a shader test UI with sample shaders and editor
      * @param {HTMLElement} container - Container to append the UI to
@@ -94,28 +92,11 @@ window.ShaderConverter = (function() {
         header.className = 'shader-editor-header';
         
         const title = document.createElement('h3');
-        title.textContent = 'Shadertoy Editor';
+        title.textContent = 'Shader Editor';
         header.appendChild(title);
         
         uiContainer.appendChild(header);
 
-        // Create control buttons
-        const controls = document.createElement('div');
-        controls.className = 'shader-editor-controls';
-        
-        const applyButton = document.createElement('button');
-        applyButton.textContent = 'Apply Shader';
-        applyButton.className = 'shader-editor-button apply-button';
-        
-        const resetButton = document.createElement('button');
-        resetButton.textContent = 'Reset to Default';
-        resetButton.className = 'shader-editor-button reset-button';
-        
-        controls.appendChild(applyButton);
-        controls.appendChild(resetButton);
-        uiContainer.appendChild(controls);
-        
-        
         // Create sample buttons container
         const sampleContainer = document.createElement('div');
         sampleContainer.className = 'sample-container';
@@ -126,7 +107,16 @@ window.ShaderConverter = (function() {
             sampleButton.textContent = name;
             sampleButton.className = 'sample-button';
             sampleButton.addEventListener('click', () => {
+                // Add subtle animation when selecting a sample
+                sampleButton.style.transform = 'scale(0.95)';
+                setTimeout(() => {
+                    sampleButton.style.transform = '';
+                }, 150);
+                
                 shaderTextarea.value = code;
+                
+                // Show feedback
+                showMessage('Sample shader loaded: ' + name, 'info');
             });
             sampleContainer.appendChild(sampleButton);
         }
@@ -137,9 +127,29 @@ window.ShaderConverter = (function() {
         const shaderTextarea = document.createElement('textarea');
         shaderTextarea.className = 'shader-editor-textarea';
         shaderTextarea.placeholder = 'Paste Shadertoy shader code here...';
-        shaderTextarea.value = SAMPLE_SHADERS["Simple Color Cycle"]; // Default shader
+        
+        // Set default shader - pick a visually interesting one
+        const defaultShader = SAMPLE_SHADERS["Precision Plasma Flower"] || 
+                             Object.values(SAMPLE_SHADERS)[0];
+        shaderTextarea.value = defaultShader;
+        
         uiContainer.appendChild(shaderTextarea);
         
+        // Create control buttons
+        const controls = document.createElement('div');
+        controls.className = 'shader-editor-controls';
+        
+        const applyButton = document.createElement('button');
+        applyButton.innerHTML = '<i class="fa fa-check"></i> Apply Shader';
+        applyButton.className = 'shader-editor-button apply-button';
+        
+        const resetButton = document.createElement('button');
+        resetButton.innerHTML = '<i class="fa fa-refresh"></i> Reset';
+        resetButton.className = 'shader-editor-button reset-button';
+        
+        controls.appendChild(applyButton);
+        controls.appendChild(resetButton);
+        uiContainer.appendChild(controls);
         
         // Create error display
         const errorDisplay = document.createElement('div');
@@ -148,24 +158,62 @@ window.ShaderConverter = (function() {
         
         // Create toggle button
         const toggleButton = document.createElement('button');
-        toggleButton.innerHTML = '<span>&#60;&#47;&#62;</span>';
+        toggleButton.innerHTML = '<i class="fas fa-code"></i>';
         toggleButton.className = 'toggle-shader-ui';
+        toggleButton.title = "Toggle Shader Editor";
 
         // Add elements to container
         container.appendChild(toggleButton);
         container.appendChild(uiContainer);
 
-        // Add event listener for toggle
+        // Function to show status messages with animation
+        function showMessage(message, type = 'success') {
+            errorDisplay.textContent = message;
+            
+            // Set color based on message type
+            if (type === 'error') {
+                errorDisplay.style.borderLeftColor = '#E83A5F';
+                errorDisplay.style.color = '#FF4D6D';
+            } else if (type === 'success') {
+                errorDisplay.style.borderLeftColor = '#4CAF50';
+                errorDisplay.style.color = '#8BC34A';
+            } else if (type === 'info') {
+                errorDisplay.style.borderLeftColor = '#2196F3';
+                errorDisplay.style.color = '#64B5F6';
+            }
+            
+            // Animate in
+            errorDisplay.style.display = 'block';
+            errorDisplay.style.opacity = '0';
+            errorDisplay.style.transform = 'translateY(-10px)';
+            
+            setTimeout(() => {
+                errorDisplay.style.opacity = '1';
+                errorDisplay.style.transform = 'translateY(0)';
+            }, 10);
+            
+            // Auto hide after delay
+            setTimeout(() => {
+                errorDisplay.style.opacity = '0';
+                errorDisplay.style.transform = 'translateY(10px)';
+                
+                setTimeout(() => {
+                    errorDisplay.style.display = 'none';
+                }, 300);
+            }, 3000);
+        }
+
+        // Add event listener for toggle with animation
         toggleButton.addEventListener('click', () => {
-            // Toggle active classes for both container and button
-            uiContainer.classList.toggle('active');
+            // Toggle open class for animation
+            uiContainer.classList.toggle('open');
             toggleButton.classList.toggle('active');
             
-            // Update button text based on sidebar state
-            if (uiContainer.classList.contains('active')) {
-                toggleButton.innerHTML = '<span>&#10007;</span>';
+            // Update button icon based on sidebar state
+            if (uiContainer.classList.contains('open')) {
+                toggleButton.innerHTML = '<i class="fas fa-times"></i>';
             } else {
-                toggleButton.innerHTML = '<span>&#60;&#47;&#62;</span>';
+                toggleButton.innerHTML = '<i class="fas fa-code"></i>';
             }
         });
                 
@@ -174,37 +222,50 @@ window.ShaderConverter = (function() {
                 const shadertoyCode = shaderTextarea.value;
                 const convertedShader = convertShaderToyToWebGL(shadertoyCode);
                 
+                // Add button press animation
+                applyButton.style.transform = 'scale(0.95)';
+                setTimeout(() => {
+                    applyButton.style.transform = '';
+                }, 150);
+                
                 if (convertedShader && onShaderApply) {
                     const success = onShaderApply(convertedShader);
-                    errorDisplay.textContent = 'Shader applied successfully!';
-                    errorDisplay.style.color = '#55ff55';
-                    errorDisplay.style.display = 'block';
-                    
-                    // Hide success message after a few seconds
-                    setTimeout(() => {
-                        errorDisplay.style.display = 'none';
-                    }, 3000);
+                    if (success) {
+                        showMessage('Shader applied successfully!', 'success');
+                    } else {
+                        showMessage('Error applying shader', 'error');
+                    }
                 }
             } catch (error) {
-                errorDisplay.textContent = 'Error: ' + error.message;
-                errorDisplay.style.color = '#ff5555';
-                errorDisplay.style.display = 'block';
+                showMessage('Error: ' + error.message, 'error');
                 console.error('Shader error:', error);
             }
         });
         
         resetButton.addEventListener('click', () => {
+            // Add button press animation
+            resetButton.style.transform = 'scale(0.95)';
+            setTimeout(() => {
+                resetButton.style.transform = '';
+            }, 150);
+            
             // Reset to default shader
             if (window.visualizer && window.visualizer.resetToDefault) {
                 const success = window.visualizer.resetToDefault();
-                errorDisplay.textContent = 'Reset to default shader';
-                errorDisplay.style.color = '#55ff55';
-                errorDisplay.style.display = 'block';
-                
-                // Hide message after a few seconds
-                setTimeout(() => {
-                    errorDisplay.style.display = 'none';
-                }, 3000);
+                if (success) {
+                    showMessage('Reset to default shader', 'success');
+                } else {
+                    showMessage('Error resetting shader', 'error');
+                }
+            }
+        });
+        
+        // Add keyboard shortcut support
+        shaderTextarea.addEventListener('keydown', (e) => {
+            // Ctrl+Enter to apply shader
+            if (e.ctrlKey && e.key === 'Enter') {
+                e.preventDefault();
+                applyButton.click();
             }
         });
         
@@ -216,11 +277,16 @@ window.ShaderConverter = (function() {
             resetButton: resetButton,
             errorDisplay: errorDisplay,
             toggle: toggleButton,
+            showMessage: showMessage,
             toggleVisibility: () => {
-                uiVisible = !uiVisible;
-                uiContainer.style.transform = uiVisible ? 'translateX(0)' : 'translateX(420px)';
-                toggleButton.textContent = uiVisible ? 'Hide Editor' : 'Shader Editor';
-                toggleButton.classList.toggle('active', uiVisible);
+                uiContainer.classList.toggle('open');
+                toggleButton.classList.toggle('active');
+                
+                if (uiContainer.classList.contains('open')) {
+                    toggleButton.innerHTML = '<i class="fa fa-times"></i>';
+                } else {
+                    toggleButton.innerHTML = '<i class="fa fa-code"></i>';
+                }
             }
         };
     }

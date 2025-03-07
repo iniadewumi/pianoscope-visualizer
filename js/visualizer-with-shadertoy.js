@@ -353,9 +353,9 @@ document.addEventListener('DOMContentLoaded', () => {
             
             if (statusEl) statusEl.textContent = 'Listening to audio';
             if (h) h.textContent = 'Listening...';
-            micToggle.innerHTML = '<span class="fa fa-stop"></span>Stop Listen';
+            micToggle.innerHTML = '<i class="fas fa-microphone-slash"></i><span>Stop Listen</span>';
             micToggle.className = "red-button";
-            
+
             // Start volume monitoring
             showVolume();
             
@@ -381,7 +381,7 @@ document.addEventListener('DOMContentLoaded', () => {
             audioContext.close();
         }
         isListening = false;
-        micToggle.innerHTML = '<span class="fa fa-play"></span>Start Listen';
+        micToggle.innerHTML = '<i class="fas fa-microphone"></i><span>Start Listen</span>';
         micToggle.className = "green-button";
         if (statusEl) statusEl.textContent = 'Audio stopped';
         if (h) h.textContent = 'Please allow the use of your microphone.';
@@ -427,7 +427,9 @@ document.addEventListener('DOMContentLoaded', () => {
             const db = 20 * (Math.log(rms) / Math.log(10));
             const dbValue = Math.max(db, 0); // sanity check
             
-            if (h) h.innerHTML = Math.floor(dbValue) + " dB";
+            
+            if (h) h.innerHTML = Math.floor(dbValue) + " <span style='color:#FFD700;'>dB</span>";
+
             
             if (dbValue >= loud_volume_threshold) {
                 seconds += 0.5;

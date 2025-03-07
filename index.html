@@ -4,22 +4,38 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
     <title>Pianoscope Visualizer</title>
+    <!-- Updated CSS files -->
     <link rel="stylesheet" href="css/style.css">
     <link rel="stylesheet" href="css/shader-editor.css">
     <link rel="stylesheet" href="css/shader-sidebar.css">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.3.0/css/font-awesome.min.css">
+    <!-- Updated to FontAwesome 5 for more icon options -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
+    <!-- Add Google Fonts for better typography -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
 </head>
 <body>
+    <!-- Main visualization canvas -->
     <canvas id="visualizer"></canvas>
 
-    <h1 class="main-text">Please allow the use of your microphone.</h1>
+    <!-- UI Text Elements -->
+    <h1 class="main-text">Please allow the use of your microphone</h1>
     <h1 class="sub-text"></h1>
 
+    <!-- Updated Controls -->
     <div class="button-container">
-        <button id="mic-toggle" class="green-button"><span class="fa fa-play"></span>Start Listen</button>
-        <button id="fullscreen" class="green-button"><span class="fa fa-arrows-alt"></span>Fullscreen</button>
+        <button id="mic-toggle" class="green-button">
+            <i class="fas fa-microphone"></i>
+            <span>&nbsp;Start Listen</span>
+        </button>
+        <button id="fullscreen" class="gold-button">
+            <i class="fas fa-expand"></i>
+            <span>&nbsp;Fullscreen</span>
+        </button>
     </div>
 
+    <!-- Status indicator -->
     <div id="status" class="status"></div>
 
     <!-- Load scripts in correct order -->
@@ -28,7 +44,7 @@
     <script src="js/visualizer-with-shadertoy.js"></script>
     
     <!-- Add an error log display for debugging -->
-    <div id="error-log" style="display: none; position: fixed; bottom: 10px; left: 10px; background: rgba(0,0,0,0.7); color: red; padding: 10px; max-width: 400px; max-height: 200px; overflow: auto; font-family: monospace; font-size: 12px; z-index: 1000;"></div>
+    <div id="error-log" style="display: none; position: fixed; bottom: 10px; left: 10px; background: rgba(18, 18, 24, 0.9); color: #FF4D6D; padding: 12px; max-width: 400px; max-height: 200px; overflow: auto; font-family: monospace; font-size: 12px; z-index: 1000; border-radius: 8px; border-left: 3px solid #E83A5F;"></div>
     
     <script>
         // Error handler to catch and display JS errors
@@ -37,6 +53,35 @@
             errorLog.style.display = 'block';
             errorLog.innerHTML += event.message + '<br>';
             console.error(event.error);
+            
+            // Auto-hide after 10 seconds
+            setTimeout(() => {
+                errorLog.style.display = 'none';
+            }, 10000);
+        });
+        
+        // Update button icons when mic state changes
+        document.addEventListener('DOMContentLoaded', function() {
+            const micToggle = document.getElementById('mic-toggle');
+            if (micToggle) {
+                const originalClickHandler = micToggle.onclick;
+                
+                micToggle.onclick = function() {
+                    // Call the original handler
+                    if (originalClickHandler) {
+                        originalClickHandler.call(this);
+                    }
+                    
+                    // Update the icon based on the button's class
+                    setTimeout(() => {
+                        if (micToggle.classList.contains('red-button')) {
+                            micToggle.innerHTML = '<i class="fas fa-microphone-slash"></i><span>&nbsp;Stop Listen</span>';
+                        } else {
+                            micToggle.innerHTML = '<i class="fas fa-microphone"></i><span>&nbsp;Start Listen</span>';
+                        }
+                    }, 50);
+                };
+            }
         });
     </script>
 </body>
