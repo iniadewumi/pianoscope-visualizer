@@ -146,34 +146,27 @@ window.ShaderConverter = (function() {
         
         // Create toggle button
         const toggleButton = document.createElement('button');
-        toggleButton.textContent = 'Shader Editor';
+        toggleButton.innerHTML = '<span>&#60;&#47;&#62;</span>';
         toggleButton.className = 'toggle-shader-ui';
-        
+
         // Add elements to container
         container.appendChild(toggleButton);
         container.appendChild(uiContainer);
-        let uiVisible = true;
-    
-        // Initialize UI as visible
-        uiContainer.style.transform = 'translateX(0)';
-        toggleButton.textContent = 'Hide Editor';
-        toggleButton.classList.add('active');
-        
-        // Add event listeners
+
+        // Add event listener for toggle
         toggleButton.addEventListener('click', () => {
-            uiVisible = !uiVisible;
+            // Toggle active classes for both container and button
+            uiContainer.classList.toggle('active');
+            toggleButton.classList.toggle('active');
             
-            if (uiVisible) {
-                uiContainer.style.transform = 'translateX(0)';
-                toggleButton.textContent = 'Hide Editor';
-                toggleButton.classList.add('active');
+            // Update button text based on sidebar state
+            if (uiContainer.classList.contains('active')) {
+                toggleButton.innerHTML = '<span>&#10007;</span>';
             } else {
-                uiContainer.style.transform = 'translateX(420px)';
-                toggleButton.textContent = 'Shader Editor';
-                toggleButton.classList.remove('active');
+                toggleButton.innerHTML = '<span>&#60;&#47;&#62;</span>';
             }
         });
-        
+                
         applyButton.addEventListener('click', () => {
             try {
                 const shadertoyCode = shaderTextarea.value;
