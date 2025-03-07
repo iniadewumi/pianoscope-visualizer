@@ -98,6 +98,23 @@ window.ShaderConverter = (function() {
         header.appendChild(title);
         
         uiContainer.appendChild(header);
+
+        // Create control buttons
+        const controls = document.createElement('div');
+        controls.className = 'shader-editor-controls';
+        
+        const applyButton = document.createElement('button');
+        applyButton.textContent = 'Apply Shader';
+        applyButton.className = 'shader-editor-button apply-button';
+        
+        const resetButton = document.createElement('button');
+        resetButton.textContent = 'Reset to Default';
+        resetButton.className = 'shader-editor-button reset-button';
+        
+        controls.appendChild(applyButton);
+        controls.appendChild(resetButton);
+        uiContainer.appendChild(controls);
+        
         
         // Create sample buttons container
         const sampleContainer = document.createElement('div');
@@ -123,21 +140,6 @@ window.ShaderConverter = (function() {
         shaderTextarea.value = SAMPLE_SHADERS["Simple Color Cycle"]; // Default shader
         uiContainer.appendChild(shaderTextarea);
         
-        // Create control buttons
-        const controls = document.createElement('div');
-        controls.className = 'shader-editor-controls';
-        
-        const applyButton = document.createElement('button');
-        applyButton.textContent = 'Apply Shader';
-        applyButton.className = 'shader-editor-button apply-button';
-        
-        const resetButton = document.createElement('button');
-        resetButton.textContent = 'Reset to Default';
-        resetButton.className = 'shader-editor-button reset-button';
-        
-        controls.appendChild(applyButton);
-        controls.appendChild(resetButton);
-        uiContainer.appendChild(controls);
         
         // Create error display
         const errorDisplay = document.createElement('div');
