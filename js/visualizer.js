@@ -1,5 +1,5 @@
 /**
- * HTML5 Microphone Shader Visualizer
+ * Piansoscope Visualizer
  * 
  * This script handles the WebGL and audio processing to visualize 
  * microphone input in real-time with shader effects.

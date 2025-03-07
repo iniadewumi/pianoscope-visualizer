@@ -1,7 +1,3 @@
-# HTML5 Mic Visualizer
+# Pianoscope Visualizer
 
-This page uses the HTML5 [`AudioContext.createAnalyser()`](https://developer.mozilla.org/en-US/docs/Web/API/BaseAudioContext/createAnalyser) API to visualize the input audio of your device microphone.
-
-A demo page can be found [here](https://static.yige.ch/html5-mic/). It works in modern versions of desktop browsers, as well as in iOS and Android.
-
-Note: The dB value on the page varies from your device microphone, and should not be considered accurate.
+This page uses Shaders to to visualize the input audio of your device microphone. The goal is to play music and generate nice visuals that follow the soundwaves of the music.
