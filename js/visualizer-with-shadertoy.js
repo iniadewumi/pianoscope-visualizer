@@ -125,8 +125,14 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // Resize canvas to window
     function resizeCanvas() {
+        // Check if in pure view mode
+        const isPureViewMode = document.body.classList.contains('pure-view-mode');
+        
+        // Set appropriate height
+        const canvasHeight = isPureViewMode ? window.innerHeight : window.innerHeight * 0.8;
+        
         canvas.width = window.innerWidth;
-        canvas.height = window.innerHeight * 0.8;
+        canvas.height = canvasHeight;
         gl.viewport(0, 0, canvas.width, canvas.height);
     }
     window.addEventListener('resize', resizeCanvas);
