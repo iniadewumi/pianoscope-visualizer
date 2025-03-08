@@ -20,6 +20,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const statusEl = document.getElementById('status');
     const h = document.getElementsByTagName('h1')[0];
     const hSub = document.getElementsByTagName('h1')[1];
+
+    window.currentVertexShader = null;
+    window.currentFragmentShader = null;
+    window.audioData = null;
     
     // Check if elements exist to prevent errors
     if (!canvas) {
@@ -199,6 +203,9 @@ document.addEventListener('DOMContentLoaded', () => {
         
         currentFragmentShader = createShader(gl, gl.FRAGMENT_SHADER, fragmentSource);
         if (!currentFragmentShader) return false;
+
+        window.currentVertexShader = currentVertexShader;
+        window.currentFragmentShader = currentFragmentShader; 
         
         // Create and use program
         currentProgram = createProgram(gl, currentVertexShader, currentFragmentShader);
@@ -228,6 +235,13 @@ document.addEventListener('DOMContentLoaded', () => {
         // Get all uniforms after successful program setup
         uniforms = getShaderUniforms();
         
+        if (window.kioskWindow && !window.kioskWindow.closed) {
+            window.kioskWindow.postMessage({
+                type: 'shader-update',
+                vertexShader: vertexSource,
+                fragmentShader: fragmentSource
+            }, '*');
+        }
         return true;
     }
     
@@ -415,6 +429,7 @@ document.addEventListener('DOMContentLoaded', () => {
         gl.activeTexture(gl.TEXTURE0);
         gl.bindTexture(gl.TEXTURE_2D, audioTexture);
         gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, audioTexWidth, 1, gl.LUMINANCE, gl.UNSIGNED_BYTE, audioData);
+        window.audioData = audioData;
     }
     
     function showVolume() {
