@@ -20,6 +20,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const statusEl = document.getElementById('status');
     const h = document.getElementsByTagName('h1')[0];
     const hSub = document.getElementsByTagName('h1')[1];
+
+    window.currentVertexShader = null;
+    window.currentFragmentShader = null;
+    window.audioData = null;
     
     // Check if elements exist to prevent errors
     if (!canvas) {
@@ -125,8 +129,14 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // Resize canvas to window
     function resizeCanvas() {
+        // Check if in pure view mode
+        const isPureViewMode = document.body.classList.contains('pure-view-mode');
+        
+        // Set appropriate height
+        const canvasHeight = isPureViewMode ? window.innerHeight : window.innerHeight * 0.8;
+        
         canvas.width = window.innerWidth;
-        canvas.height = window.innerHeight * 0.8;
+        canvas.height = canvasHeight;
         gl.viewport(0, 0, canvas.width, canvas.height);
     }
     window.addEventListener('resize', resizeCanvas);
@@ -193,6 +203,9 @@ document.addEventListener('DOMContentLoaded', () => {
         
         currentFragmentShader = createShader(gl, gl.FRAGMENT_SHADER, fragmentSource);
         if (!currentFragmentShader) return false;
+
+        window.currentVertexShader = currentVertexShader;
+        window.currentFragmentShader = currentFragmentShader; 
         
         // Create and use program
         currentProgram = createProgram(gl, currentVertexShader, currentFragmentShader);
@@ -222,6 +235,13 @@ document.addEventListener('DOMContentLoaded', () => {
         // Get all uniforms after successful program setup
         uniforms = getShaderUniforms();
         
+        if (window.kioskWindow && !window.kioskWindow.closed) {
+            window.kioskWindow.postMessage({
+                type: 'shader-update',
+                vertexShader: vertexSource,
+                fragmentShader: fragmentSource
+            }, '*');
+        }
         return true;
     }
     
@@ -353,9 +373,9 @@ document.addEventListener('DOMContentLoaded', () => {
             
             if (statusEl) statusEl.textContent = 'Listening to audio';
             if (h) h.textContent = 'Listening...';
-            micToggle.innerHTML = '<span class="fa fa-stop"></span>Stop Listen';
+            micToggle.innerHTML = '<i class="fas fa-microphone-slash"></i><span>Stop Listen</span>';
             micToggle.className = "red-button";
-            
+
             // Start volume monitoring
             showVolume();
             
@@ -381,7 +401,7 @@ document.addEventListener('DOMContentLoaded', () => {
             audioContext.close();
         }
         isListening = false;
-        micToggle.innerHTML = '<span class="fa fa-play"></span>Start Listen';
+        micToggle.innerHTML = '<i class="fas fa-microphone"></i><span>Start Listen</span>';
         micToggle.className = "green-button";
         if (statusEl) statusEl.textContent = 'Audio stopped';
         if (h) h.textContent = 'Please allow the use of your microphone.';
@@ -409,6 +429,7 @@ document.addEventListener('DOMContentLoaded', () => {
         gl.activeTexture(gl.TEXTURE0);
         gl.bindTexture(gl.TEXTURE_2D, audioTexture);
         gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, audioTexWidth, 1, gl.LUMINANCE, gl.UNSIGNED_BYTE, audioData);
+        window.audioData = audioData;
     }
     
     function showVolume() {
@@ -427,7 +448,9 @@ document.addEventListener('DOMContentLoaded', () => {
             const db = 20 * (Math.log(rms) / Math.log(10));
             const dbValue = Math.max(db, 0); // sanity check
             
-            if (h) h.innerHTML = Math.floor(dbValue) + " dB";
+            
+            if (h) h.innerHTML = Math.floor(dbValue) + " <span style='color:#FFD700;'>dB</span>";
+
             
             if (dbValue >= loud_volume_threshold) {
                 seconds += 0.5;

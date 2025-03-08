@@ -1,131 +1,144 @@
-/* Styles for the Shadertoy editor */
+/* Modernized styles for the Shadertoy editor */
 
 .shader-editor-header {
-    margin-bottom: 10px;
-    border-bottom: 1px solid #444;
-    padding-bottom: 10px;
+    margin-bottom: 15px;
+    border-bottom: 1px solid rgba(212, 175, 55, 0.3); /* Gold accent */
+    padding-bottom: 15px;
 }
 
 .shader-editor-header h3 {
     margin: 0;
     font-size: 18px;
+    color: #D4AF37; /* Gold */
+    font-weight: 500;
+    letter-spacing: 0.5px;
 }
 
 .sample-container {
     display: flex;
     flex-wrap: wrap;
-    gap: 5px;
-    margin-bottom: 10px;
+    gap: 8px;
+    margin-bottom: 15px;
 }
 
 .sample-button {
-    background: #2a5298;
-    border: none;
-    color: white;
-    padding: 6px 10px;
-    border-radius: 3px;
+    background: rgba(123, 44, 191, 0.3); /* Purple */
+    border: 1px solid rgba(123, 44, 191, 0.5);
+    color: #e0e0e0;
+    padding: 8px 12px;
+    border-radius: 6px;
     cursor: pointer;
-    font-size: 12px;
+    font-size: 13px;
     flex-grow: 1;
     text-align: center;
-    transition: background 0.2s;
+    transition: all 0.2s ease;
+    min-width: 80px;
 }
 
 .sample-button:hover {
-    background: #3a6cd8;
+    background: rgba(123, 44, 191, 0.5);
+    transform: translateY(-1px);
 }
 
 .shader-editor-textarea {
     width: 100%;
-    height: 300px;
-    background: #222;
-    color: #ddd;
-    border: 1px solid #444;
-    border-radius: 3px;
-    padding: 8px;
-    font-family: monospace;
-    font-size: 12px;
+    min-height: 300px;
+    background: rgba(18, 18, 18, 0.8);
+    color: #e0e0e0;
+    border: 1px solid rgba(123, 44, 191, 0.3);
+    border-radius: 8px;
+    padding: 12px;
+    font-family: 'Fira Code', 'Consolas', monospace;
+    font-size: 14px;
+    line-height: 1.5;
     resize: vertical;
-    margin-bottom: 10px;
+    margin-bottom: 15px;
     box-sizing: border-box;
+    transition: border-color 0.2s ease;
+}
+
+.shader-editor-textarea:focus {
+    border-color: rgba(123, 44, 191, 0.7);
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(123, 44, 191, 0.2);
 }
 
 .shader-editor-controls {
     display: flex;
-    gap: 10px;
-    margin-bottom: 10px;
+    gap: 12px;
+    margin-bottom: 15px;
 }
 
 .shader-editor-button {
-    padding: 8px 15px;
+    padding: 10px 16px;
     border: none;
-    border-radius: 3px;
+    border-radius: 6px;
     cursor: pointer;
-    font-weight: bold;
+    font-weight: 500;
     flex-grow: 1;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 42px;
 }
 
 .apply-button {
-    background: #4CAF50;
-    color: white;
+    background-color: #D4AF37;
+    background-image: linear-gradient(135deg, #FFD700, #D4AF37);
+    color: #121212;
 }
 
 .apply-button:hover {
-    background: #3e8e41;
+    background-image: linear-gradient(135deg, #FFF45C, #FFD700);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
 }
 
 .reset-button {
-    background: #f44336;
+    background-color: #C41E3D;
+    background-image: linear-gradient(135deg, #E83A5F, #C41E3D);
     color: white;
 }
 
 .reset-button:hover {
-    background: #d32f2f;
+    background-image: linear-gradient(135deg, #FF4D6D, #E83A5F);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
 }
 
 .error-display {
-    margin-top: 10px;
-    padding: 8px;
-    border-radius: 3px;
-    font-size: 12px;
+    margin-top: 12px;
+    padding: 10px;
+    border-radius: 6px;
+    font-size: 13px;
     display: none;
+    background-color: rgba(30, 30, 30, 0.7);
+    border-left: 3px solid; /* Color will be set by JS */
+    transition: all 0.3s ease;
 }
 
-
-/* Simple sidebar styling */
+/* Simplified sidebar animation */
 .shader-test-ui {
     position: fixed;
     top: 0;
     right: 0;
     width: 350px;
     height: 100vh;
-    background-color: rgba(20, 20, 20, 0.9);
-    color: #eee;
-    padding: 15px;
-    box-shadow: -2px 0 10px rgba(0, 0, 0, 0.5);
+    background-color: rgba(18, 18, 24, 0.97);
+    color: #e0e0e0;
+    padding: 20px;
+    box-shadow: -5px 0 25px rgba(0, 0, 0, 0.5);
     overflow-y: auto;
-    transition: transform 0.3s ease;
+    transition: transform 0.3s cubic-bezier(0.4, 0.0, 0.2, 1);
     z-index: 100;
-    transform: translateX(100%); /* Start closed (off-screen) */
+    transform: translateX(100%); /* Start hidden */
+    border-left: 1px solid rgba(123, 44, 191, 0.3);
 }
 
 .shader-test-ui.active {
-    transform: translateX(0); /* Open (on-screen) */
+    transform: translateX(0); /* Show when active */
 }
 
-.toggle-shader-ui {
-    position: fixed;
-    top: 15px;
-    right: 15px;
-    z-index: 101;
-    padding: 10px;
-    background-color: rgba(60, 60, 60, 0.8);
-    color: white;
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
-}
 
-.toggle-shader-ui.active {
-    background-color: rgba(80, 80, 255, 0.8);
-}
+
