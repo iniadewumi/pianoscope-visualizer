@@ -149,524 +149,8 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
     // Calculate the final color using the audioreactive fractal function
     fragColor = vec4(audioreactiveFractal(uv, vec2(juliax, juliay), audioInput), 1.0);
 }
-`,
-"Fractured Portal":`precision highp float;
-
-uniform vec2 iResolution;
-uniform float iTime;
-uniform sampler2D iChannel0;
-uniform vec4 iMouse;
-
-// Constants for tweaking visual effects
-const float SPEED = 0.5;          // Overall animation speed
-const float ZOOM_FACTOR = 1.2;    // Zoom intensity
-const float WARP_STRENGTH = 1.8;  // How much the audio warps the patterns
-const float COMPLEXITY = 8.0;     // Visual complexity
-const float SYMMETRY = 6.0;       // Number of symmetry folds
-const int MAX_ITERATIONS = 8;     // Detail level (higher = more detailed but slower)
-
-// Color palette function creating purple to gold transitions
-vec3 palette(float t) {
-    // Rich purple to gold palette
-    vec3 purple = vec3(0.4, 0.0, 0.7);
-    vec3 violet = vec3(0.6, 0.2, 0.8);
-    vec3 gold = vec3(1.0, 0.8, 0.1);
-    vec3 amber = vec3(1.0, 0.6, 0.0);
-    
-    // Smooth transitions between colors
-    if (t < 0.33) {
-        return mix(purple, violet, t * 3.0);
-    } else if (t < 0.66) {
-        return mix(violet, gold, (t - 0.33) * 3.0);
-    } else {
-        return mix(gold, amber, (t - 0.66) * 3.0);
-    }
-}
-
-// Helper function to create swirling effects
-vec2 rotate(vec2 p, float angle) {
-    float s = sin(angle);
-    float c = cos(angle);
-    return vec2(p.x * c - p.y * s, p.x * s + p.y * c);
-}
-
-// Audio reactivity helper functions
-float getAudioLow() {
-    // Sample low frequencies (bass)
-    float bass = 0.0;
-    for (int i = 0; i < 10; i++) {
-        bass += texture2D(iChannel0, vec2(float(i) / 128.0, 0.0)).x;
-    }
-    return bass * 0.15; // Normalize
-}
-
-float getAudioMid() {
-    // Sample mid frequencies
-    float mid = 0.0;
-    for (int i = 10; i < 40; i++) {
-        mid += texture2D(iChannel0, vec2(float(i) / 128.0, 0.0)).x;
-    }
-    return mid * 0.04; // Normalize
-}
-
-float getAudioHigh() {
-    // Sample high frequencies
-    float high = 0.0;
-    for (int i = 40; i < 80; i++) {
-        high += texture2D(iChannel0, vec2(float(i) / 128.0, 0.0)).x;
-    }
-    return high * 0.03; // Normalize
-}
-
-// Main fractal function
-float fractalPattern(vec2 uv, float audioReactive) {
-    float result = 0.0;
-    float amplitude = 1.0;
-    float frequency = 1.0;
-    
-    // Layer several sinusoidal patterns for complexity
-    for (int i = 0; i < MAX_ITERATIONS; i++) {
-        // Create wave patterns
-        result += amplitude * abs(sin(uv.x * frequency) * sin(uv.y * frequency));
-        
-        // Rotate and scale for each iteration
-        uv = rotate(uv, 0.8 + audioReactive * 1.5);
-        frequency *= 1.7 + audioReactive * 0.2;
-        amplitude *= 0.65;
-        
-        // Apply audio-reactive zoom
-        uv *= 1.1 + audioReactive * 0.1;
-    }
-    
-    return result;
-}
-
-void main() {
-    // Normalized coordinates
-    vec2 uv = (gl_FragCoord.xy - 0.5 * iResolution.xy) / min(iResolution.x, iResolution.y);
-    
-    // Get audio values
-    float audioLow = getAudioLow();
-    float audioMid = getAudioMid();
-    float audioHigh = getAudioHigh();
-    float audioTotal = audioLow + audioMid + audioHigh;
-    
-    // Apply mouse interaction for manual control (if used)
-    vec2 mouse = iMouse.xy / iResolution.xy - 0.5;
-    if (iMouse.z > 0.0) {
-        uv += mouse * 0.5;
-    }
-    
-    // Time variables
-    float time = iTime * SPEED;
-    
-    // Apply symmetrical folding (creates kaleidoscope effect)
-    float angle = atan(uv.y, uv.x);
-    float radius = length(uv);
-    
-    // Audio-reactive symmetry
-    float folds = SYMMETRY + audioMid * 10.0;
-    angle = mod(angle, 6.28318 / folds) - 3.14159 / folds;
-    
-    // Transform back to cartesian
-    uv = vec2(cos(angle), sin(angle)) * radius;
-    
-    // Apply audio-reactive zoom
-    float zoom = ZOOM_FACTOR + audioLow * 3.0;
-    uv *= zoom * (1.0 + sin(time * 0.2) * 0.1);
-    
-    // Apply swirl effect
-    float swirl = sin(radius * 5.0 - time) * (WARP_STRENGTH + audioTotal * 2.0);
-    uv = rotate(uv, swirl);
-    
-    // Apply time-based motion
-    uv += vec2(sin(time * 0.7), cos(time * 0.5)) * 0.2;
-    
-    // Calculate pattern with audio reactivity
-    float pattern = fractalPattern(uv, audioTotal);
-    
-    // Add pulsing rings based on bass
-    pattern += 0.2 * sin(radius * 20.0 - time * 4.0 + audioLow * 10.0);
-    
-    // Color mapping based on pattern value
-    vec3 color = palette(pattern);
-    
-    // Add highlights based on high frequencies
-    color += vec3(0.2, 0.1, 0.4) * audioHigh * 4.0;
-    
-    // Add gold shimmer
-    color += vec3(0.4, 0.3, 0.0) * pow(sin(pattern * 40.0 + time) * 0.5 + 0.5, 5.0);
-    
-    // Add subtle vignette
-    color *= smoothstep(1.8, 0.5, length(uv));
-    
-    // Output final color
-    gl_FragColor = vec4(color, 1.0);
-}`
-,
-"Precision Plasma Flower": `precision highp float;
-
-uniform vec2 iResolution;
-uniform float iTime;
-uniform sampler2D iChannel0;
-uniform vec4 iMouse;
-
-// ========== CONFIGURATION (TUNED PARAMETERS) ==========
-const float SPEED = 0.4;               // Reduced from 0.7 for slower animation
-const float KALEIDOSCOPE_SIDES = 7.0;  // Kept the same kaleidoscope reflections
-const int MAX_ITERATIONS = 7;          // Reduced from 9 for less detail/complexity
-const float FEEDBACK_STRENGTH = 0.3;   // Reduced from 0.4 for less intense feedback
-const float METALLIC_SHININESS = 3.0;  // Kept the same gold metallic effect intensity
-const float FREQUENCY_SCALING = 0.7;   // Reduced from 1.5 to make audio less dominating
-
-// ========== AUDIO EXTRACTION FUNCTIONS ==========
-// Extract bass frequencies (important for beat detection)
-float getAudioBass() {
-    float bass = 0.0;
-    for (int i = 0; i < 15; i++) {
-        float sample = texture2D(iChannel0, vec2(float(i) / 128.0, 0.0)).x;
-        // Apply non-linear scaling for better dynamics
-        bass += pow(sample, 1.4);
-    }
-    return min(bass * 0.12, 1.0); // Normalize with headroom
-}
-
-// Extract mid frequencies (vocals and melodic elements)
-float getAudioMid() {
-    float mid = 0.0;
-    for (int i = 15; i < 45; i++) {
-        float sample = texture2D(iChannel0, vec2(float(i) / 128.0, 0.0)).x;
-        mid += sample * (1.0 + float(i - 15) * 0.01); // Weight higher mids more
-    }
-    return min(mid * 0.035, 1.0);
-}
-
-// Extract high frequencies (hi-hats, cymbals)
-float getAudioHigh() {
-    float high = 0.0;
-    for (int i = 45; i < 100; i++) {
-        high += texture2D(iChannel0, vec2(float(i) / 128.0, 0.0)).x;
-    }
-    return min(high * 0.025, 1.0);
-}
-
-// Extract transients (sudden changes - good for percussive elements)
-float getAudioTransients() {
-    float current = 0.0;
-    float previous = 0.0;
-    
-    for (int i = 5; i < 30; i++) {
-        current += texture2D(iChannel0, vec2(float(i) / 128.0, 0.0)).x;
-        previous += texture2D(iChannel0, vec2(float(i+1) / 128.0, 0.0)).x;
-    }
-    
-    return min(max(0.0, (current - previous) * 5.0), 1.0);
-}
-
-// ========== VISUAL EFFECT FUNCTIONS ==========
-// Create psychedelic color palette with purple and gold focus - KEPT EXACTLY AS ORIGINAL
-vec3 purpleGoldPalette(float t) {
-    // Rich purple/gold spectrum
-    const vec3 deepPurple = vec3(0.3, 0.0, 0.5);
-    const vec3 richPurple = vec3(0.5, 0.0, 0.8);
-    const vec3 neonPurple = vec3(0.7, 0.3, 0.9);
-    const vec3 magenta = vec3(0.9, 0.4, 0.7);
-    const vec3 amber = vec3(1.0, 0.6, 0.0);
-    const vec3 gold = vec3(1.0, 0.8, 0.2);
-    
-    t = fract(t); // Ensure we loop through the palette
-    
-    // Multi-point gradient
-    if (t < 0.2) return mix(deepPurple, richPurple, t * 5.0);
-    else if (t < 0.4) return mix(richPurple, neonPurple, (t - 0.2) * 5.0);
-    else if (t < 0.6) return mix(neonPurple, magenta, (t - 0.4) * 5.0);
-    else if (t < 0.8) return mix(magenta, amber, (t - 0.6) * 5.0);
-    else return mix(amber, gold, (t - 0.8) * 5.0);
-}
-
-// Advanced rotation with reduced distortion
-vec2 rotateDistort(vec2 p, float angle, float distortion) {
-    float s = sin(angle);
-    float c = cos(angle);
-    
-    // Apply milder non-linear distortion based on radius
-    float r = length(p);
-    float distortionFactor = 1.0 + distortion * sin(r * 2.5);
-    
-    return vec2(
-        p.x * c * distortionFactor - p.y * s,
-        p.x * s + p.y * c * distortionFactor
-    );
-}
-
-// Domain warping function - makes patterns more organic, but less aggressive
-vec2 warpDomain(vec2 p, float time, float strength) {
-    // Primary warping with reduced intensity
-    p.x += strength * 0.7 * sin(p.y * 1.5 + time * 0.7);
-    p.y += strength * 0.6 * sin(p.x * 1.7 + time * 0.6);
-    
-    // Secondary higher-frequency warping with reduced intensity
-    p.x += strength * 0.2 * sin(p.y * 5.0 + time * 1.0);
-    p.y += strength * 0.15 * sin(p.x * 7.0 + time * 0.9);
-    
-    return p;
-}
-
-// Generate metallic highlights (for gold effect) - KEPT EXACTLY AS ORIGINAL
-float metallicHighlight(float pattern, float time, float shininess) {
-    float phase = pattern * 20.0 + time;
-    return pow(0.5 + 0.5 * sin(phase), shininess);
-}
-
-    // Create a fractal feedback pattern with reduced complexity
-float fractalPattern(vec2 uv, float time, float audioTotal) {
-    float pattern = 0.0;
-    float amp = 1.0;
-    float freq = 1.5; // Higher base frequency for sharper detail
-    vec2 p = uv;
-    
-    // Add minimum detail level independent of audio
-    float baseDetail = 0.2; 
-    float minAudioTotal = max(audioTotal, baseDetail);
-    
-    // Layer multiple octaves for fractal effect but with fewer iterations
-    for (int i = 0; i < MAX_ITERATIONS; i++) {
-        // Apply rotation with minimum distortion to maintain sharpness
-        p = rotateDistort(p, time * 0.1 + float(i) * 0.2 + minAudioTotal * 1.2, 0.15);
-        
-        // Create psychedelic pattern with higher frequency components
-        float wave = sin(p.x * freq) * sin(p.y * freq);
-        wave *= sin(length(p) * freq * 0.5 + time);
-        
-        // Add edge enhancement for sharper details
-        float edge = abs(sin(p.x * freq * 2.0)) * abs(sin(p.y * freq * 2.0));
-        wave = mix(wave, edge, 0.2);
-        
-        // Add to the total pattern
-        pattern += amp * abs(wave);
-        
-        // Modify parameters for next iteration with minimum scaling
-        freq *= 1.7 + minAudioTotal * 0.3;
-        amp *= 0.65;
-        
-        // Apply minimal warping to preserve sharpness
-        p = warpDomain(p, time * 0.15, 0.08 + minAudioTotal * 0.3);
-    }
-    
-    // Apply contrast enhancement to maintain sharpness
-    pattern = pow(pattern, 0.9);
-    
-    return pattern;
-}
-
-// ========== MAIN SHADER FUNCTION ==========
-void main() {
-    // Screen coordinates normalized to [-1,1]
-    vec2 uv = (gl_FragCoord.xy - 0.5 * iResolution.xy) / min(iResolution.x, iResolution.y);
-    
-    // Extract audio features with reduced scaling
-    float bass = getAudioBass() * FREQUENCY_SCALING;
-    float mid = getAudioMid() * FREQUENCY_SCALING;
-    float high = getAudioHigh() * FREQUENCY_SCALING;
-    float transients = getAudioTransients() * FREQUENCY_SCALING;
-    float audioTotal = (bass + mid + high) * 0.6;
-    
-    // Apply motion and dynamics
-    float time = iTime * SPEED;
-    
-    // Create pulsing zoom effect with minimum zoom level to prevent blurring
-    float minZoom = 1.0;
-    float audioZoom = 0.2 * sin(time * 0.7) + bass * 1.0;
-    float zoom = max(minZoom, minZoom + audioZoom * 0.8);
-    uv *= zoom;
-    
-    // Apply mouse interaction if active
-    if (iMouse.z > 0.0) {
-        vec2 mouseOffset = (iMouse.xy / iResolution.xy - 0.5) * 2.0;
-        uv += mouseOffset * 0.5;
-    }
-    
-    // Apply kaleidoscopic effect (symmetry folding)
-    float sides = KALEIDOSCOPE_SIDES + floor(mid * 3.0); // Reduced audio influence
-    float angle = atan(uv.y, uv.x);
-    float radius = length(uv);
-    
-    // Audio-reactive kaleidoscope
-    float segment = 3.14159 * 2.0 / sides;
-    angle = mod(angle, segment);
-    angle = abs(angle - segment * 0.5);
-    
-    // Transform back to Cartesian coordinates
-    uv = vec2(cos(angle), sin(angle)) * radius;
-    
-    // Apply audio-reactive domain warping with reduced intensity
-    uv = warpDomain(uv, time, 0.2 + bass * 0.6);
-    
-    // Apply spiral effect based on bass with reduced intensity
-    float spiralFactor = 0.4 + bass * 2.0;
-    uv = rotateDistort(uv, radius * spiralFactor + time * 0.4, 0.2 + mid * 0.4);
-    
-    // Create reactive visual feedback loop with reduced intensity
-    vec2 feedbackUV = uv;
-    feedbackUV = rotateDistort(feedbackUV, time * 0.04 + audioTotal, 0.08);
-    feedbackUV *= 0.92 + 0.15 * sin(time * 0.1);
-    float feedback = fractalPattern(feedbackUV, time * 0.4, audioTotal * 0.4);
-    
-    // Generate primary pattern
-    float pattern = fractalPattern(uv, time, audioTotal);
-    
-    // Add a minimum pattern definition to prevent blurriness
-    float minimumPattern = 0.1 * sin(radius * 25.0 - time) + 0.15 * sin(angle * 15.0);
-    
-    // Blend with feedback but limit the blend at low volumes to prevent blurriness
-    float adaptiveFeedback = min(FEEDBACK_STRENGTH + bass * 0.2, 0.35);
-    pattern = mix(pattern, feedback, adaptiveFeedback);
-    
-    // Add constant high-frequency detail that's present even at low volumes
-    pattern += 0.05 * sin(radius * 30.0) + 0.05 * sin(angle * 20.0);
-    
-    // Add concentric rings with minimum modulation
-    pattern += 0.1 * sin(radius * (10.0 + mid * 15.0) - time * 1.5);
-    
-    // Add sharpening effect
-    float sharpening = 0.1 * sin(radius * 40.0) * sin(angle * 30.0);
-    pattern += sharpening;
-    
-    // Add reduced transient flashes
-    pattern += transients * 0.3;
-    
-    // Map pattern to color palette - KEEPING ORIGINAL COLOR MAPPING INTACT
-    vec3 color = purpleGoldPalette(pattern + time * 0.05);
-    
-    // Add metallic gold highlights - KEEPING THE ORIGINAL INTENSITY
-    float shine = metallicHighlight(pattern, time * 1.5, METALLIC_SHININESS);
-    color += vec3(1.0, 0.9, 0.3) * shine * (0.5 + bass * 0.5);
-    
-    // Add purple glow based on high frequencies - KEEPING ORIGINAL
-    color += vec3(0.5, 0.0, 1.0) * high * 0.7;
-    
-    // Add subtle vignette for depth
-    float vignette = smoothstep(1.5, 0.5, length(uv / zoom));
-    color *= vignette;
-    
-    // Add subtle chromatic aberration for more psychedelic look (reduced)
-    float aberration = 0.008 + high * 0.008;
-    vec3 colorShift;
-    colorShift.r = purpleGoldPalette(pattern + aberration + time * 0.05).r;
-    colorShift.b = purpleGoldPalette(pattern - aberration + time * 0.05).b;
-    colorShift.g = color.g;
-    color = mix(color, colorShift, 0.3);
-    
-    // Enhance contrast and add sharpening without using derivatives
-    color = pow(color, vec3(0.9 + bass * 0.2));
-    
-    // Apply alternative edge enhancement for sharper details
-    // This uses pattern variation instead of derivatives
-    float highFreqPattern = sin(radius * 50.0) * sin(angle * 40.0);
-    float patternVariation = abs(pattern - highFreqPattern);
-    float edgeStrength = 0.2;
-    color = mix(color, color * (1.0 + patternVariation), edgeStrength);
-    
-    // Final output
-    gl_FragColor = vec4(color, 1.0);
-}
 `
 ,
-"Black Hole Pulser": `
-precision highp float;
-
-uniform vec2 iResolution;
-uniform float iTime;
-uniform sampler2D iChannel0;
-
-void main() {
-    // Sample audio with minimal processing
-    float bass = texture2D(iChannel0, vec2(0.05, 0.0)).x;
-    float lowMid = texture2D(iChannel0, vec2(0.15, 0.0)).x;
-    float mid = texture2D(iChannel0, vec2(0.3, 0.0)).x;
-    float high = texture2D(iChannel0, vec2(0.7, 0.0)).x;
-    
-    // Beat detection - compare current bass to a threshold
-    // This creates more defined pulses instead of continuous response
-    float beatThreshold = 0.15;
-    float beatPulse = smoothstep(beatThreshold, beatThreshold + 0.1, bass) * 0.3;
-    
-    // Overall audio intensity (weighted toward bass)
-    float audioIntensity = bass * 0.6 + lowMid * 0.25 + mid * 0.1 + high * 0.05;
-    
-    // Keep original time speed
-    float timeFactor = 0.2; // Original speed from XorDev's shader
-    
-    // Small pulse effect for beats
-    float beatPulseFactor = 1.0 + beatPulse;
-    
-    // Black hole size/density responds to audio intensity
-    // Inverse relationship - higher sound = smaller hole
-    float baseHoleSize = 0.7; // Base size
-    float holeSize = baseHoleSize * (1.0 - audioIntensity * 0.35);
-    
-    // Density factor - increases with audio intensity
-    float densityFactor = 1.0 + audioIntensity * 0.9;
-    
-    // Audio-reactive parameters that respect the original algorithm
-    float distortion = 0.1;  // Keep original distortion
-    float iterationBase = 9.0; // Original iteration count
-    float iterationCount = iterationBase; // Keep consistent iterations
-    
-    // Begin with the same coordinate setup as the original
-    float i;
-    vec2 r = iResolution.xy,
-         p = (gl_FragCoord.xy + gl_FragCoord.xy - r) / r.y / 0.7,
-         d = vec2(-1, 1), 
-         q = 5.0 * p - d,
-         c = p * mat2(1, 1, d / (distortion + 5.0 / dot(q, q)));
-         
-    // Create the spiral effect using log-polar coordinates - maintaining original speed
-    vec2 v = c * mat2(cos(log(length(c)) + iTime * timeFactor + vec4(0, 33, 11, 0))) * 5.0;
-   
-    // Initialize output color
-    vec4 O = vec4(0.0);
-    i = 0.0;
-    
-    // Create the iterative pattern
-    for(int j = 0; j < 15; j++) {
-        // Break based on audio-reactive iteration count
-        if(float(j) >= iterationCount) break;
-        
-        // Add audio-reactive variation to the sine pattern
-        float audioMod = 1.0 + bass * 0.2 * sin(i * 0.7); // Subtle per-iteration audio effect
-        O += (1.0 + sin(v.xyyx)) * audioMod;
-        
-        // Update v with the original formula plus subtle audio influence
-        v += 0.7 * sin(v.yx * i + iTime) / (i + 0.1) + 0.5; // Added 0.1 to prevent division by zero
-        
-        i += 1.0; // Increment our float counter
-    }
-    
-    // Calculate i using the original formula
-    i = length(sin(v / 0.3) * 0.2 + c * vec2(1, 2)) - 1.0;
-    
-    // Apply pulse effect to the visual elements
-    // Ring size changes with the hole size to create expansion/contraction
-    float ringSize = holeSize;
-    
-    // Ring width pulses with beats 
-    float ringWidth = 0.03 * beatPulseFactor;
-    float ringEffect = ringWidth + abs(length(p) - ringSize);
-    
-    // Glow intensity increases with audio intensity and pulses with beats
-    float glowIntensity = 3.5 * beatPulseFactor * densityFactor;
-    float glowEffect = 0.5 + glowIntensity * exp(0.3 * c.y - dot(c, c));
-    
-    // Apply subtle color shift with mid frequency
-    vec4 colorModifier = vec4(0.6, -0.4, -1.0, 0.0);
-    
-    // Final color calculation - density increases with audio intensity
-    O = 1.0 - exp(-exp(c.x * colorModifier) / O / (1.0 + i * i * densityFactor) / glowEffect / ringEffect * beatPulseFactor);
-    
-    // Output
-    gl_FragColor = O;
-}`,
 
 "Condense Lava Lamp": `#define T iTime
 
@@ -1347,431 +831,8 @@ void mainImage( out vec4 fragColor, in vec2 fragCoord )
 #endif
     fragColor = vec4(color,1.);
 }`,
-"Ankara Test":`
-precision highp float;
 
-uniform vec2 iResolution;
-uniform float iTime;
-uniform sampler2D iChannel0;
-uniform vec4 iMouse;
-
-// ========== CONFIGURATION ==========
-const float PATTERN_SCALE = 10.0;     // Scale of the base patterns
-const float ANIMATION_SPEED = 0.4;    // Speed of pattern animations
-const float BASS_INTENSITY = 2.0;     // Bass influence on patterns
-const float MID_INFLUENCE = 1.5;      // Mids influence on patterns
-const float PATTERN_COMPLEXITY = 2.0;  // Complexity of generated patterns
-const int MAX_SHAPES = 25;           // Maximum number of Adinkra-inspired shapes
-
-// ========== COLOR PALETTE ==========
-// West African inspired color palette
-vec3 getColor(float t) {
-    // Rich earth tones, golds, and vibrant accent colors inspired by 
-    // traditional West African textiles and art
-    const vec3 earthRed = vec3(0.85, 0.2, 0.1);     // Deep red-orange
-    const vec3 ochre = vec3(0.8, 0.5, 0.1);         // Golden yellow-brown
-    const vec3 mudCloth = vec3(0.3, 0.2, 0.1);      // Dark brown
-    const vec3 indigo = vec3(0.1, 0.1, 0.4);        // Deep blue
-    const vec3 kente1 = vec3(0.9, 0.7, 0.0);        // Bright gold
-    const vec3 kente2 = vec3(0.0, 0.5, 0.2);        // Forest green
-    
-    t = fract(t); // Wrap to 0-1 range
-    
-    if (t < 0.2) return mix(earthRed, ochre, t * 5.0);
-    else if (t < 0.4) return mix(ochre, kente1, (t - 0.2) * 5.0);
-    else if (t < 0.6) return mix(kente1, kente2, (t - 0.4) * 5.0);
-    else if (t < 0.8) return mix(kente2, indigo, (t - 0.6) * 5.0);
-    else return mix(indigo, mudCloth, (t - 0.8) * 5.0);
-}
-
-// ========== RANDOM/NOISE FUNCTIONS ==========
-// Hash function
-float hash(vec2 p) {
-    p = fract(p * vec2(123.34, 456.21));
-    p += dot(p, p + 45.32);
-    return fract(p.x * p.y);
-}
-
-// 2D noise
-float noise(vec2 p) {
-    vec2 i = floor(p);
-    vec2 f = fract(p);
-    
-    // Cubic Hermite interpolation
-    vec2 u = f * f * (3.0 - 2.0 * f);
-    
-    // Four corners
-    float a = hash(i);
-    float b = hash(i + vec2(1.0, 0.0));
-    float c = hash(i + vec2(0.0, 1.0));
-    float d = hash(i + vec2(1.0, 1.0));
-    
-    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
-}
-
-// Fractal Brownian Motion (multiple octaves of noise)
-float fbm(vec2 p) {
-    float value = 0.0;
-    float amplitude = 0.5;
-    float frequency = 1.0;
-    
-    for (int i = 0; i < 5; i++) {
-        value += amplitude * noise(p * frequency);
-        amplitude *= 0.5;
-        frequency *= 2.0;
-    }
-    
-    return value;
-}
-
-// ========== AUDIO ANALYSIS ==========
-// Get bass frequencies
-float getAudioBass() {
-    float bass = 0.0;
-    for (int i = 0; i < 15; i++) {
-        float sample = texture2D(iChannel0, vec2(float(i) / 128.0, 0.0)).x;
-        // Apply non-linear scaling for better dynamics
-        bass += sample * sample;
-    }
-    return min(bass * 0.2, 1.0); // Normalize
-}
-
-// Get mid frequencies
-float getAudioMid() {
-    float mid = 0.0;
-    for (int i = 15; i < 50; i++) {
-        float sample = texture2D(iChannel0, vec2(float(i) / 128.0, 0.0)).x;
-        mid += sample;
-    }
-    return min(mid * 0.05, 1.0);
-}
-
-// Get high frequencies
-float getAudioHigh() {
-    float high = 0.0;
-    for (int i = 50; i < 100; i++) {
-        float sample = texture2D(iChannel0, vec2(float(i) / 128.0, 0.0)).x;
-        high += sample;
-    }
-    return min(high * 0.04, 1.0);
-}
-
-// Detect rhythmic pulses
-float detectPulse(float value, float threshold) {
-    return smoothstep(threshold, threshold + 0.2, value);
-}
-
-// ========== PATTERN FUNCTIONS ==========
-// Apply grid-based repetition
-vec2 repeatGrid(vec2 p, float size) {
-    return mod(p, size) - size * 0.5;
-}
-
-// Create a single geometric shape
-float geometricShape(vec2 p, float type, float size, float rotation) {
-    // Apply rotation
-    float s = sin(rotation);
-    float c = cos(rotation);
-    p = vec2(c * p.x - s * p.y, s * p.x + c * p.y);
-    
-    float shape = 0.0;
-    type = floor(type * 5.0); // 5 different shape types
-    
-    if (type < 1.0) {
-        // Concentric circles (Adinkrahene - greatness, charisma)
-        float radius = length(p);
-        shape = smoothstep(size * 0.9, size, radius) - 
-                smoothstep(size, size * 1.1, radius);
-        
-        // Add inner circle
-        shape += smoothstep(size * 0.4, size * 0.5, radius) - 
-                 smoothstep(size * 0.5, size * 0.6, radius);
-        
-        // Add center dot
-        shape += 1.0 - smoothstep(size * 0.1, size * 0.2, radius);
-        
-    } else if (type < 2.0) {
-        // Crosshatch pattern (Nkyinkyim - initiative, dynamism)
-        float lineWidth = size * 0.1;
-        
-        // Horizontal lines
-        for (float i = -2.0; i <= 2.0; i += 1.0) {
-            shape += smoothstep(lineWidth, 0.0, abs(p.y - i * size * 0.3));
-        }
-        
-        // Vertical lines
-        for (float i = -2.0; i <= 2.0; i += 1.0) {
-            shape += smoothstep(lineWidth, 0.0, abs(p.x - i * size * 0.3));
-        }
-        
-    } else if (type < 3.0) {
-        // Diamond pattern (Nsaa - excellence, genuineness)
-        p = abs(p);
-        shape = 1.0 - smoothstep(size * 0.8, size * 0.9, p.x + p.y);
-        
-        // Inner diamond
-        shape *= smoothstep(size * 0.3, size * 0.4, p.x + p.y);
-        
-    } else if (type < 4.0) {
-        // Spiral-like shape (Sankofa - learn from the past)
-        float angle = atan(p.y, p.x);
-        float radius = length(p);
-        
-        float spiral = mod(angle + radius * 2.0, 3.14159 * 0.5);
-        shape = smoothstep(0.5, 0.0, abs(spiral - 0.7));
-        
-        // Contain within circle
-        shape *= smoothstep(size * 1.1, size, radius);
-        
-    } else {
-        // Star pattern (Nyame nti - faith)
-        float angle = atan(p.y, p.x);
-        float radius = length(p);
-        
-        // Create 8-pointed star
-        float r = size * (0.5 + 0.3 * sin(angle * 8.0));
-        shape = 1.0 - smoothstep(r * 0.9, r, radius);
-    }
-    
-    return shape;
-}
-
-// Create Adinkra-inspired geometric pattern
-float adinkraPattern(vec2 uv, float time, float seed, float audioReactive) {
-    // Create grid of shapes
-    vec2 p = repeatGrid(uv * PATTERN_SCALE, 2.0);
-    
-    // Use deterministic randomness based on grid position
-    vec2 cellCenter = floor(uv * PATTERN_SCALE * 0.5) * 2.0;
-    float cellSeed = hash(cellCenter + seed);
-    
-    // Shape type
-    float shapeType = hash(cellCenter + vec2(12.34, 56.78));
-    
-    // Size and rotation with audio reactivity
-    float size = 0.6 + 0.4 * hash(cellCenter + vec2(90.12, 34.56));
-    size *= 1.0 + audioReactive * 0.3;
-    
-    float baseRotation = hash(cellCenter + vec2(78.90, 12.34)) * 6.28;
-    float rotation = baseRotation + time * ANIMATION_SPEED * (hash(cellCenter) - 0.5);
-    
-    // Create the shape
-    return geometricShape(p, shapeType, size, rotation);
-}
-
-// Create kente-cloth inspired stripes
-float kentePattern(vec2 uv, float time, float audioReactive) {
-    // Basic stripe pattern
-    float pattern = 0.0;
-    
-    // Horizontal stripes
-    float hStripe = step(0.7, fract(uv.y * 8.0 + sin(uv.x * 3.0) * 0.1));
-    
-    // Vertical accent stripes
-    float vStripe = step(0.85, fract(uv.x * 12.0));
-    
-    // Combine with audio reactivity
-    pattern = mix(hStripe, vStripe, 0.3 + audioReactive * 0.2);
-    
-    // Add subtle wave motion
-    pattern += 0.2 * sin(uv.y * 20.0 + uv.x * 5.0 + time * 2.0);
-    
-    return pattern;
-}
-
-// Create mud cloth (Bogolanfini) inspired pattern
-float mudClothPattern(vec2 uv, float time, float audioReactive) {
-    // Grid of symbols
-    float gridSize = 0.5;
-    vec2 gv = fract(uv / gridSize) - 0.5;
-    vec2 id = floor(uv / gridSize);
-    
-    // Generate symbol type based on cell
-    float symbolType = hash(id + 1234.5);
-    
-    float symbol = 0.0;
-    
-    // Different symbol types
-    if (symbolType < 0.25) {
-        // Dots
-        symbol = 1.0 - smoothstep(0.1, 0.15, length(gv));
-    } else if (symbolType < 0.5) {
-        // Lines
-        symbol = 1.0 - smoothstep(0.03, 0.05, abs(gv.x));
-    } else if (symbolType < 0.75) {
-        // Crosses
-        symbol = 1.0 - smoothstep(0.03, 0.05, abs(gv.x));
-        symbol = max(symbol, 1.0 - smoothstep(0.03, 0.05, abs(gv.y)));
-    } else {
-        // Zigzag
-        float zigzag = abs(fract(gv.x * 4.0) - 0.5);
-        symbol = 1.0 - smoothstep(0.05, 0.1, abs(gv.y - zigzag * 0.2));
-    }
-    
-    // Add audio reaction - symbols grow/pulse with audio
-    float pulse = 1.0 + audioReactive * sin(time * 5.0 + hash(id) * 10.0);
-    symbol *= pulse;
-    
-    return symbol;
-}
-
-// Create a djembe drum-inspired circular pattern
-float djembePattern(vec2 uv, float time, float bass) {
-    float radius = length(uv);
-    float angle = atan(uv.y, uv.x);
-    
-    // Create concentric rings
-    float rings = smoothstep(0.01, 0.0, abs(mod(radius * 10.0, 1.0) - 0.5));
-    
-    // Add radiating lines
-    float lines = smoothstep(0.03, 0.0, abs(mod(angle * 10.0 / 3.14159, 1.0) - 0.5));
-    
-    // Pulse with bass
-    float pulse = 1.0 + bass * 0.5 * sin(time * 10.0);
-    
-    // Combine
-    return (rings * 0.7 + lines * 0.3) * pulse * smoothstep(1.0, 0.8, radius);
-}
-
-// ========== MAIN FUNCTION ==========
-void main() {
-    // Normalized coordinates
-    vec2 uv = gl_FragCoord.xy / iResolution.xy;
-    
-    // Center coordinates
-    vec2 centered = uv * 2.0 - 1.0;
-    centered.x *= iResolution.x / iResolution.y; // Correct aspect ratio
-    
-    // Get audio values
-    float bass = getAudioBass() * BASS_INTENSITY;
-    float mid = getAudioMid() * MID_INFLUENCE;
-    float high = getAudioHigh();
-    float audioTotal = bass + mid * 0.5 + high * 0.3;
-    
-    // Detect rhythmic pulses for pattern changes
-    float bassPulse = detectPulse(bass, 0.5);
-    float midPulse = detectPulse(mid, 0.4);
-    
-    // Time variables
-    float time = iTime * ANIMATION_SPEED;
-    
-    // Apply mouse movement if active
-    if (iMouse.z > 0.0) {
-        vec2 mouseOffset = 2.0 * (iMouse.xy / iResolution.xy - 0.5);
-        centered += mouseOffset * 0.2;
-    }
-    
-    // Create base background pattern
-    float baseBg = fbm(centered * 5.0 + time * 0.1) * 0.5 + 0.25;
-    baseBg += 0.1 * sin(centered.x * 10.0) * sin(centered.y * 10.0 + time);
-    
-    // Add subtle pulse to background
-    baseBg *= 1.0 + bass * 0.2 * sin(time * 3.0);
-    
-    // Initialize color
-    vec3 color = getColor(baseBg + time * 0.02);
-    
-    // Add kente-inspired pattern
-    float kente = kentePattern(centered, time, mid);
-    color = mix(color, getColor(baseBg + 0.3 + time * 0.05), kente * 0.7);
-    
-    // Add mud cloth inspired pattern
-    float mudCloth = mudClothPattern(centered * 1.5, time, audioTotal);
-    color = mix(color, getColor(0.7 + time * 0.1), mudCloth * 0.6);
-    
-    // Add Adinkra symbols that react to bass
-    float patternIntensity = 0.0;
-    
-    // Generate multiple Adinkra-inspired shapes
-    for (int i = 0; i < MAX_SHAPES; i++) {
-        // Create seed and parameters for this shape
-        float seed = float(i) * 123.456;
-        
-        // Position based on bass pulse and seed
-        float radius = 0.2 + hash(vec2(seed, seed * 2.0)) * 0.8;
-        float angle = hash(vec2(seed * 3.0, seed * 4.0)) * 3.14159 * 2.0 + time * ANIMATION_SPEED;
-        
-        // Calculate position with some circular motion
-        vec2 pos = vec2(
-            radius * cos(angle),
-            radius * sin(angle)
-        );
-        
-        // Adjust position based on audio
-        pos *= 1.0 + bassPulse * hash(vec2(seed * 5.0, seed * 6.0));
-        
-        // Scale based on audio energy
-        float scale = 0.05 + hash(vec2(seed * 7.0, seed * 8.0)) * 0.1;
-        scale *= 1.0 + bass * hash(vec2(seed * 9.0, time));
-        
-        // Shape type varies with seed
-        float shapeType = hash(vec2(seed * 10.0, seed * 11.0));
-        
-        // Create the shape
-        float dist = length(centered - pos) / scale;
-        float shape = 0.0;
-        
-        // Only process if we're close enough (optimization)
-        if (dist < 3.0) {
-            // Different shape types
-            if (shapeType < 0.2) {
-                // Circle with cross
-                shape = 1.0 - smoothstep(0.8, 1.0, dist);
-                shape *= smoothstep(0.3, 0.4, abs(centered.x - pos.x) / scale) * 
-                         smoothstep(0.3, 0.4, abs(centered.y - pos.y) / scale);
-            } else if (shapeType < 0.4) {
-                // Spiral
-                float angle = atan(centered.y - pos.y, centered.x - pos.x);
-                shape = (1.0 - smoothstep(0.8, 1.0, dist)) * 
-                        (0.5 + 0.5 * sin(angle * 8.0 + dist * 10.0 + time * 2.0));
-            } else if (shapeType < 0.6) {
-                // Diamond
-                vec2 p = abs(centered - pos) / scale;
-                shape = 1.0 - smoothstep(0.8, 1.0, p.x + p.y);
-            } else if (shapeType < 0.8) {
-                // Concentric circles
-                shape = 1.0 - smoothstep(0.8, 1.0, dist);
-                shape *= sin(dist * 10.0 + time) * 0.5 + 0.5;
-            } else {
-                // Radial lines
-                float angle = atan(centered.y - pos.y, centered.x - pos.x);
-                shape = (1.0 - smoothstep(0.8, 1.0, dist)) * 
-                        step(0.7, sin(angle * 12.0 + time) * 0.5 + 0.5);
-            }
-            
-            // Make symbol pulse with audio
-            float pulse = 1.0 + bassPulse * hash(vec2(seed * 12.0, seed * 13.0)) * 0.3;
-            shape *= pulse;
-            
-            // Add to pattern
-            patternIntensity += shape * (0.5 + hash(vec2(seed * 14.0, seed * 15.0)) * 0.5);
-        }
-    }
-    
-    // Add central djembe-inspired pattern
-    float djembe = djembePattern(centered, time, bass);
-    
-    // Apply dynamic layering based on audio
-    float layerMix = 0.5 + 0.5 * sin(time * 0.2 + uv.x * 3.0);
-    
-    // First layer blend
-    color = mix(color, getColor(0.5 + mid + time * 0.1), patternIntensity * 0.7);
-    
-    // Second layer blend
-    color = mix(color, getColor(0.9 + bass + time * 0.05), djembe * 0.8);
-    
-    // Add subtle rhythmic pulse
-    color *= 1.0 + bass * 0.3 * sin(time * 10.0);
-    
-    // Add warm glow
-    float glow = smoothstep(1.0, 0.0, length(centered));
-    color += getColor(time * 0.1) * glow * bass * 0.6;
-    
-    // Output
-    gl_FragColor = vec4(color, 1.0);
-}
-`,
-"Ankara 2": `precision highp float;
+"Ankara Test": `precision highp float;
 
 uniform vec2 iResolution;
 uniform float iTime;
@@ -2392,6 +1453,283 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
     // Output final color
     fragColor = vec4(finalColor, 1.0);
 }`,
+
+"Temporal Fractal": `
+// CC0: Appolloian with a twist II
+//  Playing around with shadows in 2D
+//  Needed a somewhat more complex distance field than boxes
+//  The appolloian fractal turned out quite nice so while
+//  similar to an earlier shader of mine I think it's
+//  distrinctive enough to share
+#define RESOLUTION  iResolution
+#define TIME        iTime
+#define MAX_MARCHES 30
+#define TOLERANCE   0.0001
+#define ROT(a)      mat2(cos(a), sin(a), -sin(a), cos(a))
+#define PI          3.141592654
+#define TAU         (2.0*PI)
+
+const mat2 rot0 = ROT(0.0);
+mat2 g_rot0 = rot0;
+mat2 g_rot1 = rot0;
+
+// License: Unknown, author: nmz (twitter: @stormoid), found: https://www.shadertoy.com/view/NdfyRM
+float sRGB(float t) { return mix(1.055*pow(t, 1./2.4) - 0.055, 12.92*t, step(t, 0.0031308)); }
+// License: Unknown, author: nmz (twitter: @stormoid), found: https://www.shadertoy.com/view/NdfyRM
+vec3 sRGB(in vec3 c) { return vec3 (sRGB(c.x), sRGB(c.y), sRGB(c.z)); }
+
+// License: WTFPL, author: sam hocevar, found: https://stackoverflow.com/a/17897228/418488
+const vec4 hsv2rgb_K = vec4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
+vec3 hsv2rgb(vec3 c) {
+  vec3 p = abs(fract(c.xxx + hsv2rgb_K.xyz) * 6.0 - hsv2rgb_K.www);
+  return c.z * mix(hsv2rgb_K.xxx, clamp(p - hsv2rgb_K.xxx, 0.0, 1.0), c.y);
+}
+
+float apolloian(vec3 p, float s, out float h) {
+  float scale = 1.0;
+  for(int i=0; i < 5; ++i) {
+    p = -1.0 + 2.0*fract(0.5*p+0.5);
+    float r2 = dot(p,p);
+    float k  = s/r2;
+    p       *= k;
+    scale   *= k;
+  }
+  
+  vec3 ap = abs(p/scale);  
+  float d = length(ap.xy);
+  d = min(d, ap.z);
+
+  float hh = 0.0;
+  if (d == ap.z){
+    hh += 0.5;
+  }
+  h = hh;
+  return d;
+}
+
+float df(vec2 p, out float h) {
+  const float fz = 1.0-0.0;
+  float z = 1.55*fz;
+  p /= z;
+  vec3 p3 = vec3(p,0.1);
+  p3.xz*=g_rot0;
+  p3.yz*=g_rot1;
+  float d = apolloian(p3, 1.0/fz, h);
+  d *= z;
+  return d;
+}
+
+float shadow(vec2 lp, vec2 ld, float mint, float maxt) {
+  const float ds = 1.0-0.4;
+  float t = mint;
+  float nd = 1E6;
+  float h;
+  const float soff = 0.05;
+  const float smul = 1.5;
+  for (int i=0; i < MAX_MARCHES; ++i) {
+    vec2 p = lp + ld*t;
+    float d = df(p, h);
+    if (d < TOLERANCE || t >= maxt) {
+      float sd = 1.0-exp(-smul*max(t/maxt-soff, 0.0));
+      return t >= maxt ? mix(sd, 1.0, smoothstep(0.0, 0.025, nd)) : sd;
+    }
+    nd = min(nd, d);
+    t += ds*d;
+  }
+  float sd = 1.0-exp(-smul*max(t/maxt-soff, 0.0));
+  return sd;
+}
+
+vec3 effect(vec2 p, vec2 q) {
+  float aa = 2.0/RESOLUTION.y;
+  float a = 0.1*TIME;
+  g_rot0 = ROT(0.5*a); 
+  g_rot1 = ROT(sqrt(0.5)*a);
+
+  vec2  lightPos  = vec2(0.0, 1.0);
+  lightPos        *= (g_rot1);
+  vec2  lightDiff = lightPos - p;
+  float lightD2   = dot(lightDiff,lightDiff);
+  float lightLen  = sqrt(lightD2);
+  vec2  lightDir  = lightDiff / lightLen;
+  vec3  lightPos3 = vec3(lightPos, 0.0);
+  vec3  p3        = vec3(p, -1.0);
+  float lightLen3 = distance(lightPos3, p3);
+  vec3  lightDir3 = normalize(lightPos3-p3);
+  vec3  n3        = vec3(0.0, 0.0, 1.0);
+  float diff      = max(dot(lightDir3, n3), 0.0);
+
+  float h;
+  float d   = df(p, h);
+  float ss  = shadow(p,lightDir, 0.005, lightLen);
+  vec3 bcol = hsv2rgb(vec3(fract(h-0.2*length(p)+0.25*TIME), 0.666, 1.0));
+
+  vec3 col = vec3(0.0);
+  col += mix(0., 1.0, diff)*0.5*mix(0.1, 1.0, ss)/(lightLen3*lightLen3);
+  col += exp(-300.0*abs(d))*sqrt(bcol);
+  col += exp(-40.0*max(lightLen-0.02, 0.0));
+ 
+  return col;
+}
+
+void mainImage(out vec4 fragColor, in vec2 fragCoord) {
+  vec2 q = fragCoord/RESOLUTION.xy;
+  vec2 p = -1. + 2. * q;
+  p.x *= RESOLUTION.x/RESOLUTION.y;
+
+  vec3 col = effect(p, q);
+  col *= mix(0.0, 1.0, smoothstep(0.0, 4.0, TIME));
+  col = sRGB(col);
+  
+  fragColor = vec4(col, 1.0);
+}
+`,
+"Golden Vow": `// The MIT License
+// Copyright © 2016 Zhirnov Andrey
+// Fixed and enhanced for audio visualization
+
+#define ANIMATE 0.5
+#define COLORED
+
+vec2 Hash22(vec2 p) {
+    vec2 q = vec2(dot(p, vec2(127.1, 311.7)), 
+                  dot(p, vec2(269.5, 183.3)));
+    return fract(sin(q) * 43758.5453);
+}
+
+float Hash21(vec2 p) {
+    return fract(sin(p.x + p.y * 64.0) * 104003.9);
+}
+
+vec2 Hash12(float f) {
+    return fract(cos(f) * vec2(10003.579, 37049.7));
+}
+
+float Hash11(float a) {
+    return Hash21(vec2(fract(a * 2.0), fract(a * 4.0)));
+}
+
+vec4 voronoi(in vec2 x) {
+    // from https://www.shadertoy.com/view/ldl3W8
+    // The MIT License
+    // Copyright © 2013 Inigo Quilez
+    
+    vec2 n = floor(x);
+    vec2 f = fract(x);
+    //----------------------------------
+    // first pass: regular voronoi
+    //----------------------------------
+    vec2 mg, mr;
+    float md = 8.0;
+    
+    for(int j = -1; j <= 1; j++)
+    for(int i = -1; i <= 1; i++) {
+        vec2 g = vec2(float(i), float(j));
+        vec2 o = Hash22(n + g);
+        #ifdef ANIMATE
+        o = 0.5 + 0.5 * sin(iTime * ANIMATE + 6.2831 * o);
+        #endif
+        vec2 r = g + o - f;
+        float d = dot(r, r);
+        if(d < md) {
+            md = d;
+            mr = r;
+            mg = g;
+        }
+    }
+    
+    //----------------------------------
+    // second pass: distance to borders
+    //----------------------------------
+    md = 8.0;
+    for(int j = -2; j <= 2; j++)
+    for(int i = -2; i <= 2; i++) {
+        vec2 g = mg + vec2(float(i), float(j));
+        vec2 o = Hash22(n + g);
+        #ifdef ANIMATE
+        o = 0.5 + 0.5 * sin(iTime * ANIMATE + 6.2831 * o);
+        #endif
+        vec2 r = g + o - f;
+        if(dot(mr - r, mr - r) > 0.00001)
+            md = min(md, dot(0.5 * (mr + r), normalize(r - mr)));
+    }
+    
+    return vec4(x - (n + mr + f), md, Hash21(mg + n));
+}
+
+vec3 HSVtoRGB(vec3 hsv) {
+    // from http://chilliant.blogspot.ru/2014/04/rgbhsv-in-hlsl-5.html
+    vec3 col = vec3(abs(hsv.x * 6.0 - 3.0) - 1.0,
+                     2.0 - abs(hsv.x * 6.0 - 2.0),
+                     2.0 - abs(hsv.x * 6.0 - 4.0));
+    return ((clamp(col, vec3(0.0), vec3(1.0)) - 1.0) * hsv.y + 1.0) * hsv.z;
+}
+
+// Modified for copper-orange color scheme
+vec3 Rainbow(float color, float dist) {
+    dist = pow(dist, 8.0);
+    // Original rainbow
+    // vec3 rainbow = HSVtoRGB(vec3(color, 1.0, 1.0));
+    
+    // Copper-orange color scheme
+    float hue = 0.05 + color * 0.05; // Limited orange-copper range
+    float sat = 0.8 + color * 0.2;
+    vec3 copper = HSVtoRGB(vec3(hue, sat, 1.0));
+    
+    return mix(vec3(1.0), copper, 1.0 - dist);
+}
+
+vec3 VoronoiFactal(in vec2 coord, float time) {
+    const float freq = 4.0;
+    const float freq2 = 6.0;
+    const int iterations = 4;
+    
+    vec2 uv = coord * freq;
+    
+    vec3 color = vec3(0.0);
+    float alpha = 0.0;
+    float value = 0.0;
+    
+    for(int i = 0; i < iterations; ++i) {
+        vec4 v = voronoi(uv);
+        
+        uv = (v.xy * 0.5 + 0.5) * freq2 + Hash12(v.w);
+        
+        float f = pow(0.01 * float(iterations - i), 3.0);
+        float a = 1.0 - smoothstep(0.0, 0.08 + f, v.z);
+        
+        vec3 c = Rainbow(Hash11(float(i + 1) / float(iterations) + value * 1.341), i > 1 ? 0.0 : a);
+        
+        color = color * alpha + c * a;
+        alpha = max(alpha, a);
+        value = v.w;
+    }
+    
+    #ifdef COLORED
+        return color;
+    #else
+        return vec3(alpha) * Rainbow(0.06, alpha);
+    #endif
+}
+
+// Fixed function definition - removed the space before parenthesis
+void mainImage(out vec4 fragColor, in vec2 fragCoord) {
+    // Adjust coordinates to make it look more like your reference image
+    vec2 uv = fragCoord.xy / iResolution.xx;
+    
+    // Create darker background
+    vec3 color = VoronoiFactal(uv, iTime);
+    
+    // Adjust for copper tones
+    color = mix(vec3(0.1, 0.05, 0.02), color, color);
+    
+    // Boost orange-copper tones
+    color.r = min(1.0, color.r * 1.2);
+    color.g = min(1.0, color.g * 0.8);
+    color.b = min(1.0, color.b * 0.5);
+    
+    fragColor = vec4(color, 1.0);
+}`
 };
 
 
