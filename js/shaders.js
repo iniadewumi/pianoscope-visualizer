@@ -86,6 +86,208 @@ void mainImage( out vec4 fragColor, in vec2 fragCoord ) {
 	
 	fragColor = mix(freqs[3]-.3, 1., v) * vec4(1.5*freqs[2] * t * t* t , 1.2*freqs[1] * t * t, freqs[3]*t, 1.0)+c2+starcolor;
 }`,
+"Temporal Fractal Mic'd": `// CC0: Appolloian with a twist II - Subtle Audio Reactive Version
+// Original shader with very gentle audio reactivity
+
+#define RESOLUTION  iResolution
+#define TIME        iTime
+#define MAX_MARCHES 30
+#define TOLERANCE   0.0001
+#define ROT(a)      mat2(cos(a), sin(a), -sin(a), cos(a))
+#define PI          3.141592654
+#define TAU         (2.0*PI)
+
+// Audio sampling constants
+#define BASS_FREQ   0.05  // Low frequencies
+#define MID_FREQ    0.3   // Mid-range frequencies
+#define HIGH_FREQ   0.8   // High frequencies
+
+const mat2 rot0 = ROT(0.0);
+mat2 g_rot0 = rot0;
+mat2 g_rot1 = rot0;
+
+// License: Unknown, author: nmz (twitter: @stormoid), found: https://www.shadertoy.com/view/NdfyRM
+float sRGB(float t) { return mix(1.055*pow(t, 1./2.4) - 0.055, 12.92*t, step(t, 0.0031308)); }
+// License: Unknown, author: nmz (twitter: @stormoid), found: https://www.shadertoy.com/view/NdfyRM
+vec3 sRGB(in vec3 c) { return vec3(sRGB(c.x), sRGB(c.y), sRGB(c.z)); }
+
+// License: WTFPL, author: sam hocevar, found: https://stackoverflow.com/a/17897228/418488
+const vec4 hsv2rgb_K = vec4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
+vec3 hsv2rgb(vec3 c) {
+  vec3 p = abs(fract(c.xxx + hsv2rgb_K.xyz) * 6.0 - hsv2rgb_K.www);
+  return c.z * mix(hsv2rgb_K.xxx, clamp(p - hsv2rgb_K.xxx, 0.0, 1.0), c.y);
+}
+
+// Audio reactive helper functions
+float getBassIntensity() {
+    return texture2D(iChannel0, vec2(BASS_FREQ, 0.0)).x;
+}
+
+float getMidIntensity() {
+    return texture2D(iChannel0, vec2(MID_FREQ, 0.0)).x;
+}
+
+float getHighIntensity() {
+    return texture2D(iChannel0, vec2(HIGH_FREQ, 0.0)).x;
+}
+
+// Get spectrum-wide intensity with slight bias toward bass
+float getOverallIntensity() {
+    float bass = getBassIntensity();
+    float mid = getMidIntensity();
+    float high = getHighIntensity();
+    
+    return bass * 0.5 + mid * 0.3 + high * 0.2;
+}
+
+float apolloian(vec3 p, float s, out float h) {
+  // Very subtle bass influence on scale
+  float bassBoost = 1.0 + getBassIntensity() * 0.05;
+  float scale = 1.0;
+  
+  for(int i=0; i < 5; ++i) {
+    // Extremely subtle mid-frequency distortion
+    float midMod = getMidIntensity() * 0.01;
+    p = -1.0 + 2.0*fract(0.5*p + 0.5 + vec3(midMod, -midMod, midMod));
+    
+    float r2 = dot(p,p);
+    float k = (s * bassBoost)/r2;
+    p *= k;
+    scale *= k;
+  }
+  
+  vec3 ap = abs(p/scale);  
+  float d = length(ap.xy);
+  d = min(d, ap.z);
+  
+  float hh = 0.0;
+  if (d == ap.z){
+    // Very subtle high frequency influence
+    hh += 0.5 + getHighIntensity() * 0.02;
+  }
+  h = hh;
+  return d;
+}
+
+float df(vec2 p, out float h) {
+  // Subtle overall intensity modulation
+  float intensityMod = getOverallIntensity() * 0.03;
+  const float fz = 1.0 - 0.0;
+  float z = 1.55 * fz * (1.0 + intensityMod);
+  
+  p /= z;
+  
+  // Very subtle mid-frequency modulation
+  float midMod = getMidIntensity() * 0.01;
+  
+  vec3 p3 = vec3(p, 0.1 + midMod);
+  p3.xz *= g_rot0;
+  p3.yz *= g_rot1;
+  
+  float d = apolloian(p3, 1.0/fz, h);
+  d *= z;
+  return d;
+}
+
+float shadow(vec2 lp, vec2 ld, float mint, float maxt) {
+  // Subtle bass influence on shadows
+  float bassImpact = 1.0 - getBassIntensity() * 0.05; 
+  float ds = 1.0 - 0.4 * bassImpact;
+  
+  float t = mint;
+  float nd = 1E6;
+  float h;
+  
+  // Very subtle high-frequency modulation
+  float highMod = getHighIntensity();
+  float soff = 0.05 + highMod * 0.005;
+  float smul = 1.5 + highMod * 0.1;
+  
+  for (int i=0; i < MAX_MARCHES; ++i) {
+    vec2 p = lp + ld*t;
+    float d = df(p, h);
+    if (d < TOLERANCE || t >= maxt) {
+      float sd = 1.0-exp(-smul*max(t/maxt-soff, 0.0));
+      return t >= maxt ? mix(sd, 1.0, smoothstep(0.0, 0.025, nd)) : sd;
+    }
+    nd = min(nd, d);
+    t += ds*d;
+  }
+  
+  float sd = 1.0-exp(-smul*max(t/maxt-soff, 0.0));
+  return sd;
+}
+
+vec3 effect(vec2 p, vec2 q) {
+  float aa = 2.0/RESOLUTION.y;
+  
+  // Keep original time-based rotation
+  float a = 0.1*TIME;
+  
+  g_rot0 = ROT(0.5*a); 
+  g_rot1 = ROT(sqrt(0.5)*a);
+  
+  // Very subtle light position influence
+  float midMod = getMidIntensity() * 0.05;
+  vec2 lightPos = vec2(midMod * 0.05, 1.0 + midMod * 0.05);
+  
+  lightPos *= (g_rot1);
+  vec2 lightDiff = lightPos - p;
+  float lightD2 = dot(lightDiff, lightDiff);
+  float lightLen = sqrt(lightD2);
+  vec2 lightDir = lightDiff / lightLen;
+  vec3 lightPos3 = vec3(lightPos, 0.0);
+  vec3 p3 = vec3(p, -1.0);
+  float lightLen3 = distance(lightPos3, p3);
+  vec3 lightDir3 = normalize(lightPos3-p3);
+  vec3 n3 = vec3(0.0, 0.0, 1.0);
+  float diff = max(dot(lightDir3, n3), 0.0);
+  
+  float h;
+  float d = df(p, h);
+  float ss = shadow(p, lightDir, 0.005, lightLen);
+  
+  // Subtle color modulation with audio
+  float bassHueShift = getBassIntensity() * 0.03;
+  float highSatMod = getHighIntensity() * 0.05;
+  vec3 bcol = hsv2rgb(vec3(
+      fract(h - 0.2 * length(p) + 0.25 * TIME + bassHueShift), 
+      0.666 + highSatMod, 
+      1.0
+  ));
+  
+  vec3 col = vec3(0.0);
+  
+  // Subtle lighting intensity modulation
+  float lightIntensity = 0.5 * (1.0 + getOverallIntensity() * 0.1);
+  col += mix(0., 1.0, diff) * lightIntensity * mix(0.1, 1.0, ss)/(lightLen3 * lightLen3);
+  
+  // Subtle glow modulation with bass
+  float glowIntensity = 300.0 + getBassIntensity() * 20.0;
+  col += exp(-glowIntensity * abs(d)) * sqrt(bcol);
+  
+  // Subtle bloom modulation with high frequencies
+  float bloomIntensity = 40.0 + getHighIntensity() * 5.0;
+  col += exp(-bloomIntensity * max(lightLen-0.02, 0.0));
+ 
+  return col;
+}
+
+void mainImage(out vec4 fragColor, in vec2 fragCoord) {
+  vec2 q = fragCoord/RESOLUTION.xy;
+  vec2 p = -1. + 2. * q;
+  p.x *= RESOLUTION.x/RESOLUTION.y;
+  
+  vec3 col = effect(p, q);
+  
+  // Very subtle bass pulse
+  float bassPulse = 1.0 + getBassIntensity() * 0.05;
+  col *= bassPulse * mix(0.0, 1.0, smoothstep(0.0, 4.0, TIME));
+  
+  col = sRGB(col);
+  
+  fragColor = vec4(col, 1.0);
+}`,
     "Primordial Soup": `
     // Helper function to apply neon psychedelic color palette
 vec3 NeonPsychedelicColor(float t) {
@@ -1729,6 +1931,183 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
     color.b = min(1.0, color.b * 0.5);
     
     fragColor = vec4(color, 1.0);
+}`,
+"Solar": `
+// Audio reactive sun shader with granite-like texture
+precision highp float;
+
+// Improved noise function for more granite-like patterns
+float hash(float n) {
+    return fract(sin(n) * 43758.5453);
+}
+
+float noise(vec3 x) {
+    vec3 p = floor(x);
+    vec3 f = fract(x);
+    f = f * f * (3.0 - 2.0 * f);
+    
+    float n = p.x + p.y * 157.0 + 113.0 * p.z;
+    return mix(
+        mix(mix(hash(n + 0.0), hash(n + 1.0), f.x),
+            mix(hash(n + 157.0), hash(n + 158.0), f.x), f.y),
+        mix(mix(hash(n + 113.0), hash(n + 114.0), f.x),
+            mix(hash(n + 270.0), hash(n + 271.0), f.x), f.y), f.z
+    );
+}
+
+// Fractional Brownian Motion for more detailed texture
+float fbm(vec3 x) {
+    float v = 0.0;
+    float a = 0.5;
+    vec3 shift = vec3(100.0);
+    
+    for (int i = 0; i < 5; ++i) {
+        v += a * noise(x);
+        x = x * 2.0 + shift;
+        a *= 0.5;
+    }
+    return v;
+}
+
+float getAudioData(float x) {
+    return texture2D(iChannel0, vec2(x, 0.0)).x;
+}
+
+// Enhanced granite-like texture
+vec3 graniteTexture(vec2 uv, float time) {
+    float audio = getAudioData(0.1) * 2.0;
+    float audioMid = getAudioData(0.5) * 1.5;
+    float audioHigh = getAudioData(0.8);
+    
+    // Multiple layers of noise for granite effect
+    vec3 p = vec3(uv * 8.0, time * 0.2);
+    float pattern = fbm(p);
+    
+    // Add swirling motion
+    p.xy += vec2(
+        sin(time * 0.5 + audio * 2.0) * 0.2,
+        cos(time * 0.3 + audioMid * 2.0) * 0.2
+    );
+    
+    // Second layer of noise
+    pattern += fbm(p * 2.0) * 0.5;
+    
+    // Add plasma-like effect
+    float plasma = sin(uv.x * 10.0 + time) * cos(uv.y * 8.0 - time) * 0.25;
+    pattern += plasma * audioHigh;
+    
+    // Create color variations
+    vec3 color1 = vec3(1.0, 0.9, 0.6); // Warm light color
+    vec3 color2 = vec3(1.0, 0.7, 0.3); // Darker warm color
+    vec3 color3 = vec3(0.9, 0.6, 0.2); // Orange accent
+    
+    vec3 finalColor = mix(color1, color2, pattern);
+    finalColor = mix(finalColor, color3, fbm(p * 4.0 + audio));
+    
+    // Add audio reactive highlights
+    finalColor += vec3(1.0, 0.9, 0.7) * audioHigh * 0.5;
+    
+    return finalColor;
+}
+
+float snoise(vec3 uv, float res) {
+    const vec3 s = vec3(1e0, 1e2, 1e4);
+    
+    uv *= res;
+    vec3 uv0 = floor(mod(uv, res))*s;
+    vec3 uv1 = floor(mod(uv+vec3(1.), res))*s;
+    
+    vec3 f = fract(uv); f = f*f*(3.0-2.0*f);
+    
+    vec4 v = vec4(uv0.x+uv0.y+uv0.z, uv1.x+uv0.y+uv0.z,
+                  uv0.x+uv1.y+uv0.z, uv1.x+uv1.y+uv0.z);
+    
+    vec4 r = fract(sin(v*1e-3)*1e5);
+    float r0 = mix(mix(r.x, r.y, f.x), mix(r.z, r.w, f.x), f.y);
+    
+    r = fract(sin((v + uv1.z - uv0.z)*1e-3)*1e5);
+    float r1 = mix(mix(r.x, r.y, f.x), mix(r.z, r.w, f.x), f.y);
+    
+    return mix(r0, r1, f.z)*2.-1.;
+}
+
+void mainImage(out vec4 fragColor, in vec2 fragCoord) {
+    float freqs[4];
+    freqs[0] = getAudioData(0.01);
+    freqs[1] = getAudioData(0.07);
+    freqs[2] = getAudioData(0.15);
+    freqs[3] = getAudioData(0.30);
+    
+    float brightness = freqs[1] * 0.25 + freqs[2] * 0.25;
+    float radius = 0.24 + brightness * 0.2;
+    float invRadius = 1.0/radius;
+    
+    vec3 orange = vec3(0.8, 0.65, 0.3);
+    vec3 orangeRed = vec3(0.8, 0.35, 0.1);
+    float time = iTime * 0.1;
+    float aspect = iResolution.x/iResolution.y;
+    vec2 uv = fragCoord.xy / iResolution.xy;
+    vec2 p = -0.5 + uv;
+    p.x *= aspect;
+    
+    float fade = pow(length(2.0 * p), 0.5);
+    float fVal1 = 1.0 - fade;
+    float fVal2 = 1.0 - fade;
+    
+    float angle = atan(p.x, p.y)/6.2832;
+    float dist = length(p);
+    vec3 coord = vec3(angle, dist, time * 0.1);
+    
+    float newTime1 = abs(snoise(coord + vec3(0.0, -time * (0.35 + brightness * 0.001), time * 0.015), 15.0));
+    float newTime2 = abs(snoise(coord + vec3(0.0, -time * (0.15 + brightness * 0.001), time * 0.015), 45.0));
+    
+    for(int i=1; i<=7; i++) {
+        float power = pow(2.0, float(i + 1));
+        fVal1 += (0.5 / power) * snoise(coord + vec3(0.0, -time, time * 0.2), (power * (10.0) * (newTime1 + 1.0)));
+        fVal2 += (0.5 / power) * snoise(coord + vec3(0.0, -time, time * 0.2), (power * (25.0) * (newTime2 + 1.0)));
+    }
+    
+    float corona = pow(fVal1 * max(1.1 - fade, 0.0), 2.0) * 50.0;
+    corona += pow(fVal2 * max(1.1 - fade, 0.0), 2.0) * 50.0;
+    corona *= 1.2 - newTime1;
+    
+    vec3 starSphere = vec3(0.0);
+    
+    vec2 sp = -1.0 + 2.0 * uv;
+    sp.x *= aspect;
+    sp *= (2.0 - brightness);
+    float r = dot(sp,sp);
+    float f = (1.0-sqrt(abs(1.0-r)))/(r) + brightness * 0.5;
+    
+    if(dist < radius) {
+        corona *= pow(dist * invRadius, 24.0);
+        vec2 newUv;
+        newUv.x = sp.x*f;
+        newUv.y = sp.y*f;
+        newUv += vec2(time, 0.0);
+        
+        // Use the new granite texture
+        vec3 granite = graniteTexture(newUv, time);
+        float uOff = (granite.g * brightness * 4.5 + time);
+        vec2 starUV = newUv + vec2(uOff, 0.0);
+        starSphere = graniteTexture(starUV, time * 1.5);
+        
+        // Make it more reactive to audio
+        float audioHigh = getAudioData(0.8);
+        starSphere *= 1.0 + audioHigh * 2.0;
+    }
+    
+    float starGlow = min(max(1.0 - dist * (1.0 - brightness), 0.0), 1.0);
+    float audioInfluence = getAudioData(0.2) * 0.5;
+    
+    orange = mix(orange, orange * 1.2, audioInfluence);
+    orangeRed = mix(orangeRed, orangeRed * 1.3, audioInfluence);
+    
+    fragColor.rgb = vec3(f * (0.75 + brightness * 0.3) * orange) + 
+                    starSphere + 
+                    corona * orange + 
+                    starGlow * orangeRed;
+    fragColor.a = 1.0;
 }`
 };
 
