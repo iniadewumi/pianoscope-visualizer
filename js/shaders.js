@@ -1,6 +1,73 @@
 
 // Sample Shadertoy shaders to quickly test
 export const SAMPLE_SHADERS = {
+"Procedural Circuitry": `// This content is under the MIT License.
+
+#define time iTime*.02
+#define width .005
+float zoom = .18;
+
+float shape = 0.;
+vec3 color = vec3(0.), randcol;
+
+vec3 palette(float t) {
+    return 0.5 + 0.5*cos(6.28318*t + vec3(0.0, 0.33, 0.67));
+}
+
+void formula(vec2 z, float c) {
+    float minit = 0.;
+    float o, ot2, ot = ot2 = 1000.;
+    for (int i = 0; i < 9; i++) {
+        z = abs(z) / clamp(dot(z, z), .1, .5) - c;
+        float l = length(z);
+        o = min(max(abs(min(z.x, z.y)),-l+.25), abs(l-.25));
+        ot = min(ot, o);
+        ot2 = min(l * .1, ot2);
+        minit = max(minit, float(i) * (1. - abs(sign(ot - o))));
+    }
+    minit += 1.;
+    float w = width * minit * 2.;
+    float circ = pow(max(0., w - ot2) / w, 6.);
+    shape += max(pow(max(0., w - ot) / w, .25), circ);
+    vec3 col = normalize(.1 + texture(iChannel1, vec2(minit * .1)).rgb);
+    color += col * (.4 + mod(minit / 9. - time * 10. + ot2 * 2., 1.) * 1.6);
+    color += vec3(1., .7, .3) * circ * (10. - minit) * 3. * 
+             smoothstep(0., .5, .15 + texture(iChannel0, vec2(.0, 1.)).x - .5);
+}
+
+void mainImage(out vec4 fragColor, in vec2 fragCoord) {
+    vec2 pos = fragCoord.xy / iResolution.xy - .5;
+    pos.x *= iResolution.x / iResolution.y;
+    vec2 uv = pos;
+    float sph = length(uv); 
+    sph = sqrt(1. - sph * sph) * 1.5; 
+    uv = normalize(vec3(uv, sph)).xy;
+    
+    float a = time + mod(time, 1.) * .5;
+    float b = a * 5.48535;
+    uv *= mat2(cos(b), sin(b), -sin(b), cos(b));
+    uv += vec2(sin(a), cos(a * .5)) * 8.;
+    uv *= zoom;
+    
+    float pix = .5 / iResolution.x * zoom / sph;
+    float dof = max(1., (10. - mod(time, 1.) / .01));
+    float c = 1.5 + mod(floor(time), 6.) * .125;
+    for (int aa = 0; aa < 36; aa++) {
+        vec2 aauv = floor(vec2(float(aa) / 6., mod(float(aa), 6.)));
+        formula(uv + aauv * pix * dof, c);
+    }
+    shape /= 36.;
+    color /= 36.;
+    
+    vec3 pal = palette(time * 0.3 + shape);
+    vec3 base = mix(vec3(.15), color, shape);
+    vec3 colo = base * pal * (1. - length(pos)) * min(1., abs(.5 - mod(time + .5, 1.)) * 10.);
+    
+    // Brighten the output by increasing the multipliers
+    colo *= vec3(1.4, 1.3, 1.2);
+    fragColor = vec4(colo, 1.0);
+}
+`,
     "Need Space": `//CBS
 //Parallax scrolling fractal galaxy.
 //Inspired by JoshP's Simplicity shader: https://www.shadertoy.com/view/lslGWr
@@ -491,277 +558,7 @@ void mainImage( out vec4 fragColor, in vec2 fragCoord) {
     fragColor = vec4(finalColor, 1.0);
 }`,
 
-"Yawning Void!": `precision highp float;
 
-uniform vec2 iResolution;
-uniform float iTime;
-uniform sampler2D iChannel0;
-uniform vec4 iMouse;
-
-// ========== CONFIGURATION ==========
-const float FLOW_SPEED = 0.5;           // How fast the fluid moves
-const float FLUID_SCALE = 3.0;          // Scale of fluid simulation
-const float COLOR_INTENSITY = 0.7;      // Color saturation multiplier
-const float PARTICLE_DENSITY = 2.0;     // Density of particle system
-const float TURBULENCE = 2.8;           // Turbulence in the fluid
-const int OCTAVES = 5;                  // Detail level for noise
-
-// ========== NOISE FUNCTIONS ==========
-// Hash function for random values
-float hash(vec2 p) {
-    p = fract(p * vec2(123.34, 456.21));
-    p += dot(p, p + 45.32);
-    return fract(p.x * p.y);
-}
-
-// Smooth noise function
-float noise(vec2 p) {
-    vec2 i = floor(p);
-    vec2 f = fract(p);
-    
-    // Smooth interpolation
-    vec2 u = f * f * (3.0 - 2.0 * f);
-    
-    // Sample 4 corners
-    float a = hash(i);
-    float b = hash(i + vec2(1.0, 0.0));
-    float c = hash(i + vec2(0.0, 1.0));
-    float d = hash(i + vec2(1.0, 1.0));
-    
-    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
-}
-
-// Fractal Brownian Motion
-float fbm(vec2 p) {
-    float value = 0.0;
-    float amplitude = 0.5;
-    float frequency = 1.0;
-    
-    for (int i = 0; i < OCTAVES; i++) {
-        value += amplitude * noise(p * frequency);
-        amplitude *= 0.5;
-        frequency *= 2.0;
-    }
-    
-    return value;
-}
-
-// ========== AUDIO ANALYSIS ==========
-// Extract bass for primary flow
-float getAudioBass() {
-    float bass = 0.0;
-    for (int i = 0; i < 20; i++) {
-        float sample = texture2D(iChannel0, vec2(float(i) / 128.0, 0.0)).x;
-        bass += sample;
-    }
-    return bass * 0.08; // Scale to reasonable range
-}
-
-// Extract mids for fluid details
-float getAudioMid() {
-    float mid = 0.0;
-    for (int i = 20; i < 50; i++) {
-        float sample = texture2D(iChannel0, vec2(float(i) / 128.0, 0.0)).x;
-        mid += sample;
-    }
-    return mid * 0.04;
-}
-
-// Extract highs for particle effects
-float getAudioHigh() {
-    float high = 0.0;
-    for (int i = 50; i < 100; i++) {
-        float sample = texture2D(iChannel0, vec2(float(i) / 128.0, 0.0)).x;
-        high += sample;
-    }
-    return high * 0.025;
-}
-
-// Analyze overall spectrum shape for color modulation
-float getAudioSpectrum(float freqRange) {
-    int startBin = int(freqRange * 100.0);
-    int endBin = int(min(freqRange * 100.0 + 10.0, 127.0));
-    
-    float value = 0.0;
-    for (int i = 0; i < 128; i++) {
-        if (i >= startBin && i <= endBin) {
-            value += texture2D(iChannel0, vec2(float(i) / 128.0, 0.0)).x;
-        }
-    }
-    
-    return value * 0.1;
-}
-
-// ========== FLUID DYNAMICS ==========
-// Calculate fluid vector field
-vec2 fluidField(vec2 uv, float time, float bass) {
-    // First layer - large slow movement
-    vec2 flow1 = vec2(
-        fbm(uv * 0.5 + vec2(0.0, time * 0.1)),
-        fbm(uv * 0.5 + vec2(time * 0.1, 0.0))
-    );
-    
-    // Second layer - medium detail
-    vec2 flow2 = vec2(
-        fbm(uv * 1.0 + vec2(0.0, time * 0.2) + flow1 * TURBULENCE),
-        fbm(uv * 1.0 + vec2(time * 0.2, 0.0) + flow1 * TURBULENCE)
-    );
-    
-    // Final layer with bass boost
-    vec2 finalFlow = vec2(
-        fbm(uv * 1.5 + vec2(0.0, time * 0.3) + flow2 * bass * TURBULENCE),
-        fbm(uv * 1.5 + vec2(time * 0.3, 0.0) + flow2 * bass * TURBULENCE)
-    );
-    
-    return finalFlow * 2.0 - 1.0; // Range -1 to 1
-}
-
-// ========== PARTICLE SYSTEM ==========
-float particleSystem(vec2 uv, float time, vec2 flowField, float audio) {
-    float particles = 0.0;
-    
-    // Grid of potential particle positions
-    for (float i = 0.0; i < 3.0; i++) {
-        for (float j = 0.0; j < 3.0; j++) {
-            // Create particle cell
-            vec2 cellUV = floor(uv * PARTICLE_DENSITY + vec2(i, j)) / PARTICLE_DENSITY;
-            
-            // Random position within cell
-            float random = hash(cellUV);
-            vec2 particlePos = cellUV + vec2(random, hash(cellUV + 1.234));
-            
-            // Move particle with flow field
-            particlePos += flowField * FLOW_SPEED * (0.1 + audio) * time * (0.5 + random * 0.5);
-            
-            // Wrap position
-            particlePos = fract(particlePos);
-            
-            // Calculate distance to particle
-            float dist = length(uv - particlePos);
-            
-            // Create star/dot effect
-            float brightness = 0.0005 / (dist * dist);
-            
-            // Vary particle size with audio
-            brightness *= 1.0 + audio * 10.0 * hash(cellUV + time);
-            
-            // Accumulate
-            particles += brightness;
-        }
-    }
-    
-    return particles;
-}
-
-// ========== COLOR FUNCTIONS ==========
-// Purple-gold space color mapping
-vec3 spaceColors(float value, float time, float audio) {
-    // Create a cosmic palette with stars, nebulae, and golden accents
-    
-    // Base space color (deeper, darker purple)
-    vec3 spaceColor = vec3(0.02, 0.0, 0.05);
-    
-    // Add cosmic purple dust clouds (more subtle)
-    vec3 purpleNebula = vec3(0.25, 0.0, 0.4) * smoothstep(0.1, 0.7, value);
-    
-    // Add golden nebula accents (more muted)
-    vec3 goldNebula = vec3(0.7, 0.5, 0.15) * smoothstep(0.7, 0.95, value);
-    
-    // Audio-reactive color shift
-    float colorShift = audio * 2.0 * sin(time * 0.1);
-    
-    // Combine all elements
-    vec3 finalColor = spaceColor;
-    finalColor += purpleNebula * (1.0 + colorShift);
-    finalColor += goldNebula * (1.0 - colorShift * 0.5);
-    
-    return finalColor;
-}
-
-// ========== MAIN FUNCTION ==========
-void main() {
-    // Normalized coordinates
-    vec2 uv = gl_FragCoord.xy / iResolution.xy;
-    vec2 centered = uv * 2.0 - 1.0;
-    centered.x *= iResolution.x / iResolution.y; // Correct aspect ratio
-    
-    // Time variables
-    float time = iTime * FLOW_SPEED;
-    
-    // Get audio values
-    float bass = getAudioBass();
-    float mid = getAudioMid();
-    float high = getAudioHigh();
-    float audioTotal = bass + mid + high;
-    
-    // Frequency-specific audio analysis for color
-    float lowMids = getAudioSpectrum(0.2); // ~20Hz range
-    float highMids = getAudioSpectrum(0.5); // ~50Hz range
-    
-    // Apply mouse movement if active
-    vec2 mouseOffset = vec2(0.0);
-    if (iMouse.z > 0.0) {
-        mouseOffset = (iMouse.xy / iResolution.xy - 0.5) * 2.0;
-        centered += mouseOffset * 0.2;
-    }
-    
-    // Scale for zoom effect
-    float zoom = 1.0 + bass * 0.5;
-    centered /= zoom;
-    
-    // Calculate fluid flow field
-    vec2 flowField = fluidField(centered * FLUID_SCALE, time, bass);
-    
-    // Use flow field to distort coordinates for the fluid effect
-    vec2 distortedUV = centered + flowField * (0.1 + bass * 0.2);
-    
-    // Generate multi-layered fluid patterns
-    float fluidLayer1 = fbm(distortedUV * 2.0 + time * 0.1);
-    float fluidLayer2 = fbm(distortedUV * 4.0 - flowField * 3.0 + time * 0.2);
-    float fluidLayer3 = fbm(distortedUV * 8.0 + flowField * 1.0 - time * 0.3);
-    
-    // Layer the fluid effects with audio modulation
-    float fluidPattern = fluidLayer1 * 0.5;
-    fluidPattern += fluidLayer2 * 0.3 * (1.0 + mid * 2.0);
-    fluidPattern += fluidLayer3 * 0.2 * (1.0 + high * 4.0);
-    
-    // Add subtle vortex effect
-    float angle = atan(centered.y, centered.x);
-    float radius = length(centered);
-    fluidPattern += 0.1 * sin(angle * 3.0 + radius * 5.0 - time + bass * 5.0);
-    
-    // Generate particle star field
-    float particles = particleSystem(centered, time, flowField, high);
-    
-    // Map fluid pattern to cosmic colors
-    vec3 fluidColor = spaceColors(fluidPattern, time, lowMids);
-    
-    // Add audio-reactive golden particles (dimmer)
-    vec3 particleColor = vec3(0.8, 0.7, 0.4) * particles * (3.0 + high * 20.0);
-    
-    // Add subtle purple accents in dark regions
-    vec3 purpleAccent = vec3(0.3, 0.0, 0.6) * smoothstep(0.6, 0.0, fluidPattern) * highMids * 1.5;
-    
-    // Combine all elements
-    vec3 finalColor = fluidColor;
-    finalColor += particleColor;
-    finalColor += purpleAccent;
-    
-    // Apply subtle pulsing glow
-    float pulse = 0.5 + 0.5 * sin(time * 0.5) * bass;
-    finalColor *= 1.0 + pulse * 0.2;
-    
-    // Color correction - darker with more contrast
-    finalColor = pow(finalColor, vec3(1.1)); // Gamma correction (higher value = darker)
-    finalColor *= COLOR_INTENSITY; // Reduced intensity
-    
-    // Add subtle vignette
-    float vignette = smoothstep(1.8, 0.5, radius / zoom);
-    finalColor *= vignette;
-    
-    // Output
-    gl_FragColor = vec4(finalColor, 1.0);
-}`,
 "Trippy Cheese Rail":`
 // "Fractal Cartoon" - former "DE edge detection" by Kali
 // Modified with audio reactivity for jumping on beat
@@ -1443,217 +1240,89 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
     vec2 uv = fragCoord.xy / iResolution.xy;
     vec2 p = (-3.5 + 7.0 * uv) * vec2(iResolution.x/iResolution.y, 1.0);
     
-    // Sound texture sampling
+    // Enhanced sound analysis
     int soundTx = int(uv.x * 512.0);
     float wave = texelFetch(iChannel0, ivec2(soundTx, 1), 0).x;
     
-    // Calculate base distance
-    float d = length(p/1.0 - vec2(sin(iTime*0.1), cos(iTime*0.4)));
-    p = p/1.0 - vec2(sin(iTime*0.1), cos(iTime*0.4));
+    // Smooth out the wave response
+    float smoothWave = wave * 0.5 + 0.5; // Normalize to 0-1 range
+    smoothWave = pow(smoothWave, 1.5); // Add some curve to the response
     
-    // Avoid potential division by zero in sin(wave + uv.y)
-    float waveOffset = wave + uv.y + 0.001;
-    d = smoothstep(0.4, 0.5, d * d * (-2.0 * sin((wave/1.5) - uv.y)) + 2.0/sin(waveOffset)) * d * d;
+    // Base movement speed
+    float baseSpeed = 0.4;
+    vec2 baseOffset = vec2(sin(iTime*baseSpeed), cos(iTime*baseSpeed));
     
-    // Calculate phi, handling potential division by zero
-    float phi = p.x != 0.0 ? atan(p.y, p.x) - iTime * 0.8 : sign(p.y) * 3.14159/2.0 - iTime * 0.8;
+    // Calculate distance with smooth falloff
+    float d = length(p/1.0 - baseOffset);
+    p = p/1.0 - baseOffset;
     
-    d *= sin(phi * 46.0);
+    // Improved center visualization
+    float centerSoftness = 0.8;
+    float centerSize = 0.4;
+    float smoothD = smoothstep(centerSize, centerSize + centerSoftness, d);
     
-    // Fix potential undefined behavior in color calculations
-    vec3 col = vec3(atan(max(d, -100.0)), 0.1, -sqrt(max(0.0, d))) + d;
-    col *= sin(iTime/(d + 0.001) * (d + 0.001));
-    col -= d/1.2;
+    // Create dynamic wave rings
+    float ringCount = 5.0;
+    float ringSpeed = 2.0;
+    float rings = sin(d * ringCount - iTime * ringSpeed);
+    rings = smoothstep(-0.2, 0.2, rings);
     
-    // Avoid division by zero and undefined behavior
+    // Wave effect calculation with improved visual integration
+    float waveStrength = smoothWave;
+    float waveFrequency = 1.5 + waveStrength * 2.0;
+    float waveOffset = sin(uv.y * waveFrequency + iTime) * waveStrength;
+    
+    // Create a more dynamic wave pattern
+    float wavePattern = sin((d + waveOffset) * 10.0) * 0.5 + 0.5;
+    wavePattern *= smoothstep(1.0, 0.0, d); // Fade out with distance
+    
+    // Calculate phi with rotation
+    float rotationSpeed = 2.0;
+    float phi = p.x != 0.0 ? atan(p.y, p.x) - iTime * rotationSpeed : 
+                            sign(p.y) * 3.14159/2.0 - iTime * rotationSpeed;
+    
+    // Enhanced radial pattern
+    float patternDetail = 36.0;
+    float radialPattern = sin(phi * patternDetail + d * 2.0);
+    
+    // Combine patterns with wave influence
+    float combinedPattern = mix(radialPattern, rings, waveStrength * 0.3);
+    d *= combinedPattern;
+    
+    // Color calculation with wave influence
+    vec3 baseColor = vec3(atan(max(d, -100.0)), 0.1, -sqrt(max(0.0, d))) + d;
+    
+    // Add wave-reactive color shifts
+    vec3 waveColor = vec3(0.4, 0.6, 1.0); // Blue-ish tone for wave
+    float colorIntensity = sin(iTime/(d + 0.001) * (d + 0.001));
+    baseColor *= colorIntensity;
+    baseColor -= d/1.2;
+    
+    // Add wave-reactive glow
+    vec3 glowColor = vec3(0.2, 0.4, 1.0) * wavePattern * waveStrength;
+    
+    // Spatial color variation
     float denominator = max(p.x * p.x + p.y * p.y, 0.001);
     float timeEffect = tan(mod(iTime, 6.28318530718)) * 0.5;
-    col *= 1.0 * sin((-(denominator) * 2.0 - iTime * 6.0) / -denominator * timeEffect);
+    float colorWave = sin((-(denominator) * 2.0 - iTime * 6.0) / -denominator * timeEffect);
     
-    // Clamp final color to avoid undefined values
+    // Final color composition
+    vec3 col = baseColor;
+    col *= mix(1.0, colorWave, smoothD);
+    col += glowColor * smoothstep(0.5, 0.0, d); // Add glow in center
+    
+    // Wave-reactive color enhancement
+    col = mix(col, waveColor, wavePattern * waveStrength * 0.3);
+    
+    // Add subtle pulse on strong beats
+    float pulse = smoothstep(0.7, 1.0, waveStrength) * sin(iTime * 10.0) * 0.2;
+    col += pulse * vec3(0.2, 0.3, 0.5);
+    
+    // Final color correction
+    col = mix(col, vec3(0.5), smoothstep(0.0, 0.1, d) * 0.2);
     col = clamp(col, -1.0, 1.0);
     
     fragColor = vec4(col, 1.0);
-}`,
-"House": `precision mediump float;
-
-uniform vec2 iResolution;
-uniform float iTime;
-uniform sampler2D iChannel0;
-uniform vec4 iMouse;
-
-// House music specific frequency ranges
-#define KICK_FREQ 0.07     // 20-60Hz for kick drums
-#define BASS_FREQ 0.15     // 60-150Hz for bass lines
-#define MID_FREQ 0.4       // Mids for synths and vocals
-#define HIGH_FREQ 0.7      // Highs for hi-hats and cymbals
-
-// House-inspired color palette
-#define NEON_BLUE vec3(0.0, 0.8, 1.0)
-#define NEON_PINK vec3(1.0, 0.1, 0.8)
-#define NEON_GREEN vec3(0.1, 1.0, 0.4)
-#define NEON_PURPLE vec3(0.6, 0.0, 1.0)
-
-// Beat detection vars
-float prevKick = 0.0;
-float kickTrigger = 0.0;
-float beatCount = 0.0;
-float lastBeatTime = 0.0;
-
-// Get frequency response from a specific range
-float getFrequencyResponse(float lowFreq, float highFreq) {
-    float sum = 0.0;
-    int steps = int((highFreq - lowFreq) / 0.01);
-    
-    for(int j = 0; j < 100; j++) {
-        if(j >= steps) break; // Ensure we don't exceed the calculated steps
-        float i = lowFreq + float(j) * 0.01;
-        sum += texture2D(iChannel0, vec2(i, 0.0)).x;
-    }
-    
-    return sum / max(1.0, float(steps));
-}
-
-// Detect kick drum for the 4/4 house beat
-float detectKick(float time) {
-    float currentKick = getFrequencyResponse(0.01, KICK_FREQ);
-    
-    // Detect sudden increase in kick frequency energy
-    float kickHit = max(0.0, currentKick - prevKick * 1.2);
-    
-    // If we detect a significant kick
-    if(kickHit > 0.1) {
-        // Calculate BPM and track beat count
-        float timeSinceLastBeat = time - lastBeatTime;
-        if(timeSinceLastBeat > 0.2) {  // Avoid false triggers
-            beatCount = mod(beatCount + 1.0, 4.0);
-            lastBeatTime = time;
-        }
-    }
-    
-    // Keep track of the previous frame's value
-    prevKick = mix(prevKick, currentKick, 0.4); // Fast reaction
-    
-    // Trigger that decays for visual impact
-    kickTrigger = max(kickTrigger * 0.9, kickHit * 8.0);
-    
-    return kickTrigger;
-}
-
-// 2D rotation function
-mat2 rotate2D(float angle) {
-    float s = sin(angle);
-    float c = cos(angle);
-    return mat2(c, -s, s, c);
-}
-
-// Grid function with audio reactivity
-vec3 audioReactiveGrid(vec2 uv, float time, float kick, float bass, float high) {
-    // Rotate and scale UV based on kick and bass
-    uv = rotate2D(time * 0.1 + kick * 0.2) * uv;
-    uv *= 1.0 + bass * 0.3 - kick * 0.2;
-    
-    // Create grid lines that pulse with the beat
-    vec2 grid = abs(fract(uv * (5.0 + high * 5.0)) - 0.5);
-    float gridLines = smoothstep(0.05 + kick * 0.05, 0.0, min(grid.x, grid.y));
-    
-    // Create concentric circles that pulse with kicks
-    float circles = abs(fract(length(uv) * (3.0 + bass * 3.0)) - 0.5);
-    float circleLines = smoothstep(0.05 + kick * 0.1, 0.0, circles);
-    
-    // Calculate angle for color variation
-    float angle = atan(uv.y, uv.x) / (3.14159 * 2.0) + 0.5;
-    
-    // Create color based on position and beat
-    vec3 color = mix(NEON_BLUE, NEON_PINK, angle + bass * 0.5);
-    color = mix(color, NEON_GREEN, fract(length(uv) * 2.0 - time * 0.1));
-    
-    // Apply grid and circles
-    color = mix(color * 0.2, color, gridLines);
-    color = mix(color, NEON_PURPLE, circleLines * kick);
-    
-    // Add kick flash
-    color += NEON_PINK * kick * 0.5;
-    
-    // Pulse intensity based on beat count (4/4 rhythm)
-    float beatIntensity = beatCount == 0.0 ? 1.0 : 
-                         (beatCount == 2.0 ? 0.8 : 0.6);
-    
-    color *= 0.8 + beatIntensity * kick * 0.5;
-    
-    return color;
-}
-
-// Tunnel effect that responds to bass
-vec3 audioReactiveTunnel(vec2 uv, float time, float kick, float bass, float high) {
-    // Calculate polar coordinates
-    float angle = atan(uv.y, uv.x);
-    float radius = length(uv);
-    
-    // Distort based on beat
-    angle += sin(radius * 10.0 - time * 2.0) * 0.2 * bass;
-    radius += sin(angle * 8.0 + time) * 0.1;
-    
-    // Create tunnel effect
-    float tunnel = fract(1.0 / radius * (0.5 + bass * 0.5) - time * 0.5);
-    tunnel = smoothstep(0.0, kick * 0.5 + 0.5, tunnel) * 
-             smoothstep(1.0, 0.7 - kick * 0.3, tunnel);
-    
-    // Add radial lines
-    float lines = fract(angle * (8.0 + high * 8.0) / 3.14159);
-    lines = smoothstep(0.5, 0.0, abs(lines - 0.5)) * tunnel;
-    
-    // Create color based on distance and angle
-    vec3 color = mix(NEON_BLUE, NEON_PINK, fract(angle / 3.14159 * 2.0 + time * 0.1));
-    color = mix(color, NEON_GREEN, fract(radius * 2.0 - time * 0.2));
-    
-    // Apply tunnel and lines
-    color *= tunnel;
-    color = mix(color, NEON_PURPLE, lines * 0.7);
-    
-    // Add kick flash
-    color += NEON_BLUE * kick * 0.3 * (1.0 - radius);
-    
-    return color;
-}
-
-void mainImage(out vec4 fragColor, in vec2 fragCoord) {
-    // Normalized coordinates
-    vec2 uv = (fragCoord.xy - 0.5 * iResolution.xy) / min(iResolution.x, iResolution.y);
-    
-    // Audio analysis
-    float kick = detectKick(iTime);
-    float bass = getFrequencyResponse(KICK_FREQ, BASS_FREQ);
-    float mid = getFrequencyResponse(BASS_FREQ, MID_FREQ);
-    float high = getFrequencyResponse(MID_FREQ, HIGH_FREQ);
-    
-    // Mouse interaction
-    float mixFactor = 0.5;
-    if (iMouse.z > 0.0) {
-        mixFactor = iMouse.x / iResolution.x;
-    }
-    
-    // Create two different visual styles
-    vec3 gridColor = audioReactiveGrid(uv, iTime, kick, bass, high);
-    vec3 tunnelColor = audioReactiveTunnel(uv, iTime, kick, bass, high);
-    
-    // Mix between styles based on mouse or mid frequencies
-    vec3 finalColor = mix(gridColor, tunnelColor, mixFactor + mid * 0.3);
-    
-    // Add vignette effect
-    float vignette = smoothstep(1.2, 0.5, length(uv * 1.2));
-    finalColor *= vignette;
-    
-    // Add beat-synchronized flash effect
-    finalColor += NEON_PINK * kick * 0.2 * (1.0 - length(uv));
-    
-    // Add subtle strobe effect on certain beats
-    if (beatCount == 0.0 || beatCount == 2.0) {
-        finalColor *= 1.0 + kick * 0.3;
-    }
-    
-    // Output final color
-    fragColor = vec4(finalColor, 1.0);
 }`,
 
 "Temporal Fractal": `
@@ -2509,7 +2178,63 @@ void mainImage( out vec4 fragColor, in vec2 fragCoord )//2 lines above are a = a
   }
   fo=mix(vec3(.1,.2,.4),vec3(.1,.1,.5),0.5+0.5*sin(np.y*.1-tt*2.));//Glow colour is actual a grdient to make it more intresting
   fragColor = vec4(pow(co+g*0.15*mix(fo.xyz,fo.zyx,clamp(sin(tt*.5),-.5,.5)+.5),vec3(.55)),1);// Naive gamma correction and glow applied at the end. Glow switches from blue to red hues - nice idea by Haptix - cheers broski
-}`
+}`,
+"Julia": `precision highp float;
+uniform vec2 iResolution;
+uniform float iTime;
+
+#define RECURSION_LIMIT 10000
+#define PI 3.141592653589793238
+
+int juliaSet(vec2 c, vec2 constant) {
+    vec2 z = c;
+    int recursionCount = 0;
+    
+    for (int i = 0; i < RECURSION_LIMIT; i++) {
+        z = vec2(z.x * z.x - z.y * z.y, 2.0 * z.x * z.y) + constant;
+        if (length(z) > 2.0) {
+            recursionCount = i;
+            break;
+        }
+    }
+    return recursionCount;
+}
+
+void main() {
+    // Using the constant that gives us that nice spiral pattern
+    vec2 constant = vec2(0.355, 0.355);
+    
+    // Coordinate setup from the reference code
+    vec2 uv = 2.0 * (gl_FragCoord.xy - 0.5 * iResolution.xy) / iResolution.y;
+    vec2 uv2 = uv;
+    
+    // Rotation
+    float a = PI / 3.0;
+    vec2 U = vec2(cos(a), sin(a));
+    vec2 V = vec2(-U.y, U.x);
+    uv = vec2(dot(uv, U), dot(uv, V));
+    uv *= 0.9;
+    
+    // Calculate Julia set
+    int recursionCount = juliaSet(uv, constant);
+    float f = float(recursionCount) / float(RECURSION_LIMIT);
+    
+    // Color calculation from reference
+    vec3 col = vec3(1.0);
+    float ff = pow(f, 1.0 - (f * 1.0));
+    
+    col.r = smoothstep(0.0, 1.0, ff) * (uv2.x * 0.5 + 0.3);
+    col.b = smoothstep(0.0, 1.0, ff) * (uv2.y * 0.5 + 0.3);
+    col.g = smoothstep(0.0, 1.0, ff) * (-uv2.x * 0.5 + 0.3);
+    
+    // Apply saturation and brightness
+    vec3 saturation = vec3(1.0, 1.0, 1.0);
+    float totalSaturation = 1.0;
+    col.rgb *= 5000.0 * saturation * totalSaturation;
+    
+    gl_FragColor = vec4(col.rgb, 1.0);
+}
+`
 };
 
 
