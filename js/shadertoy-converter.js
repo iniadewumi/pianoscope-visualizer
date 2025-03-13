@@ -10,43 +10,51 @@ import { SAMPLE_SHADERS } from './shaders.js';
 window.ShaderConverter = (function() {
     "use strict";
     
-    // Default preamble to add to converted Shadertoy shaders
     const WEBGL_PREAMBLE = `
-    precision highp float;
-    precision highp int;
-    precision mediump sampler2D;
-    
-    uniform vec2 iResolution;
-    uniform float iTime;
-    uniform float iTimeDelta;
-    uniform float iFrame;
-    uniform float iSampleRate;
-    uniform vec4 iMouse;
-    uniform vec4 iDate;
-    uniform sampler2D iChannel0;
-    uniform sampler2D iChannel1;
-    uniform sampler2D iChannel2;
-    uniform sampler2D iChannel3;
-    
-    // Helper compatibility functions for texelFetch
-    vec4 texelFetch(sampler2D sampler, ivec2 pos, int lod) {
-        return texture2D(sampler, (vec2(pos) + vec2(0.5)) / vec2(256.0));
-    }
-    
-    vec4 texelFetch(sampler2D sampler, int pos, int lod) {
-        return texture2D(sampler, vec2(float(pos) / 256.0, 0.0));
-    }
-    `;
-    
-    // Post-shader code to replace Shadertoy's mainImage function call
-    const WEBGL_MAIN = `
-    void main() {
-        vec4 fragColor;
-        mainImage(fragColor, gl_FragCoord.xy);
-        gl_FragColor = fragColor;
-    }
-    `;
-    
+precision highp float;
+
+// Version compatibility layer
+#if __VERSION__ >= 300
+    #define attribute in
+    #define varying out
+    #define texture2D texture
+    #define textureCube texture
+    #define texture2DLod textureLod
+    #define textureCubeLod textureLod
+    #define texture2DProj textureProj
+    #define texture2DProjLod textureProjLod
+#else
+    #define in varying
+    #define out varying
+#endif
+
+uniform vec2 iResolution;
+uniform float iTime;
+uniform float iTimeDelta;
+uniform float iFrame;
+uniform float iSampleRate;
+uniform vec4 iMouse;
+uniform vec4 iDate;
+uniform sampler2D iChannel0;
+uniform sampler2D iChannel1;
+uniform sampler2D iChannel2;
+uniform sampler2D iChannel3;
+`;
+
+const WEBGL_MAIN = `
+#if __VERSION__ >= 300
+void main() {
+    mainImage(fragColor, gl_FragCoord.xy);
+}
+#else
+void main() {
+    vec4 fragColor;
+    mainImage(fragColor, gl_FragCoord.xy);
+    gl_FragColor = fragColor;
+}
+#endif
+`;
+
     /**
      * Converts a Shadertoy fragment shader to WebGL format
      * @param {string} shadertoyCode - The Shadertoy shader code

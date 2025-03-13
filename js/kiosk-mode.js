@@ -31,7 +31,6 @@ const kioskHtmlContent = `<!DOCTYPE html>
     <canvas id="kiosk-canvas"></canvas>
     
     <script>
-        // Will be filled by the parent window
         let gl = null;
         let currentProgram = null;
         let audioTexture = null;
@@ -145,8 +144,9 @@ const kioskHtmlContent = `<!DOCTYPE html>
             }
             
             // Create shaders
-            const vertexShader = createShader(gl.VERTEX_SHADER, vertexSource);
-            const fragmentShader = createShader(gl.FRAGMENT_SHADER, fragmentSource);
+            const vertexShader = createShader(gl, gl.VERTEX_SHADER, vertexSource);
+            const fragmentShader = createShader(gl, gl.FRAGMENT_SHADER, fragmentSource);
+
             
             if (!vertexShader || !fragmentShader) return;
             
@@ -178,10 +178,29 @@ const kioskHtmlContent = `<!DOCTYPE html>
             gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
         }
         
-        // Create shader
-        function createShader(type, source) {
+        // Create shader function that works with string concatenation
+        function createShader(gl, type, source) {
             const shader = gl.createShader(type);
-            gl.shaderSource(shader, source);
+            const isWebGL2 = gl instanceof WebGL2RenderingContext;
+            
+            const prefix = isWebGL2 
+                ? '#version 300 es\\n' +
+                  'precision highp float;\\n' +
+                  (type === gl.FRAGMENT_SHADER ? 'out vec4 fragColor;\\n' : '') +
+                  '#define texture2D texture\\n' +
+                  (type === gl.VERTEX_SHADER ? '#define attribute in\\n' : '')
+                : '#version 100\\n' +
+                  'precision highp float;\\n' +
+                  '#define fragColor gl_FragColor\\n';
+            
+            // For fragment shaders, remap the output
+            if (type === gl.FRAGMENT_SHADER && isWebGL2) {
+                source = source.replace(/gl_FragColor/g, 'fragColor');
+            }
+            
+            const fullSource = prefix + source;
+            
+            gl.shaderSource(shader, fullSource);
             gl.compileShader(shader);
             
             if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
@@ -189,9 +208,9 @@ const kioskHtmlContent = `<!DOCTYPE html>
                 gl.deleteShader(shader);
                 return null;
             }
-            
             return shader;
         }
+
         
         // Update audio data
         function updateAudioData(newAudioData) {
