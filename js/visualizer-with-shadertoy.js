@@ -56,109 +56,119 @@ document.addEventListener('DOMContentLoaded', () => {
     `;
     
     // Default fragment shader - pulled from your index.html
+    
     const fragmentShaderSource = `
-precision highp float;
+    precision highp float;
 
-uniform vec2 iResolution;
-uniform float iTime;
-uniform sampler2D iChannel0;
+    uniform vec2 iResolution;
+    uniform float iTime;
+    uniform sampler2D iChannel0;
 
-void main() {
-    // Sample audio with minimal processing
-    float bass = texture2D(iChannel0, vec2(0.05, 0.0)).x;
-    float lowMid = texture2D(iChannel0, vec2(0.15, 0.0)).x;
-    float mid = texture2D(iChannel0, vec2(0.3, 0.0)).x;
-    float high = texture2D(iChannel0, vec2(0.7, 0.0)).x;
-    
-    // Beat detection - compare current bass to a threshold
-    // This creates more defined pulses instead of continuous response
-    float beatThreshold = 0.15;
-    float beatPulse = smoothstep(beatThreshold, beatThreshold + 0.1, bass) * 0.3;
-    
-    // Overall audio intensity (weighted toward bass)
-    float audioIntensity = bass * 0.6 + lowMid * 0.25 + mid * 0.1 + high * 0.05;
-    
-    // Keep original time speed
-    float timeFactor = 0.2; // Original speed from XorDev's shader
-    
-    // Small pulse effect for beats
-    float beatPulseFactor = 1.0 + beatPulse;
-    
-    // Black hole size/density responds to audio intensity
-    // Inverse relationship - higher sound = smaller hole
-    float baseHoleSize = 0.7; // Base size
-    float holeSize = baseHoleSize * (1.0 - audioIntensity * 0.35);
-    
-    // Density factor - increases with audio intensity
-    float densityFactor = 1.0 + audioIntensity * 0.9;
-    
-    // Audio-reactive parameters that respect the original algorithm
-    float distortion = 0.1;  // Keep original distortion
-    float iterationBase = 9.0; // Original iteration count
-    float iterationCount = iterationBase; // Keep consistent iterations
-    
-    // Begin with the same coordinate setup as the original
-    float i;
-    vec2 r = iResolution.xy,
-         p = (gl_FragCoord.xy + gl_FragCoord.xy - r) / r.y / 0.7,
-         d = vec2(-1, 1), 
-         q = 5.0 * p - d,
-         c = p * mat2(1, 1, d / (distortion + 5.0 / dot(q, q)));
-         
-    // Create the spiral effect using log-polar coordinates - maintaining original speed
-    vec2 v = c * mat2(cos(log(length(c)) + iTime * timeFactor + vec4(0, 33, 11, 0))) * 5.0;
-   
-    // Initialize output color
-    vec4 O = vec4(0.0);
-    i = 0.0;
-    
-    // Create the iterative pattern
-    for(int j = 0; j < 15; j++) {
-        // Break based on audio-reactive iteration count
-        if(float(j) >= iterationCount) break;
+    void main() {
+        // Sample audio with minimal processing
+        float bass = texture2D(iChannel0, vec2(0.05, 0.0)).x;
+        float lowMid = texture2D(iChannel0, vec2(0.15, 0.0)).x;
+        float mid = texture2D(iChannel0, vec2(0.3, 0.0)).x;
+        float high = texture2D(iChannel0, vec2(0.7, 0.0)).x;
         
-        // Add audio-reactive variation to the sine pattern
-        float audioMod = 1.0 + bass * 0.2 * sin(i * 0.7); // Subtle per-iteration audio effect
-        O += (1.0 + sin(v.xyyx)) * audioMod;
+        // Beat detection - compare current bass to a threshold
+        // This creates more defined pulses instead of continuous response
+        float beatThreshold = 0.15;
+        float beatPulse = smoothstep(beatThreshold, beatThreshold + 0.1, bass) * 0.3;
         
-        // Update v with the original formula plus subtle audio influence
-        v += 0.7 * sin(v.yx * i + iTime) / (i + 0.1) + 0.5; // Added 0.1 to prevent division by zero
+        // Overall audio intensity (weighted toward bass)
+        float audioIntensity = bass * 0.6 + lowMid * 0.25 + mid * 0.1 + high * 0.05;
         
-        i += 1.0; // Increment our float counter
+        // Keep original time speed
+        float timeFactor = 0.2; // Original speed from XorDev's shader
+        
+        // Small pulse effect for beats
+        float beatPulseFactor = 1.0 + beatPulse;
+        
+        // Black hole size/density responds to audio intensity
+        // Inverse relationship - higher sound = smaller hole
+        float baseHoleSize = 0.7; // Base size
+        float holeSize = baseHoleSize * (1.0 - audioIntensity * 0.35);
+        
+        // Density factor - increases with audio intensity
+        float densityFactor = 1.0 + audioIntensity * 0.9;
+        
+        // Audio-reactive parameters that respect the original algorithm
+        float distortion = 0.1;  // Keep original distortion
+        float iterationBase = 9.0; // Original iteration count
+        float iterationCount = iterationBase; // Keep consistent iterations
+        
+        // Begin with the same coordinate setup as the original
+        float i;
+        vec2 r = iResolution.xy,
+            p = (gl_FragCoord.xy + gl_FragCoord.xy - r) / r.y / 0.7,
+            d = vec2(-1, 1), 
+            q = 5.0 * p - d,
+            c = p * mat2(1, 1, d / (distortion + 5.0 / dot(q, q)));
+            
+        // Create the spiral effect using log-polar coordinates - maintaining original speed
+        vec2 v = c * mat2(cos(log(length(c)) + iTime * timeFactor + vec4(0, 33, 11, 0))) * 5.0;
+    
+        // Initialize output color
+        vec4 O = vec4(0.0);
+        i = 0.0;
+        
+        // Create the iterative pattern
+        for(int j = 0; j < 15; j++) {
+            // Break based on audio-reactive iteration count
+            if(float(j) >= iterationCount) break;
+            
+            // Add audio-reactive variation to the sine pattern
+            float audioMod = 1.0 + bass * 0.2 * sin(i * 0.7); // Subtle per-iteration audio effect
+            O += (1.0 + sin(v.xyyx)) * audioMod;
+            
+            // Update v with the original formula plus subtle audio influence
+            v += 0.7 * sin(v.yx * i + iTime) / (i + 0.1) + 0.5; // Added 0.1 to prevent division by zero
+            
+            i += 1.0; // Increment our float counter
+        }
+        
+        // Calculate i using the original formula
+        i = length(sin(v / 0.3) * 0.2 + c * vec2(1, 2)) - 1.0;
+        
+        // Apply pulse effect to the visual elements
+        // Ring size changes with the hole size to create expansion/contraction
+        float ringSize = holeSize;
+        
+        // Ring width pulses with beats 
+        float ringWidth = 0.03 * beatPulseFactor;
+        float ringEffect = ringWidth + abs(length(p) - ringSize);
+        
+        // Glow intensity increases with audio intensity and pulses with beats
+        float glowIntensity = 3.5 * beatPulseFactor * densityFactor;
+        float glowEffect = 0.5 + glowIntensity * exp(0.3 * c.y - dot(c, c));
+        
+        // Apply subtle color shift with mid frequency
+        vec4 colorModifier = vec4(0.6, -0.4, -1.0, 0.0);
+        
+        // Final color calculation - density increases with audio intensity
+        O = 1.0 - exp(-exp(c.x * colorModifier) / O / (1.0 + i * i * densityFactor) / glowEffect / ringEffect * beatPulseFactor);
+        
+        // Output
+        gl_FragColor = O;
     }
-    
-    // Calculate i using the original formula
-    i = length(sin(v / 0.3) * 0.2 + c * vec2(1, 2)) - 1.0;
-    
-    // Apply pulse effect to the visual elements
-    // Ring size changes with the hole size to create expansion/contraction
-    float ringSize = holeSize;
-    
-    // Ring width pulses with beats 
-    float ringWidth = 0.03 * beatPulseFactor;
-    float ringEffect = ringWidth + abs(length(p) - ringSize);
-    
-    // Glow intensity increases with audio intensity and pulses with beats
-    float glowIntensity = 3.5 * beatPulseFactor * densityFactor;
-    float glowEffect = 0.5 + glowIntensity * exp(0.3 * c.y - dot(c, c));
-    
-    // Apply subtle color shift with mid frequency
-    vec4 colorModifier = vec4(0.6, -0.4, -1.0, 0.0);
-    
-    // Final color calculation - density increases with audio intensity
-    O = 1.0 - exp(-exp(c.x * colorModifier) / O / (1.0 + i * i * densityFactor) / glowEffect / ringEffect * beatPulseFactor);
-    
-    // Output
-    gl_FragColor = O;
-}
-    `;
+        `;
     
     // === WEBGL SETUP ===
-    const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
-    if (!gl) {
-        if (statusEl) statusEl.textContent = 'WebGL not supported in your browser';
-        console.error('WebGL not supported');
-        return;
+    const gl = canvas.getContext('webgl2') || canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+    const isWebGL2 = gl instanceof WebGL2RenderingContext;
+    const glslVersion = isWebGL2 ? '300 es' : '100';
+    
+    function addVersionHeader(shaderSource, isFragmentShader) {
+        const versionHeader = glslVersion === '300 es' 
+            ? `#version 300 es
+               precision highp float;
+               ${isFragmentShader ? 'out vec4 fragColor;' : ''}
+               #define gl_FragColor fragColor`
+            : `#version 100
+               precision highp float;`;
+        
+        return versionHeader + '\n' + shaderSource;
     }
     
     // Resize canvas to window
@@ -188,7 +198,23 @@ void main() {
     // Compile shader with error detection
     function createShader(gl, type, source) {
         const shader = gl.createShader(type);
-        gl.shaderSource(shader, source);
+        const isWebGL2 = gl instanceof WebGL2RenderingContext;
+
+        const prefix = isWebGL2
+            ? "#version 300 es\nprecision highp float;\n" +
+                (type === gl.FRAGMENT_SHADER ? "out vec4 fragColor;\n" : "") +
+                "#define texture2D texture\n" +
+                (type === gl.VERTEX_SHADER ? "#define attribute in\n" : "")
+            : "#version 100\nprecision highp float;\n#define fragColor gl_FragColor\n";
+
+        // For fragment shaders, remap the output
+        if (type === gl.FRAGMENT_SHADER && isWebGL2) {
+            source = source.replace(/gl_FragColor/g, 'fragColor');
+        }
+        
+        const fullSource = prefix + source;
+        
+        gl.shaderSource(shader, fullSource);
         gl.compileShader(shader);
         
         if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
