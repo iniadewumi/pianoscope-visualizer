@@ -205,7 +205,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 (type === gl.FRAGMENT_SHADER ? "out vec4 fragColor;\n" : "") +
                 "#define texture2D texture\n" +
                 (type === gl.VERTEX_SHADER ? "#define attribute in\n" : "")
-            : "#version 100\nrecision highp float;\n#define fragColor gl_FragColor\n";
+            : "#version 100\nprecision highp float;\n#define fragColor gl_FragColor\n";
 
         // For fragment shaders, remap the output
         if (type === gl.FRAGMENT_SHADER && isWebGL2) {

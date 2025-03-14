@@ -1,7 +1,28 @@
-// Create a dedicated kiosk mode HTML file: kiosk.html
-// This is a minimal page that just contains a canvas element
+// WebGL shader prefix templates as separate JS object
+// This avoids nesting complex strings in our HTML template
+const ShaderPrefixes = {
+    // WebGL2 vertex shader prefix
+    webgl2VertexPrefix: 
+        "#version 300 es\n" +
+        "precision highp float;\n" +
+        "#define texture2D texture\n" +
+        "#define attribute in"+"\n",
+    
+    // WebGL2 fragment shader prefix
+    webgl2FragmentPrefix: 
+        "#version 300 es\n" +
+        "precision highp float;\n" +
+        "out vec4 fragColor;\n" +
+        "#define texture2D texture"+"\n",
+    
+    // WebGL1 shader prefix (common for both vertex and fragment)
+    webgl1Prefix: 
+        "#version 100\n" +
+        "precision highp float;\n" +
+        "#define fragColor gl_FragColor"+"\n"
+};
 
-// First, let's create the kiosk.html file content
+// Create the kiosk HTML content with reference to our external prefix constants
 const kioskHtmlContent = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -31,13 +52,18 @@ const kioskHtmlContent = `<!DOCTYPE html>
     <canvas id="kiosk-canvas"></canvas>
     
     <script>
+        // Will be filled by the parent window
         let gl = null;
+        let isWebGL2 = false;
         let currentProgram = null;
         let audioTexture = null;
         let audioData = null;
         let animationFrameId = null;
         let startTime = performance.now() / 1000;
         let lastTime = startTime;
+        
+        // Shader prefix constants passed from parent window
+        let shaderPrefixes = null;
         
         // Set up the canvas
         const canvas = document.getElementById('kiosk-canvas');
@@ -96,8 +122,12 @@ const kioskHtmlContent = `<!DOCTYPE html>
             const message = event.data;
             
             if (message.type === 'init') {
+                // Store shader prefixes
+                shaderPrefixes = message.shaderPrefixes;
+                
                 // Initialize WebGL
                 initGL();
+                
                 // Send ready message
                 window.opener.postMessage({ type: 'kiosk-ready' }, '*');
             } else if (message.type === 'shader-update') {
@@ -111,7 +141,10 @@ const kioskHtmlContent = `<!DOCTYPE html>
         
         // Initialize WebGL
         function initGL() {
-            gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+            // Try to get WebGL2 context first, then fall back to WebGL
+            gl = canvas.getContext('webgl2') || canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+            isWebGL2 = gl instanceof WebGL2RenderingContext;
+            
             if (!gl) {
                 console.error('WebGL not supported in kiosk mode');
                 return;
@@ -144,9 +177,8 @@ const kioskHtmlContent = `<!DOCTYPE html>
             }
             
             // Create shaders
-            const vertexShader = createShader(gl, gl.VERTEX_SHADER, vertexSource);
-            const fragmentShader = createShader(gl, gl.FRAGMENT_SHADER, fragmentSource);
-
+            const vertexShader = createShader(gl.VERTEX_SHADER, vertexSource);
+            const fragmentShader = createShader(gl.FRAGMENT_SHADER, fragmentSource);
             
             if (!vertexShader || !fragmentShader) return;
             
@@ -178,26 +210,26 @@ const kioskHtmlContent = `<!DOCTYPE html>
             gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
         }
         
-        // Create shader function that works with string concatenation
-        function createShader(gl, type, source) {
+        // Create shader using prefixes passed from parent window
+        function createShader(type, source) {
             const shader = gl.createShader(type);
-            const isWebGL2 = gl instanceof WebGL2RenderingContext;
             
-            const prefix = isWebGL2 
-                ? '#version 300 es\\n' +
-                  'precision highp float;\\n' +
-                  (type === gl.FRAGMENT_SHADER ? 'out vec4 fragColor;\\n' : '') +
-                  '#define texture2D texture\\n' +
-                  (type === gl.VERTEX_SHADER ? '#define attribute in\\n' : '')
-                : '#version 100\\n' +
-                  'precision highp float;\\n' +
-                  '#define fragColor gl_FragColor\\n';
-            
-            // For fragment shaders, remap the output
-            if (type === gl.FRAGMENT_SHADER && isWebGL2) {
-                source = source.replace(/gl_FragColor/g, 'fragColor');
+            // Get the appropriate prefix from our parent-defined prefixes
+            let prefix;
+            if (isWebGL2) {
+                prefix = (type === gl.VERTEX_SHADER) ? 
+                    shaderPrefixes.webgl2VertexPrefix : 
+                    shaderPrefixes.webgl2FragmentPrefix;
+                
+                // Replace gl_FragColor with fragColor for WebGL2 fragment shaders
+                if (type === gl.FRAGMENT_SHADER) {
+                    source = source.replace(/gl_FragColor/g, 'fragColor');
+                }
+            } else {
+                prefix = shaderPrefixes.webgl1Prefix;
             }
             
+            // Combine prefix with source
             const fullSource = prefix + source;
             
             gl.shaderSource(shader, fullSource);
@@ -208,9 +240,9 @@ const kioskHtmlContent = `<!DOCTYPE html>
                 gl.deleteShader(shader);
                 return null;
             }
+            
             return shader;
         }
-
         
         // Update audio data
         function updateAudioData(newAudioData) {
@@ -330,8 +362,11 @@ function openKioskMode() {
         const message = event.data;
         
         if (message.type === 'kiosk-loaded') {
-            // Kiosk window is loaded, initialize WebGL
-            kioskWindow.postMessage({ type: 'init' }, '*');
+            // Kiosk window is loaded, initialize WebGL with our shader prefixes
+            kioskWindow.postMessage({ 
+                type: 'init',
+                shaderPrefixes: ShaderPrefixes
+            }, '*');
         } else if (message.type === 'kiosk-ready') {
             // Kiosk is ready, send current shader
             sendCurrentShaderToKiosk();
@@ -348,7 +383,8 @@ function openKioskMode() {
 function getShaderSource(shader) {
     if (!shader) return null;
     
-    const gl = document.getElementById('visualizer').getContext('webgl') || 
+    const gl = document.getElementById('visualizer').getContext('webgl2') ||
+              document.getElementById('visualizer').getContext('webgl') || 
               document.getElementById('visualizer').getContext('experimental-webgl');
     
     if (!gl) return null;
