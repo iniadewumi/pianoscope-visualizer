@@ -2179,63 +2179,140 @@ void mainImage( out vec4 fragColor, in vec2 fragCoord )//2 lines above are a = a
   fo=mix(vec3(.1,.2,.4),vec3(.1,.1,.5),0.5+0.5*sin(np.y*.1-tt*2.));//Glow colour is actual a grdient to make it more intresting
   fragColor = vec4(pow(co+g*0.15*mix(fo.xyz,fo.zyx,clamp(sin(tt*.5),-.5,.5)+.5),vec3(.55)),1);// Naive gamma correction and glow applied at the end. Glow switches from blue to red hues - nice idea by Haptix - cheers broski
 }`,
-"Julia": `precision highp float;
-uniform vec2 iResolution;
-uniform float iTime;
+"Julia Colors": `/****************************************************
+ * Combined Julia set with time-based zoom
+ ****************************************************/
 
 #define RECURSION_LIMIT 10000
 #define PI 3.141592653589793238
 
-int juliaSet(vec2 c, vec2 constant) {
-    vec2 z = c;
-    int recursionCount = 0;
-    
-    for (int i = 0; i < RECURSION_LIMIT; i++) {
+// ---------------------------------
+// Uniforms used by ShaderToy/WebGL:
+// ---------------------------------
+// uniform vec3 iResolution; // (width, height, 1.0)
+// uniform float iTime;      // Time in seconds
+
+// Method for the mathematical construction of the julia set
+int juliaSet(vec2 z, vec2 constant) {
+    int recursionCount;
+    for (recursionCount = 0; recursionCount < RECURSION_LIMIT; recursionCount++) {
         z = vec2(z.x * z.x - z.y * z.y, 2.0 * z.x * z.y) + constant;
         if (length(z) > 2.0) {
-            recursionCount = i;
             break;
         }
     }
     return recursionCount;
 }
 
-void main() {
-    // Using the constant that gives us that nice spiral pattern
-    vec2 constant = vec2(0.355, 0.355);
+// Smooth transition helper (if you want it for some effect)
+float smoothTransition(float time, float duration) {
+    float t = mod(time, duration);
+    return smoothstep(0.0, 1.0, t / duration);
+}
+
+// Choose a target point for focusing/zooming
+vec2 getSpiralTarget(int index) {
+    // Feel free to adjust these to match interesting areas
+    if (index == 0) return vec2( 0.5,  0.10);
+    if (index == 1) return vec2( 0.7,  0.10);
+    if (index == 2) return vec2( -0.30,  0.4);
+     if (index == 3) return vec2(-0.90,  0.40);
+    if (index == 4) return vec2( 0.32, 0.42);
+    if (index == 5) return vec2(-0.35, -0.30);
+    if (index == 6) return vec2( 0.2, -0.70);
+    // default (index == 7):
+    return vec2( 0.6, -0.75);
+}
+
+// Main method of the shader
+void mainImage(out vec4 fragColor, in vec2 fragCoord) 
+{
+    // ------------------------------------------------------
+    // 1) Handle time-based zoom and target selection
+    // ------------------------------------------------------
+    float cycleTime = 10.0;  // total duration of one zoom in/out cycle
+    float zoomPhase = mod(iTime, cycleTime) / cycleTime;
     
-    // Coordinate setup from the reference code
-    vec2 uv = 2.0 * (gl_FragCoord.xy - 0.5 * iResolution.xy) / iResolution.y;
+    // pick which target to center on based on time
+    int targetIndex = int(floor(mod(iTime / cycleTime, 8.0)));
+    vec2 target     = getSpiralTarget(targetIndex);
+    
+    // zoom in for first 70% of the cycle, out for last 30%
+    float zoomFactor;
+    if (zoomPhase < 0.7) {
+        // zoom in
+        zoomFactor = mix(1.0, 10.0, smoothstep(0.0, 1.0, zoomPhase / 0.7));
+    } else {
+        // zoom out
+        zoomFactor = mix(10.0, 1.0, smoothstep(0.0, 1.0, (zoomPhase - 0.7) / 0.3));
+    }
+    
+    // ------------------------------------------------------
+    // 2) Original UV setup (but we apply zoom shift first)
+    // ------------------------------------------------------
+    // Normalized pixel coordinates from -1..+1 or so:
+    // (Equivalent to: 2.0 * (fragCoord - 0.5*iResolution.xy) / iResolution.y)
+    vec2 uv = fragCoord - 0.5 * iResolution.xy;
+    uv /= iResolution.y;
+    uv *= 2.0;
+    
+    // Apply the zoom, translating around our chosen target
+    uv = (uv - target) / zoomFactor + target;
+
+    // ------------------------------------------------------
+    // 3) Keep the original rotation and scale
+    // ------------------------------------------------------
+    // Make a copy for color calculations after fractal
     vec2 uv2 = uv;
     
-    // Rotation
+    // rotation angle [rad]
     float a = PI / 3.0;
-    vec2 U = vec2(cos(a), sin(a));
-    vec2 V = vec2(-U.y, U.x);
+    vec2 U  = vec2(cos(a), sin(a));  // new x-axis
+    vec2 V  = vec2(-U.y, U.x);       // new y-axis
+    // rotate
     uv = vec2(dot(uv, U), dot(uv, V));
+    // optional scale
     uv *= 0.9;
+
+    // ------------------------------------------------------
+    // 4) Compute the Julia set
+    // ------------------------------------------------------
+    const vec2[6] constants = vec2[](
+        vec2(-0.7176, -0.3842),
+        vec2(-0.4,    -0.59),
+        vec2( 0.34,   -0.05),
+        vec2( 0.355,   0.355),
+        vec2(-0.54,    0.54),
+        vec2( 0.355534,-0.337292)
+    );
     
-    // Calculate Julia set
-    int recursionCount = juliaSet(uv, constant);
-    float f = float(recursionCount) / float(RECURSION_LIMIT);
+    // pick whichever constant from above (e.g. #3 is classic)
+    vec2 c = uv;
+    int recursionCount = juliaSet(c, constants[3]);
     
-    // Color calculation from reference
-    vec3 col = vec3(1.0);
-    float ff = pow(f, 1.0 - (f * 1.0));
+    // ------------------------------------------------------
+    // 5) Preserve the original coloring
+    // ------------------------------------------------------
+    float f   = float(recursionCount) / float(RECURSION_LIMIT);
+    float ff  = pow(f, 1.0 - (f * 1.0));
+    vec3 col  = vec3(1.0);
+    float offset = 0.5;
+    vec3 saturation = vec3(1.0, 1.0, 1.0);
+    float totalSaturation = 1.0;
     
+    // Original color approach
     col.r = smoothstep(0.0, 1.0, ff) * (uv2.x * 0.5 + 0.3);
     col.b = smoothstep(0.0, 1.0, ff) * (uv2.y * 0.5 + 0.3);
     col.g = smoothstep(0.0, 1.0, ff) * (-uv2.x * 0.5 + 0.3);
     
-    // Apply saturation and brightness
-    vec3 saturation = vec3(1.0, 1.0, 1.0);
-    float totalSaturation = 1.0;
+    // Scale to make the colors "pop" as in the original
     col.rgb *= 5000.0 * saturation * totalSaturation;
     
-    gl_FragColor = vec4(col.rgb, 1.0);
+    // Output the final color to the screen
+    fragColor = vec4(col, 1.0);
 }
 `,
-"Julia zoom": `
+"Julia Blue": `
 const int max_iterations = 255;
 
 vec2 complex_square(vec2 v) {
@@ -2254,14 +2331,14 @@ float smoothTransition(float time, float duration) {
 // Get an actual spiral target based on the index
 vec2 getSpiralTarget(int index) {
     // Based on careful observation of the image
-    if (index == 0) return vec2(0.7, 0.0);    // Right spiral
-    if (index == 1) return vec2(0.5, 0.5);    // Top-right spiral
-    if (index == 2) return vec2(0.0, 0.7);    // Top spiral
-    if (index == 3) return vec2(-0.5, 0.5);   // Top-left spiral
-    if (index == 4) return vec2(-0.7, 0.0);   // Left spiral
-    if (index == 5) return vec2(-0.5, -0.5);  // Bottom-left spiral
-    if (index == 6) return vec2(0.0, -0.7);   // Bottom spiral
-    return vec2(0.5, -0.5);                   // Bottom-right spiral
+    if (index == 0) return vec2(0.5, 0.10);  
+    if (index == 1) return vec2(0.5, 0.5);    
+    if (index == 2) return vec2(0.5, 0.85);   
+    if (index == 3) return vec2(-0.5, 0.15);   
+    if (index == 4) return vec2(0.52, 0.52);; 
+    if (index == 5) return vec2(-0.5, -0.52); 
+    if (index == 6) return vec2(0.2, -0.7);   
+    return vec2(0.6, -0.75);                   
 }
 
 void mainImage(out vec4 fragColor, in vec2 fragCoord) {
@@ -2280,10 +2357,10 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
     
     if (zoomPhase < 0.7) {
         // Zoom in (first 70% of cycle)
-        zoomFactor = mix(1.0, 20.0, smoothstep(0.0, 1.0, zoomPhase / 0.7));
+        zoomFactor = mix(1.0, 200.0, smoothstep(0.0, 1.0, zoomPhase / 0.7));
     } else {
         // Zoom out (last 30% of cycle)
-        zoomFactor = mix(20.0, 1.0, smoothstep(0.0, 1.0, (zoomPhase - 0.7) / 0.3));
+        zoomFactor = mix(200.0, 1.0, smoothstep(0.0, 1.0, (zoomPhase - 0.7) / 0.3));
     }
     
     // Apply the zoom, keeping target centered
