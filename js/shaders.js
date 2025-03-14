@@ -2236,9 +2236,6 @@ void main() {
 }
 `,
 "Julia zoom": `
-# Pianoscope Visualizer
-
-This page uses Shaders to to visualize the input audio of your device microphone. The goal is to play music and generate nice visuals that follow the soundwaves of the music.
 const int max_iterations = 255;
 
 vec2 complex_square(vec2 v) {
