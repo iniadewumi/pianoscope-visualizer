@@ -1,8 +1,9 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Pianoscope Visualizer</title>
     <!-- Updated CSS files -->
     <link rel="stylesheet" href="css/style.css">
@@ -15,6 +16,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
 </head>
+
 <body>
     <!-- Main visualization canvas -->
     <canvas id="visualizer"></canvas>
@@ -38,36 +40,38 @@
     <script type="module" src="js/shaders.js"></script>
     <script type="module" src="js/shadertoy-converter.js"></script>
     <script src="js/visualizer-with-shadertoy.js"></script>
-    
+
     <!-- Add an error log display for debugging -->
-    <div id="error-log" style="display: none; position: fixed; bottom: 10px; left: 10px; background: rgba(18, 18, 24, 0.9); color: #FF4D6D; padding: 12px; max-width: 400px; max-height: 200px; overflow: auto; font-family: monospace; font-size: 12px; z-index: 1000; border-radius: 8px; border-left: 3px solid #E83A5F;"></div>
-    
+    <div id="error-log"
+        style="display: none; position: fixed; bottom: 10px; left: 10px; background: rgba(18, 18, 24, 0.9); color: #FF4D6D; padding: 12px; max-width: 400px; max-height: 200px; overflow: auto; font-family: monospace; font-size: 12px; z-index: 1000; border-radius: 8px; border-left: 3px solid #E83A5F;">
+    </div>
+
     <script>
         // Error handler to catch and display JS errors
-        window.addEventListener('error', function(event) {
+        window.addEventListener('error', function (event) {
             const errorLog = document.getElementById('error-log');
             errorLog.style.display = 'block';
             errorLog.innerHTML += event.message + '<br>';
             console.error(event.error);
-            
+
             // Auto-hide after 10 seconds
             setTimeout(() => {
                 errorLog.style.display = 'none';
             }, 10000);
         });
-        
+
         // Update button icons when mic state changes
-        document.addEventListener('DOMContentLoaded', function() {
+        document.addEventListener('DOMContentLoaded', function () {
             const micToggle = document.getElementById('mic-toggle');
             if (micToggle) {
                 const originalClickHandler = micToggle.onclick;
-                
-                micToggle.onclick = function() {
+
+                micToggle.onclick = function () {
                     // Call the original handler
                     if (originalClickHandler) {
                         originalClickHandler.call(this);
                     }
-                    
+
                     // Update the icon based on the button's class
                     setTimeout(() => {
                         if (micToggle.classList.contains('red-button')) {
@@ -81,24 +85,25 @@
         });
     </script>
     <!-- Pure View Toggle Button -->
-<button id="pure-view-toggle" class="pure-view-toggle" title="Toggle Pure Visualization Mode">
-    <i class="fas fa-eye"></i>
-</button>
+    <button id="pure-view-toggle" class="pure-view-toggle" title="Toggle Pure Visualization Mode">
+        <i class="fas fa-eye"></i>
+    </button>
 
-<!-- Minimal controls that appear on hover in pure view mode -->
-<div class="mini-controls">
-    <button id="mini-mic-toggle" title="Toggle Microphone">
-        <i class="fas fa-microphone"></i>
-    </button>
-    <button id="mini-fullscreen" title="Fullscreen">
-        <i class="fas fa-expand"></i>
-    </button>
-    <button id="mini-shader-toggle" title="Shader Editor">
-        <i class="fas fa-code"></i>
-    </button>
-</div>
+    <!-- Minimal controls that appear on hover in pure view mode -->
+    <div class="mini-controls">
+        <button id="mini-mic-toggle" title="Toggle Microphone">
+            <i class="fas fa-microphone"></i>
+        </button>
+        <button id="mini-fullscreen" title="Fullscreen">
+            <i class="fas fa-expand"></i>
+        </button>
+        <button id="mini-shader-toggle" title="Shader Editor">
+            <i class="fas fa-code"></i>
+        </button>
+    </div>
 
-<script src="js/pure-view.js"></script>
-<script src="js/kiosk-mode.js"></script>
+    <script src="js/pure-view.js"></script>
+    <script src="js/kiosk-mode.js"></script>
 </body>
+
 </html>
