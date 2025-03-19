@@ -2427,7 +2427,154 @@ void mainImage( out vec4 O, vec2 U )
     }                                                   // fract: to draw all stages in parallel
   
     O = sqrt(O);                                        // to sRGB
-}`
+}`,
+"Sunset on river -  Raph":`// Sunset over the ocean.
+// Minimalistic three color 2D shader
+// inspired by this wonderful GIF: https://i.gifer.com/4Cb2.gif
+//
+// Features automatic anti aliasing by using smooth gradients
+// removing the need for multi sampling.
+//
+// Copyright (c) srvstr 2024
+// Licensed under MIT
+//
+#define hh(uv) fract(sin(dot(vec2(12.956, 68.6459), uv)) * 59687.6705)
+
+/* Computes and returns the value noise of
+ * the specified position.
+ */
+float vnoise(in vec2 uv)
+{
+    vec2 fi = floor(uv);
+    vec2 ff = smoothstep(0.0, 1.0, fract(uv));
+    float v00 = hh(fi + vec2(0,0));
+    float v01 = hh(fi + vec2(0,1));
+    float v10 = hh(fi + vec2(1,0));
+    float v11 = hh(fi + vec2(1,1));
+    return mix(mix(v00, v10, ff.x),
+               mix(v01, v11, ff.x),
+               ff.y);
+}
+
+#define remap(x,w) ((x)*(w)-((w)*0.5))
+
+void mainImage(out vec4 fragColor, in vec2 fragCoord)
+{
+    vec2 uv = (fragCoord - 0.5 * iResolution.xy) / iResolution.y;
+    
+    // Bias for smoothstep function to simulate anti aliasing with gradients
+    float dy = (smoothstep(0.0, -1.0, uv.y) * 40.0 + 1.5) / iResolution.y;
+    
+    // Delta time transformed to fake irregular wave motion
+    vec2 delta = vec2(iTime * 1.5, cos(iTime * 3.141) * 0.5 + iTime);
+    
+    // Wave displacement factors
+    // XY: scale the UV coordinates for the noise
+    // Z: scales the noise's strength
+    vec3 dispValues[4];
+    dispValues[0] = vec3(1.0, 40.0, 8.0);
+    dispValues[1] = vec3(5.0, 80.0, 4.0);
+    dispValues[2] = vec3(10.0, 120.0, 2.0);
+    dispValues[3] = vec3(20.0, 40.0, 2.0);
+    
+    float avg = 0.0;
+    // Compute average of noise displacements
+    for (int i = 0; i < 4; i++)
+    {
+        vec3 disp = dispValues[i];
+        avg += remap(vnoise(uv * disp.xy + delta), disp.z);
+    }
+    avg /= 4.0;
+    
+    // Displace vertically
+    vec2 st = vec2(uv.x, uv.y + clamp(avg * smoothstep(0.1, -1.0, uv.y), -0.1, 0.1));
+    
+    // Compose output gradients
+    fragColor.rgb = mix(vec3(0.85, 0.55, 0),
+                        vec3(0.90, 0.40, 0),
+                        sqrt(abs(st.y * st.y * st.y)) * 28.0)
+                    /* Mask sun */
+                    * smoothstep(0.25 + dy, 0.25, length(st))
+                    /* Vignette + Background tint */
+                    + smoothstep(2.0, 0.5, length(uv)) * 0.1;
+    
+    // Set alpha channel
+    fragColor.a = 1.0;
+}`,
+"Lava Lamp Chris": `
+float opSmoothUnion( float d1, float d2, float k )
+{
+    float h = clamp( 0.5 + 0.5*(d2-d1)/k, 0.0, 1.0 );
+    return mix( d2, d1, h ) - k*h*(1.0-h);
+}
+
+float sdSphere( vec3 p, float s )
+{
+  return length(p)-s;
+} 
+
+float map(vec3 p)
+{
+	float d = 2.0;
+	for (int i = 0; i < 16; i++) {
+		float fi = float(i);
+		float time = iTime * (fract(fi * 412.531 + 0.513) - 0.5) * 2.0;
+		d = opSmoothUnion(
+            sdSphere(p + sin(time + fi * vec3(52.5126, 64.62744, 632.25)) * vec3(2.0, 2.0, 0.8), mix(0.5, 1.0, fract(fi * 412.531 + 0.5124))),
+			d,
+			0.4
+		);
+	}
+	return d;
+}
+
+vec3 calcNormal( in vec3 p )
+{
+    const float h = 1e-5; // or some other value
+    const vec2 k = vec2(1,-1);
+    return normalize( k.xyy*map( p + k.xyy*h ) + 
+                      k.yyx*map( p + k.yyx*h ) + 
+                      k.yxy*map( p + k.yxy*h ) + 
+                      k.xxx*map( p + k.xxx*h ) );
+}
+
+void mainImage( out vec4 fragColor, in vec2 fragCoord )
+{
+    vec2 uv = fragCoord/iResolution.xy;
+    
+    // screen size is 6m x 6m
+	vec3 rayOri = vec3((uv - 0.5) * vec2(iResolution.x/iResolution.y, 1.0) * 6.0, 3.0);
+	vec3 rayDir = vec3(0.0, 0.0, -1.0);
+	
+	float depth = 0.0;
+	vec3 p;
+	
+	for(int i = 0; i < 64; i++) {
+		p = rayOri + rayDir * depth;
+		float dist = map(p);
+        depth += dist;
+		if (dist < 1e-6) {
+			break;
+		}
+	}
+	
+    depth = min(6.0, depth);
+	vec3 n = calcNormal(p);
+    float b = max(0.0, dot(n, vec3(0.577)));
+    vec3 col = (0.5 + 0.5 * cos((b + iTime * 3.0) + uv.xyx * 2.0 + vec3(0,2,4))) * (0.85 + b * 0.35);
+    col *= exp( -depth * 0.15 );
+	
+    // maximum thickness is 2m in alpha channel
+    fragColor = vec4(col, 1.0 - (depth - 0.5) / 2.0);
+}
+
+/** SHADERDATA
+{
+	"title": "My Shader 0",
+	"description": "Lorem ipsum dolor",
+	"model": "person"
+}
+*/`
 };
 
 
