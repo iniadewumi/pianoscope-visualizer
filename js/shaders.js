@@ -3,7 +3,7 @@
 export const SAMPLE_SHADERS = {
 "Procedural Circuitry": `// This content is under the MIT License.
 
-#define time iTime*.02
+#define time iTime*.01
 #define width .005
 float zoom = .18;
 
@@ -68,7 +68,7 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
     fragColor = vec4(colo, 1.0);
 }
 `,
-    "Need Space": `//CBS
+"Need Space": `//CBS
 //Parallax scrolling fractal galaxy.
 //Inspired by JoshP's Simplicity shader: https://www.shadertoy.com/view/lslGWr
 
@@ -420,6 +420,45 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
 }
 `
 ,
+"Wavey McStrings":`#define S smoothstep
+
+vec4 Line(vec2 uv, float speed, float height, vec3 col) {
+    // Get audio data - simple single sample per line
+    float audio = texture(iChannel0, vec2(height * 0.05, 0.0)).x;
+    
+    // Adjust wave amplitude with audio
+    float amp = 0.2 * (1.0 + audio);
+    
+    // Create the wave shape
+    uv.y += S(1., 0., abs(uv.x)) * sin(iTime * speed + uv.x * height) * amp;
+    
+    // Create the line with original thickness
+    return vec4(S(.06 * S(.2, .9, abs(uv.x)), 0., abs(uv.y) - .004) * col, 1.0) 
+           * S(1., .3, abs(uv.x));
+}
+
+void mainImage(out vec4 O, in vec2 I) {
+    vec2 uv = (I - .5 * iResolution.xy) / iResolution.y;
+    
+    // Overall audio intensity for global effect
+    float audioSum = texture(iChannel0, vec2(0.1, 0.0)).x;
+    
+    O = vec4(0.);
+    for (float i = 0.; i <= 5.; i += 1.) {
+        float t = i / 5.;
+        
+        // Simple audio multiplier
+        float audioMult = 1.0 + audioSum * 3.0;
+        
+        // Create each line - keeping close to the original
+        O += Line(
+            uv, 
+            1. + t,                     // Original speed
+            4. + t,                     // Original height 
+            vec3(.2 + t * .7, .2 + t * .4, 0.3) * audioMult  // Color enhanced by audio
+        );
+    }
+}`,
 
 "Condense Lava Lamp": `#define T iTime
 
@@ -2574,7 +2613,661 @@ void mainImage( out vec4 fragColor, in vec2 fragCoord )
 	"description": "Lorem ipsum dolor",
 	"model": "person"
 }
-*/`
+*/`,
+
+"DULL AMAP":`// Amapiano Frequency Vortex
+// A psychedelic visualization optimized for house and amapiano music
+
+precision highp float;
+
+// Standard Shadertoy uniforms (compatible with your converter)
+uniform vec2 iResolution;
+uniform float iTime;
+uniform sampler2D iChannel0; // Audio input texture
+
+// Audio analysis zones
+#define BASS_FREQ 0.05      // Bass frequencies for beat and log drum detection
+#define LOW_MID_FREQ 0.15   // Low-mid for amapiano piano elements
+#define HIGH_MID_FREQ 0.3   // High-mid for melody and leads
+#define HIGH_FREQ 0.7       // High for hi-hats and percussives
+
+// Configurable parameters - these could be exposed to UI sliders
+#define PSYCHEDELIC_INTENSITY 0.8  // Overall intensity 0.0-1.0
+#define COLOR_SHIFT_SPEED 0.4     // Color cycling speed
+#define FRACTAL_DETAIL 6          // Iteration depth for fractal elements
+#define BEAT_SENSITIVITY 1.2      // How reactive the visuals are to beats
+#define MOTION_SMOOTH 0.8         // Smoothness of motion (higher = smoother)
+
+// Pre-computed constants
+const float PI = 3.14159265;
+const float TWO_PI = 6.28318530;
+
+// Various angle rotations for transformations
+mat2 rotate2D(float angle) {
+    float c = cos(angle);
+    float s = sin(angle);
+    return mat2(c, -s, s, c);
+}
+
+// Smooth min function for organic blending
+float smin(float a, float b, float k) {
+    float h = clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0);
+    return mix(b, a, h) - k * h * (1.0 - h);
+}
+
+// Get audio level from a specific frequency range
+float getAudioLevel(float freq) {
+    return texture2D(iChannel0, vec2(freq, 0.0)).x;
+}
+
+// Get beat intensity with temporal smoothing for amapiano log drum emphasis
+float getBeatIntensity() {
+    // Bass frequencies for main beats with emphasis on the characteristic 
+    // log drum patterns of amapiano music
+    float bassLevel = getAudioLevel(BASS_FREQ) * 1.8;
+    float lowMidLevel = getAudioLevel(LOW_MID_FREQ) * 0.7;
+    
+    // Combine for total beat intensity with temporal smoothing
+    float beatIntensity = bassLevel + lowMidLevel * 0.5;
+    
+    // Create a pulsing effect that's more pronounced on beats but still maintains motion
+    return beatIntensity * BEAT_SENSITIVITY * (0.6 + 0.4 * sin(iTime * 2.0));
+}
+
+// Create a psychedelic color palette that shifts over time
+vec3 psychedelicColor(float t) {
+    // Base colors inspired by vibrant club lighting
+    vec3 color1 = vec3(0.5, 0.0, 0.8);  // Purple
+    vec3 color2 = vec3(0.0, 0.8, 0.8);  // Cyan
+    vec3 color3 = vec3(0.9, 0.4, 0.0);  // Orange
+    vec3 color4 = vec3(1.0, 0.2, 0.5);  // Pink
+    
+    // Get audio levels for different frequency ranges
+    float highLevel = getAudioLevel(HIGH_FREQ);
+    float midLevel = getAudioLevel(HIGH_MID_FREQ);
+    
+    // Shift colors based on audio
+    float adjustedTime = iTime * COLOR_SHIFT_SPEED + midLevel * 2.0;
+    
+    // Create smooth transitions between colors
+    float t1 = fract(t * 0.5 + adjustedTime * 0.2);
+    float t2 = fract(t * 0.5 + adjustedTime * 0.2 + 0.33);
+    float t3 = fract(t * 0.5 + adjustedTime * 0.2 + 0.67);
+    
+    // Mix colors based on audio-modified time
+    vec3 color = color1 * (0.5 + 0.5 * sin(TWO_PI * t1)) +
+                 color2 * (0.5 + 0.5 * sin(TWO_PI * t2)) +
+                 color3 * (0.5 + 0.5 * sin(TWO_PI * t3)) +
+                 color4 * highLevel;
+    
+    // Normalize and boost saturation for psychedelic effect
+    return normalize(color) * (0.5 + length(color) * 0.5);
+}
+
+// Generate vortex-like fractal pattern
+float vortexFractal(vec2 uv, float beatIntensity) {
+    // Center coordinates
+    vec2 p = uv;
+    
+    // Apply audio-reactive rotation and scaling
+    p *= 1.0 + beatIntensity * 0.2;
+    p *= rotate2D(iTime * 0.1 + beatIntensity * 0.5);
+    
+    float intensity = PSYCHEDELIC_INTENSITY;
+    
+    // Fractal parameters that respond to music
+    float midLevel = getAudioLevel(HIGH_MID_FREQ);
+    float shape = 0.0;
+    
+    // Fractal iteration
+    for (int i = 0; i < FRACTAL_DETAIL; i++) {
+        // Modify position with each iteration
+        p = abs(p) / dot(p, p) - intensity * (0.5 + beatIntensity * 0.2);
+        
+        // Rotate based on beat
+        p *= rotate2D(TWO_PI * (0.1 + 0.05 * midLevel) + beatIntensity * 0.1);
+        
+        // Accumulate shape value
+        shape += length(p) * (0.1 + midLevel * 0.1);
+    }
+    
+    return shape;
+}
+
+// Amapiano-specific log drum visual effect
+float logDrumEffect(vec2 uv, float beatIntensity) {
+    // Focus on bass frequencies where log drums are prominent in amapiano
+    float logDrum = getAudioLevel(BASS_FREQ * 1.2) * 
+                    getAudioLevel(BASS_FREQ * 0.8);
+    
+    // Create pulsating rings that respond to log drum patterns
+    float dist = length(uv);
+    float rings = 0.0;
+    
+    // Multiple rings with different frequencies
+    for (int i = 2; i < 7; i++) {
+        float size = float(i) * 0.1 + logDrum * 0.2;
+        float width = 0.02 + logDrum * 0.01;
+        rings += smoothstep(width, 0.0, abs(dist - size));
+    }
+    
+    // Modulate with time and beat
+    rings *= 0.5 + 0.5 * sin(dist * 10.0 - iTime * 2.0);
+    
+    return rings * logDrum * 3.0;
+}
+
+// Main shader function
+void main() {
+    // Normalize coordinates for aspect ratio
+    vec2 uv = (2.0 * gl_FragCoord.xy - iResolution.xy) / min(iResolution.x, iResolution.y);
+    
+    // Get beat intensity from audio analysis
+    float beatIntensity = getBeatIntensity();
+    
+    // Generate vortex fractal pattern
+    float pattern = vortexFractal(uv, beatIntensity);
+    
+    // Add log drum visual effect specific to amapiano
+    float logDrumVisual = logDrumEffect(uv, beatIntensity);
+    
+    // Combine effects
+    float finalPattern = pattern + logDrumVisual;
+    
+    // Get psychedelic color based on pattern
+    vec3 color = psychedelicColor(finalPattern);
+    
+    // Add highlight effect on beats
+    color += vec3(1.0, 0.8, 0.4) * beatIntensity * 0.3;
+    
+    // Add subtle pulsing vignette effect
+    float vignette = 1.0 - length(uv) * (0.5 + beatIntensity * 0.1);
+    color *= vignette;
+    
+    // Final color with gamma correction for vibrant display
+    gl_FragColor = vec4(pow(color, vec3(0.8)), 1.0);
+}`,
+"SHINY GLOPPP!": `#define PI 3.14159265359
+
+// Comment/uncomment this to disable/enable anti-aliasing.
+// #define AA
+
+// The scene renderer averages pow(AA_SAMPLES, 2) random ray-marched samples for anti-aliasing.
+#define AA_SAMPLES 4
+
+// Enable or disable the rotating of the camera
+#define ROTATE_CAMERA 1
+
+// Material properties. Play around with these to change the way how the spheres are shaded.
+const vec3 LIGHT_INTENSITY = vec3 (6.0);
+const float INDIRECT_INTENSITY = 0.55;
+const vec3 INDIRECT_SPECULAR_OFFSET = vec3(0.45, 0.65, 0.85);
+
+const vec3 SPHERE0_RGB = vec3(0.4, 0.5, 0.0);
+const vec3 SPHERE1_RGB = vec3(0.5, 0.0, 0.4);
+const vec3 SPHERE2_RGB = vec3(0.0, 0.4, 0.5);
+
+const float SPHERE_METALLIC = 0.99;
+const float SPHERE_ROUGHNESS = 0.11;
+
+// If you decrease metalness factor above, make sure to also change this to something
+// non-metallic. Sample values can be found at: https://learnopengl.com/PBR/Theory
+const vec3 SILVER_F0 = vec3(0.988, 0.98, 0.96);
+
+
+// Modified version of Íñigo Quílez's integer hash3 function (https://www.shadertoy.com/view/llGSzw).
+vec2 Hash2(uint n) 
+{
+	n = (n << 13U) ^ n;
+    n = n * (n * n * 15731U + 789221U) + 1376312589U;
+    uvec2 k = n * uvec2(n,n*16807U);
+    return vec2( k & uvec2(0x7fffffffU))/float(0x7fffffff);
+}
+
+float UniformHash(vec2 xy)
+{
+	return fract(sin(dot(xy.xy, vec2(12.9898, 78.233))) * 43758.5453);
+}
+
+float SdPlane(vec3 p)
+{
+    return p.y;
+}
+
+float SdSphere(vec3 p, float s)
+{
+	return length(p) - s;  
+}
+
+vec2 SdUnion(vec2 d1, vec2 d2)
+{
+	return d1.x < d2.x ? d1 : d2;   
+}
+
+float SdSmoothMin(float a, float b)
+{
+    float k = 0.12;
+    float h = clamp(0.5 + 0.5 * (b-a) / k, 0.0, 1.0);
+    return mix(b, a, h) - k * h * (1.0 - h);
+}
+
+float SdSmoothMin(float a, float b, vec3 mtl1, vec3 mtl0, inout vec3 mtl)
+{
+    float k = 0.12;
+    float h = clamp(0.5 + 0.5 * (b-a) / k, 0.0, 1.0);
+    float s = mix(b, a, h) - k * h * (1.0 - h);
+    float sA = s - a;
+    float sB = s - b;
+    float r = sA / (sA + sB);
+    mtl = mix(mtl1, mtl0, r);
+    return s;
+}
+
+const float g_sRepeat = 800.0;
+
+vec2 PosIndex(vec3 pos)
+{
+	vec2 posIndex;
+	posIndex.x = floor((pos.x + 0.5 * g_sRepeat) / g_sRepeat);
+	posIndex.y = floor((pos.y + 0.5 * g_sRepeat) / g_sRepeat);
+	return posIndex;
+}
+
+float UniformHashFromPos(vec3 pos)
+{
+	pos.xy = PosIndex(pos);
+	return UniformHash(pos.xy);
+}
+
+vec3 VecOsc(vec3 vecFreq, vec3 vecAmp, float dT)
+{
+	return vecAmp * sin(vec3((iTime + dT) * 2.0 * PI) * vecFreq);
+}
+
+vec2 SdScene(vec3 p)
+{
+    float uniformRandom = UniformHashFromPos(p);
+    vec3 uSphereOsc1 = VecOsc(vec3(1.02389382 / 2.0, 1.0320809 / 3.0, 1.07381 / 4.0),
+							vec3(0.25, 0.25, 0.1), uniformRandom);
+    vec3 uSphereOsc2 = VecOsc(vec3(1.032038 / 4.0, 1.13328 / 2.0, 1.09183 / 3.0),
+							vec3(0.25, 0.25, 0.1), uniformRandom);
+    vec3 uSphereOsc3 = VecOsc(vec3(1.123283 / 3.0, 1.13323 / 4.0, 1.2238 / 2.0),
+							vec3(0.25, 0.25, 0.1), uniformRandom);
+    return SdUnion(vec2(SdPlane(p), 1.0), 
+                   vec2(
+                       SdSmoothMin(
+                           SdSmoothMin(
+                               SdSphere(p - vec3(0.0, 0.5, 0.0) + uSphereOsc1, 0.18),
+                               SdSphere(p - vec3(0.0, 0.5, 0.0) + uSphereOsc2, 0.2)
+		     	    	   ),
+                       	   SdSphere(p - vec3(0.0, 0.5, 0.0) + uSphereOsc3, 0.19)
+                       ),
+                       2.0
+                   )
+           );
+}
+
+vec2 SdScene(in vec3 p, inout vec3 mtl)
+{
+    float uniformRandom = UniformHashFromPos(p);
+    vec3 uSphereOsc1 = VecOsc(vec3(1.02389382 / 2.0, 1.0320809 / 3.0, 1.07381 / 4.0),
+							vec3(0.25, 0.25, 0.1), uniformRandom);
+    vec3 uSphereOsc2 = VecOsc(vec3(1.032038 / 4.0, 1.13328 / 2.0, 1.09183 / 3.0),
+							vec3(0.25, 0.25, 0.1), uniformRandom);
+    vec3 uSphereOsc3 = VecOsc(vec3(1.123283 / 3.0, 1.13323 / 4.0, 1.2238 / 2.0),
+							vec3(0.25, 0.25, 0.1), uniformRandom);
+    
+    float smin1 = SdSmoothMin(
+                             SdSphere(p - vec3(0.0, 0.5, 0.0) + uSphereOsc1, 0.18),
+                             SdSphere(p - vec3(0.0, 0.5, 0.0) + uSphereOsc2, 0.2),
+        					 SPHERE0_RGB, SPHERE1_RGB, mtl
+				  );
+    float smin2 = SdSmoothMin(smin1, SdSphere(p - vec3(0.0, 0.5, 0.0) + uSphereOsc3, 0.19),
+                              mtl, SPHERE2_RGB, mtl);
+    return SdUnion(vec2(SdPlane(p), 1.0), vec2(smin2, 2.0));
+}
+
+vec3 CalcNormal(vec3 p)
+{
+	vec2 e = vec2(1.0,-1.0) * 0.5773 * 0.0005;
+    return normalize( e.xyy * SdScene( p + e.xyy ).x + 
+					  e.yyx * SdScene( p + e.yyx ).x + 
+					  e.yxy * SdScene( p + e.yxy ).x + 
+					  e.xxx * SdScene( p + e.xxx ).x );
+}
+
+float ShadowMarch(in vec3 origin, in vec3 rayDirection)
+{
+	float result = 1.0;
+    float t = 0.01;
+    for (int i = 0; i < 64; ++i)
+    {
+        float hit = SdScene(origin + rayDirection * t).x;
+        if (hit < 0.001)
+            return 0.0;
+        result = min(result, 5.0 * hit / t);
+        t += hit;
+        if (t >= 1.5)
+            break;
+    }
+    
+    return clamp(result, 0.0, 1.0);
+}
+    
+vec2 RayMarch(in vec3 origin, in vec3 rayDirection, inout vec3 mtl)
+{
+    float material = -1.0;
+    float t = 0.01;
+	for(int i = 0; i < 64; ++i)
+    {
+        vec3 p = origin + rayDirection * t;
+        vec2 hit = SdScene(p, mtl);
+        if (hit.x < 0.001 * t || t > 50.0)
+			break;
+        t += hit.x;
+        material = hit.y;
+    }
+    
+    if (t > 50.0)
+    {
+     	material = -1.0;   
+    }
+    return vec2(t, material);
+}
+
+//-----------------------------------------PBR Functions-----------------------------------------------//
+
+// Trowbridge-Reitz GGX based Normal distribution function
+float NormalDistributionGGX(float NdotH, float roughness)
+{    
+    float a = roughness * roughness;
+    float a2 = a * a;
+    float NdotH2 = NdotH * NdotH;
+    
+    float numerator = a2;
+    float denom = (NdotH2 * (a2 - 1.0) + 1.0);
+    denom *= denom * PI;
+    
+    return numerator / denom;
+}
+
+// Schlick-Beckmann GGX approximation used for smith's method
+float GeometrySchlickGGX(float NdotX, float k)
+{
+    float numerator   = NdotX;
+    float denom = NdotX * (1.0 - k) + k;
+
+    return numerator / denom;
+}
+
+// Smith's method for calculating geometry shadowing
+float GeometrySmith(float NdotV, float NdotL, float roughness)
+{
+    float r = (roughness + 1.0);
+    float k = (r*r) / 8.0;
+    //float k = (r*r) * sqrt(2.0 / PI);
+    
+    float ggx2 = GeometrySchlickGGX(NdotV, k);
+    float ggx1 = GeometrySchlickGGX(NdotL, k);
+
+    return ggx1 * ggx2;
+}
+
+// Schlick's approximation for Fresnel equation
+vec3 FresnelSchlick(float dotProd, vec3 F0)
+{
+    return F0 + (1.0 - F0) * pow(1.0 - dotProd, 5.0);
+}
+
+float FresnelSchlick(float dotProd, float F0, float F90)
+{
+    return F0 + (F90 - F0) * pow(1.0 - dotProd, 5.0);
+}
+
+// Burley 2012, "Physically-Based Shading at Disney"
+float DiffuseBurley(float linearRoughness, float NdotV, float NdotL, float LdotH)
+{
+    float f90 = 0.5 + 2.0 * linearRoughness * LdotH * LdotH;
+    float lightScatter = FresnelSchlick(NdotL, 1.0, f90);
+    float viewScatter  = FresnelSchlick(NdotV, 1.0, f90);
+    return lightScatter * viewScatter * (1.0 / PI);
+}
+
+// Irradiance from "Ditch River" IBL (http://www.hdrlabs.com/sibl/archive.html)
+vec3 DiffuseIrradiance(const vec3 n) 
+{
+    return max(
+          vec3( 0.754554516862612,  0.748542953903366,  0.790921515418539)
+        + vec3(-0.083856548007422,  0.092533500963210,  0.322764661032516) * (n.y)
+        + vec3( 0.308152705331738,  0.366796330467391,  0.466698181299906) * (n.z)
+        + vec3(-0.188884931542396, -0.277402551592231, -0.377844212327557) * (n.x)
+        , 0.0);
+}
+
+// Karis 2014, "Physically Based Material on Mobile"
+vec2 PrefilteredEnvApprox(float roughness, float NoV) 
+{
+    const vec4 c0 = vec4(-1.0, -0.0275, -0.572,  0.022);
+    const vec4 c1 = vec4( 1.0,  0.0425,  1.040, -0.040);
+
+    vec4 r = roughness * c0 + c1;
+    float a004 = min(r.x * r.x, exp2(-9.28 * NoV)) * r.x + r.y;
+
+    return vec2(-1.04, 1.04) * a004 + r.zw;
+}
+
+//-----------------------------------------------------------------------------------------------------//
+
+// Handle the shading of the scene.
+vec3 RenderScene(in vec3 origin, in vec3 rayDirection, out float hitDistance)
+{
+    vec3 finalColor = vec3(0.0);
+    vec3 albedo = vec3(0.0);
+    vec3 sphereMaterial = vec3(0.0);
+
+    // returns distance and material
+    vec2 hit = RayMarch(origin, rayDirection, sphereMaterial);
+    hitDistance = hit.x;
+    float material = hit.y;
+    
+    vec3 sphereColor = vec3(0.13, 0.0, 0.5);
+    
+    if (material > 0.0)
+    {
+        // Essential vectors and scalars for lighting calculation
+        vec3 position = origin + hitDistance * rayDirection;
+        vec3 normal	= CalcNormal(position);
+        vec3 viewDir = normalize(-rayDirection);
+        vec3 lightDir = normalize(vec3(20.6, 20.7, -20.7) - position);
+        vec3 halfVec = normalize(viewDir + lightDir);
+        vec3 reflectDir = normalize(reflect(rayDirection, normal));
+        
+        float NdotL = max(dot(normal, lightDir), 0.0);
+        float NdotV = max(dot(normal, viewDir), 0.0);
+        float NdotH = max(dot(normal, halfVec), 0.0);
+        float LdotH = max(dot(lightDir, halfVec), 0.0);
+        float VdotH = max(dot(halfVec, viewDir), 0.0);
+        
+        float roughness = 0.0, metallic = 0.0;
+        vec3 F0 = vec3(0.0);
+        
+        if (material < 2.0)
+        {
+            // Checkerboard floor
+        	float f = mod(floor(7.5 * position.z) + floor(7.5 * position.x), 2.0);
+			albedo = 0.4 + f * vec3(0.6);
+            roughness = (f > 0.5 ? 1.0 : 0.18);
+            metallic = 0.4;
+            // Plastic/Glass F0 value
+            F0 = mix(vec3(0.04), albedo, metallic);
+        } 
+        else if (material < 3.0)
+        {
+            // Spheres
+         	albedo =  sphereMaterial;
+            roughness = clamp(SPHERE_ROUGHNESS, 0.0, 1.0);
+            metallic = clamp(SPHERE_METALLIC, 0.0, 1.0);
+            // Silver F0 value
+            F0 = mix(SILVER_F0, albedo, metallic);
+        }
+         
+        
+        // Calculate radiance
+        //float lightDistance = length(lightDir);
+        //float attenuation = 1.0 / (lightDistance * lightDistance);
+        float attenuation = ShadowMarch(position, lightDir);
+        vec3 radiance = LIGHT_INTENSITY * attenuation;
+        
+        // Cook-Torrence specular BRDF
+        float ndf = NormalDistributionGGX(NdotH, roughness);
+        float geometry = GeometrySmith(NdotV, NdotL, roughness);
+        vec3 fresnel = FresnelSchlick(VdotH, F0);
+        
+        vec3 numerator = ndf * geometry * fresnel;
+        float denominator = 4.0 * NdotV * NdotL;
+        
+        vec3 specular = numerator / max(denominator, 0.0001);
+        
+        // Burley Diffuse BRDF
+        float diffuse = DiffuseBurley(roughness * roughness, NdotV, NdotL, LdotH);
+        
+        // Energy conservation
+        vec3 kS = fresnel;
+        vec3 kD = vec3(1.0) - kS;
+        // Diffuse light decreases as "metal-ness" increases (and vice versa).
+        kD *= 1.0 - metallic;
+        
+        vec3 ambient = 0.05 * albedo;
+            
+        // Note to self: Hmm, not sure whether to divide diffuse by PI or not. Some implementations
+        // do while others don't seem to.
+        // Also, note to self: We don't multiply by kS here because it's already done in the calculation
+        // of the numerator part of the specular component.
+        finalColor += (kD * albedo * diffuse / PI + specular + ambient) * radiance * NdotL;
+        
+        
+        // Indirect Lighting
+        sphereMaterial = vec3(0.0);
+        vec2 indirectHit = RayMarch(position, reflectDir, sphereMaterial);
+        vec3 indirectDiffuse = DiffuseIrradiance(normal) / PI;
+        vec3 indirectSpecular = INDIRECT_SPECULAR_OFFSET + reflectDir.y * 0.72;
+        
+        if (indirectHit.y > 0.0)
+        {
+            if (indirectHit.y < 2.0)
+            {
+                vec3 indirectPosition = position + indirectHit.x * reflectDir;
+                // Checkerboard floor
+                float f = mod(floor(7.5 * indirectPosition.z) + floor(7.5 * indirectPosition.x), 2.0);
+				indirectSpecular = 0.4 + f * vec3(0.6);
+            }
+            else if (indirectHit.y < 3.0)
+            {
+                // Spheres
+                indirectSpecular = sphereMaterial;
+            }
+        }
+        
+        vec2 prefilteredSpecularBRDF = PrefilteredEnvApprox(roughness, NdotV);
+        vec3 indirectSpecularColor = F0 * prefilteredSpecularBRDF.x + prefilteredSpecularBRDF.y;
+        vec3 ibl = (1. - metallic) * albedo * indirectDiffuse + indirectSpecular * indirectSpecularColor;
+        
+        finalColor += ibl * INDIRECT_INTENSITY;
+    }
+    
+    return finalColor;
+}
+
+// Gamma correction
+vec3 LinearTosRGB(const vec3 linear)
+{
+    return pow(linear, vec3(1.0 / 2.2));
+}
+
+// Tone mapping
+vec3 AcesFilmicToneMap(const vec3 x)
+{
+    // Narkowicz 2015, "ACES Filmic Tone Mapping Curve"
+    const float a = 2.51;
+    const float b = 0.03;
+    const float c = 2.43;
+    const float d = 0.59;
+    const float e = 0.14;
+    return (x * (a * x + b)) / (x * (c * x + d) + e);
+}
+
+// Generate the camera view matrix
+mat3 SetCamera(in vec3 origin, in vec3 target, float rotation)
+{
+    vec3 forward = normalize(target - origin);
+    vec3 orientation = vec3(sin(rotation), cos(rotation), 0.0);
+    vec3 left = normalize(cross(forward, orientation));
+    vec3 up = normalize(cross(left, forward));
+    return mat3(left, up, forward);
+}
+
+void mainImage( out vec4 fragColor, in vec2 fragCoord )
+{
+    // Set up the camera view matrix
+    vec3 lookAt = vec3(0.0, 0.25, 0.0);
+    float phi = iTime * 0.25 + PI; // horizontal plane angle
+    float theta = 0.3; // left-right (around y-axis) angle
+#if ROTATE_CAMERA
+    vec3 eyePosition = vec3(cos(theta)*cos(phi), sin(theta), cos(theta)*sin(phi)) * 4.0;
+#else
+    vec3 eyePosition = vec3(0.0, 1.0, -4.0);
+#endif
+    
+    // Calculate the camera matrix.
+    mat3 cameraToWorld = SetCamera(eyePosition, lookAt, 0.0);
+    
+    vec3 color = vec3(0.0);
+    float t;
+    
+#ifdef AA
+    
+    int totalAASamples = AA_SAMPLES*AA_SAMPLES;
+    for (int i = 0; i < totalAASamples; ++i)
+    {
+        
+        // Shamelessly plugged and modified from demofox's reflection/refraction shader.
+        // Calculates stratified subpixel jitter for anti-aliasing.
+        float x = mod(float(i), float(AA_SAMPLES));
+        float y = mod(float(i / AA_SAMPLES), float(AA_SAMPLES));
+        
+        vec2 jitter = (Hash2(uint(i)) + vec2(x, y)) / float(AA_SAMPLES);
+
+        vec2 uv = 2.0 * (fragCoord.xy + jitter) / iResolution.xy - 1.0;
+        uv.x *= iResolution.x / iResolution.y;
+
+#else
+        vec2 uv = 2.0 * fragCoord.xy / iResolution.xy - 1.0;
+        uv.x *= iResolution.x / iResolution.y;
+
+#endif    
+        // Ray direction starts from camera's current position
+        vec3 rayDirection = cameraToWorld * normalize(vec3(uv, 5.0));
+
+        // Ray march the scene using sdfs
+        color += RenderScene(eyePosition, rayDirection, t);    
+#ifdef AA
+    }
+    
+    color /= float(totalAASamples);
+#endif
+    
+    // Add a simple distance fog to the scene
+    float fog = 1.0 - exp2(-0.012 * t * t);
+    color = mix(color, 0.8 * vec3(0.6, 0.8, 1.0), fog);
+    
+    // Tone mapping
+    color = AcesFilmicToneMap(color);
+
+    // Gamma correction
+    color = LinearTosRGB(color);
+    
+    fragColor = vec4(color, 1.0);
+}`
 };
 
 
