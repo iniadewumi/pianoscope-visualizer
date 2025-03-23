@@ -5,7 +5,10 @@
  * standard WebGL shaders, and provides a modern UI for testing shaders.
  */
 
-import { SAMPLE_SHADERS } from './shaders.js';
+import { SHADERS } from './shaders.js';
+import { SHADERS2 } from './shaders2.js';
+
+const SAMPLE_SHADERS = {...SHADERS,...SHADERS2}
 
 window.ShaderConverter = (function() {
     "use strict";

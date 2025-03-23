@@ -1,6 +1,6 @@
 
 // Sample Shadertoy shaders to quickly test
-export const SAMPLE_SHADERS = {
+export const SHADERS = {
 "Procedural Circuitry": `// This content is under the MIT License.
 
 #define time iTime*.01
@@ -151,14 +151,14 @@ void mainImage( out vec4 fragColor, in vec2 fragCoord ) {
 	vec3 rnd2 = nrand3( seed2 );
 	starcolor += vec4(pow(rnd2.y,40.0));
 	
-	fragColor = mix(freqs[3]-.3, 1., v) * vec4(1.5*freqs[2] * t * t* t , 1.2*freqs[1] * t * t, freqs[3]*t, 1.0)+c2+starcolor;
+	fragColor = mix(freqs[3]-.03, 1., v) * vec4(1.5*freqs[2] * t * t* t , 1.2*freqs[1] * t * t, freqs[3]*t, 1.0)+c2+starcolor;
 }`,
 "Temporal Fractal Mic'd": `// CC0: Appolloian with a twist II - Subtle Audio Reactive Version
-// Original shader with very gentle audio reactivity
+// Original shader with very gentle audio reactivity - line segments stabilized
 
 #define RESOLUTION  iResolution
 #define TIME        iTime
-#define MAX_MARCHES 30
+#define MAX_MARCHES 320
 #define TOLERANCE   0.0001
 #define ROT(a)      mat2(cos(a), sin(a), -sin(a), cos(a))
 #define PI          3.141592654
@@ -209,13 +209,12 @@ float getOverallIntensity() {
 
 float apolloian(vec3 p, float s, out float h) {
   // Very subtle bass influence on scale
-  float bassBoost = 1.0 + getBassIntensity() * 0.05;
+  float bassBoost = 1.12 + getBassIntensity() * 0.0005;
   float scale = 1.0;
   
   for(int i=0; i < 5; ++i) {
-    // Extremely subtle mid-frequency distortion
-    float midMod = getMidIntensity() * 0.01;
-    p = -1.0 + 2.0*fract(0.5*p + 0.5 + vec3(midMod, -midMod, midMod));
+    // Remove mid-frequency distortion only
+    p = -1.0 + 2.0*fract(0.5*p + 0.5);
     
     float r2 = dot(p,p);
     float k = (s * bassBoost)/r2;
@@ -225,14 +224,20 @@ float apolloian(vec3 p, float s, out float h) {
   
   vec3 ap = abs(p/scale);  
   float d = length(ap.xy);
-  d = min(d, ap.z);
+  
+  // Check if this is a line segment (z-axis)
+  bool isLine = ap.z < d;
+  float dz = ap.z;
+  d = min(d, dz);
   
   float hh = 0.0;
-  if (d == ap.z){
+  if (d == dz){
     // Very subtle high frequency influence
     hh += 0.5 + getHighIntensity() * 0.02;
   }
-  h = hh;
+  
+  // Use h to pass information about whether this is a line
+  h = isLine ? 1.0 : hh;
   return d;
 }
 
@@ -240,7 +245,7 @@ float df(vec2 p, out float h) {
   // Subtle overall intensity modulation
   float intensityMod = getOverallIntensity() * 0.03;
   const float fz = 1.0 - 0.0;
-  float z = 1.55 * fz * (1.0 + intensityMod);
+  float z = 1.75 * fz * (1.0 + intensityMod);
   
   p /= z;
   
@@ -251,7 +256,9 @@ float df(vec2 p, out float h) {
   p3.xz *= g_rot0;
   p3.yz *= g_rot1;
   
-  float d = apolloian(p3, 1.0/fz, h);
+  float isLine;
+  float d = apolloian(p3, 1.0/fz, isLine);
+  h = isLine;
   d *= z;
   return d;
 }
@@ -310,18 +317,30 @@ vec3 effect(vec2 p, vec2 q) {
   vec3 n3 = vec3(0.0, 0.0, 1.0);
   float diff = max(dot(lightDir3, n3), 0.0);
   
-  float h;
-  float d = df(p, h);
+  float isLine;
+  float d = df(p, isLine);
   float ss = shadow(p, lightDir, 0.005, lightLen);
   
-  // Subtle color modulation with audio
+  // Subtle color modulation with audio, but different for line segments
   float bassHueShift = getBassIntensity() * 0.03;
   float highSatMod = getHighIntensity() * 0.05;
-  vec3 bcol = hsv2rgb(vec3(
-      fract(h - 0.2 * length(p) + 0.25 * TIME + bassHueShift), 
-      0.666 + highSatMod, 
-      1.0
-  ));
+  
+  vec3 bcol;
+  if (isLine > 0.5) {
+    // Special color handling for line segments - less audio reactivity
+    bcol = hsv2rgb(vec3(
+        fract(0.5 - 0.1 * length(p) + 0.25 * TIME), 
+        0.7, 
+        1.0
+    ));
+  } else {
+    // Normal fractal parts - full audio reactivity
+    bcol = hsv2rgb(vec3(
+        fract(isLine - 0.2 * length(p) + 0.75 * TIME + bassHueShift), 
+        0.666 + highSatMod, 
+        1.0
+    ));
+  }
   
   vec3 col = vec3(0.0);
   
@@ -333,7 +352,7 @@ vec3 effect(vec2 p, vec2 q) {
   float glowIntensity = 300.0 + getBassIntensity() * 20.0;
   col += exp(-glowIntensity * abs(d)) * sqrt(bcol);
   
-  // Subtle bloom modulation with high frequencies
+  // Subtle bloom  smodulation with high frequencies
   float bloomIntensity = 40.0 + getHighIntensity() * 5.0;
   col += exp(-bloomIntensity * max(lightLen-0.02, 0.0));
  
@@ -448,14 +467,14 @@ void mainImage(out vec4 O, in vec2 I) {
         float t = i / 5.;
         
         // Simple audio multiplier
-        float audioMult = 1.0 + audioSum * 3.0;
+        float audioMult = 0.50 + audioSum * 3.0;
         
         // Create each line - keeping close to the original
         O += Line(
             uv, 
             1. + t,                     // Original speed
             4. + t,                     // Original height 
-            vec3(.2 + t * .7, .2 + t * .4, 0.3) * audioMult  // Color enhanced by audio
+            vec3(sin(audioSum) + t * .7, .2 + t * .4, 0.3) * audioMult  // Color enhanced by audio
         );
     }
 }`,
@@ -565,10 +584,10 @@ void mainImage( out vec4 fragColor, in vec2 fragCoord) {
     col += yLine(uv, sin(uv.x + iTime * 1.0) + sin(uv.y + iTime * 1.0), 0.01);
     col += yLine(uv, sin(uv.x + iTime * 0.2) + cos(uv.y + iTime * 2.0), 0.01);
     col += yLine(uv, sin(uv.x + iTime * 4.0) + sin(uv.y + iTime * 0.5), 0.01);
-    col += yLine(uv, cos(uv.x + iTime * 0.2) + sin(uv.y + iTime * 1.5), 0.01);
+    col += yLine(uv, cos(uv.x + iTime * 0.5) + sin(uv.y + iTime * 1.5), 0.01);
     // In the original the color keeps increasing past the edge of the circle so the whole screen is white,
     // this makes the color falloff back to zero the brighter it gets so we get a ring.
-    col = max(-abs(col - 2.0) + 2.0, 0.0);
+    col = max(-abs(col - 5.0) + 2.0, 0.0);
 
     // Change ivec2 x values to sample different frequencies.
     float r = avgAmp * col.x;
@@ -1131,148 +1150,343 @@ void main() {
     gl_FragColor = vec4(color, 1.0);
 }
 `,
-"3D Play": `precision highp float;
+"3D Play": `/*
+    Abstract Corridor
+    -------------------
+    
+    Using Shadertoy user Nimitz's triangle noise idea and his curvature function to fake an abstract, 
+	flat-shaded, point-lit, mesh look.
 
-#define GAMMA 1.4
-#define SATURATION 0.85
-#define BRIGHTNESS 0.9  // Reduced from 1.2
+	It's a slightly trimmed back, and hopefully, much quicker version my previous tunnel example... 
+	which is not interesting enough to link to. :)
 
-// Audio analysis zones
-const float BASS_START = 0.0;
-const float BASS_END = 0.2;
-const float MIDS_START = 0.2;
-const float MIDS_END = 0.6;
-const float HIGHS_START = 0.6;
-const float HIGHS_END = 1.0;
-const float AUDIO_STEP = 0.01;
+*/
 
-// Fractal parameters
-const int MAX_ITERATIONS = 12;
-const float BAILOUT = 2.0;
-const float POWER = 2.0;
+#define PI 3.1415926535898
+#define FH 1.0 // Floor height. Set it to 2.0 to get rid of the floor.
 
-// Color palette function with darker base
-vec3 palette(float t) {
-    // Reduced base brightness for richer colors
-    return vec3(
-        0.4 + 0.4 * sin(6.28318 * (t + 0.0)),
-        0.4 + 0.4 * sin(6.28318 * (t + 0.333)),
-        0.4 + 0.4 * sin(6.28318 * (t + 0.666))
-    );
+// Grey scale.
+float getGrey(vec3 p){ return p.x*0.299 + p.y*0.587 + p.z*0.114; }
+
+// Non-standard vec3-to-vec3 hash function.
+vec3 hash33(vec3 p){ 
+    
+    float n = sin(dot(p, vec3(7, 157, 113)));    
+    return fract(vec3(2097152, 262144, 32768)*n); 
 }
 
-// Audio reactive parameters
-float getAudioLevel(float start, float end) {
-    float level = 0.0;
-    float count = 0.0;
+// 2x2 matrix rotation.
+mat2 rot2(float a){
     
-    for(float i = 0.0; i < 1.0; i += AUDIO_STEP) {
-        if(i >= start && i <= end) {
-            level += texture2D(iChannel0, vec2(i, 0.0)).x;
-            count += 1.0;
+    float c = cos(a); float s = sin(a);
+	return mat2(c, s, -s, c);
+}
+
+// Tri-Planar blending function. Based on an old Nvidia tutorial.
+vec3 tex3D( sampler2D tex, in vec3 p, in vec3 n ){
+  
+    n = max((abs(n) - 0.2)*7., 0.001); // max(abs(n), 0.001), etc.
+    n /= (n.x + n.y + n.z );  
+    
+	return (texture(tex, p.yz)*n.x + texture(tex, p.zx)*n.y + texture(tex, p.xy)*n.z).xyz;
+}
+
+// The triangle function that Shadertoy user Nimitz has used in various triangle noise demonstrations.
+// See Xyptonjtroz - Very cool. Anyway, it's not really being used to its full potential here.
+vec3 tri(in vec3 x){return abs(x-floor(x)-.5);} // Triangle function.
+
+// The function used to perturb the walls of the cavern: There are infinite possibities, but this one is 
+// just a cheap...ish routine - based on the triangle function - to give a subtle jaggedness. Not very fancy, 
+// but it does a surprizingly good job at laying the foundations for a sharpish rock face. Obviously, more 
+// layers would be more convincing. However, this is a GPU-draining distance function, so the finer details 
+// are bump mapped.
+float surfFunc(in vec3 p){
+    
+	return dot(tri(p*0.5 + tri(p*0.25).yzx), vec3(0.666));
+}
+
+
+// The path is a 2D sinusoid that varies over time, depending upon the frequencies, and amplitudes.
+vec2 path(in float z){ float s = sin(z/24.)*cos(z/12.); return vec2(s*12., 0.); }
+
+// Standard tunnel distance function with some perturbation thrown into the mix. A floor has been 
+// worked in also. A tunnel is just a tube with a smoothly shifting center as you traverse lengthwise. 
+// The walls of the tube are perturbed by a pretty cheap 3D surface function.
+float map(vec3 p){
+
+    float sf = surfFunc(p - vec3(0, cos(p.z/3.)*.15, 0));
+    // Square tunnel.
+    // For a square tunnel, use the Chebyshev(?) distance: max(abs(tun.x), abs(tun.y))
+    vec2 tun = abs(p.xy - path(p.z))*vec2(0.5, 0.7071);
+    float n = 1. - max(tun.x, tun.y) + (0.5 - sf);
+    return min(n, p.y + FH);
+
+/*    
+    // Round tunnel.
+    // For a round tunnel, use the Euclidean distance: length(tun.y)
+    vec2 tun = (p.xy - path(p.z))*vec2(0.5, 0.7071);
+    float n = 1.- length(tun) + (0.5 - sf);
+    return min(n, p.y + FH);  
+*/
+    
+/*
+    // Rounded square tunnel using Minkowski distance: pow(pow(abs(tun.x), n), pow(abs(tun.y), n), 1/n)
+    vec2 tun = abs(p.xy - path(p.z))*vec2(0.5, 0.7071);
+    tun = pow(tun, vec2(4.));
+    float n =1.-pow(tun.x + tun.y, 1.0/4.) + (0.5 - sf);
+    return min(n, p.y + FH);
+*/
+ 
+}
+
+// Texture bump mapping. Four tri-planar lookups, or 12 texture lookups in total.
+vec3 doBumpMap( sampler2D tex, in vec3 p, in vec3 nor, float bumpfactor){
+   
+    const float eps = 0.001;
+    float ref = getGrey(tex3D(tex,  p , nor));                 
+    vec3 grad = vec3( getGrey(tex3D(tex, vec3(p.x - eps, p.y, p.z), nor)) - ref,
+                      getGrey(tex3D(tex, vec3(p.x, p.y - eps, p.z), nor)) - ref,
+                      getGrey(tex3D(tex, vec3(p.x, p.y, p.z - eps), nor)) - ref )/eps;
+             
+    grad -= nor*dot(nor, grad);          
+                      
+    return normalize( nor + grad*bumpfactor );
+	
+}
+
+// Surface normal.
+vec3 getNormal(in vec3 p) {
+	
+	const float eps = 0.001;
+	return normalize(vec3(
+		map(vec3(p.x + eps, p.y, p.z)) - map(vec3(p.x - eps, p.y, p.z)),
+		map(vec3(p.x, p.y + eps, p.z)) - map(vec3(p.x, p.y - eps, p.z)),
+		map(vec3(p.x, p.y, p.z + eps)) - map(vec3(p.x, p.y, p.z - eps))
+	));
+
+}
+
+// Based on original by IQ.
+float calculateAO(vec3 p, vec3 n){
+
+    const float AO_SAMPLES = 5.0;
+    float r = 0.0, w = 1.0, d;
+    
+    for (float i = 1.0; i<AO_SAMPLES + 1.1; i++){
+        d = i/AO_SAMPLES;
+        r += w*(d - map(p + n*d));
+        w *= 0.5;
+    }
+    
+    return 1.0 - clamp(r, 0.0, 1.0);
+}
+
+// Cool curve function, by Shadertoy user, Nimitz.
+//
+// I wonder if it relates to the discrete finite difference approximation to the 
+// continuous Laplace differential operator? Either way, it gives you a scalar 
+// curvature value for an object's signed distance function, which is pretty handy.
+//
+// From an intuitive sense, the function returns a weighted difference between a surface 
+// value and some surrounding values. Almost common sense... almost. :) If anyone 
+// could provide links to some useful articles on the function, I'd be greatful.
+//
+// Original usage (I think?) - Cheap curvature: https://www.shadertoy.com/view/Xts3WM
+// Other usage: Xyptonjtroz: https://www.shadertoy.com/view/4ts3z2
+float curve(in vec3 p, in float w){
+
+    vec2 e = vec2(-1., 1.)*w;
+    
+    float t1 = map(p + e.yxx), t2 = map(p + e.xxy);
+    float t3 = map(p + e.xyx), t4 = map(p + e.yyy);
+    
+    return 0.125/(w*w) *(t1 + t2 + t3 + t4 - 4.*map(p));
+}
+
+void mainImage( out vec4 fragColor, in vec2 fragCoord ){
+	
+	// Screen coordinates.
+	vec2 uv = (fragCoord - iResolution.xy*0.5)/iResolution.y;
+	
+	// Camera Setup.
+	vec3 camPos = vec3(0.0, 0.0, iTime*5.); // Camera position, doubling as the ray origin.
+	vec3 lookAt = camPos + vec3(0.0, 0.1, 0.5);  // "Look At" position.
+ 
+    // Light positioning. One is a little behind the camera, and the other is further down the tunnel.
+ 	vec3 light_pos = camPos + vec3(0.0, 0.125, -0.125);// Put it a bit in front of the camera.
+	vec3 light_pos2 = camPos + vec3(0.0, 0.0, 6.0);// Put it a bit in front of the camera.
+
+	// Using the Z-value to perturb the XY-plane.
+	// Sending the camera, "look at," and two light vectors down the tunnel. The "path" function is 
+	// synchronized with the distance function.
+	lookAt.xy += path(lookAt.z);
+	camPos.xy += path(camPos.z);
+	light_pos.xy += path(light_pos.z);
+	light_pos2.xy += path(light_pos2.z);
+
+    // Using the above to produce the unit ray-direction vector.
+    float FOV = PI/3.; // FOV - Field of view.
+    vec3 forward = normalize(lookAt-camPos);
+    vec3 right = normalize(vec3(forward.z, 0., -forward.x )); 
+    vec3 up = cross(forward, right);
+
+    // rd - Ray direction.
+    vec3 rd = normalize(forward + FOV*uv.x*right + FOV*uv.y*up);
+    
+    // Swiveling the camera from left to right when turning corners.
+    rd.xy = rot2( path(lookAt.z).x/32. )*rd.xy;
+		
+    // Standard ray marching routine. I find that some system setups don't like anything other than
+    // a "break" statement (by itself) to exit. 
+	float t = 0.0, dt;
+	for(int i=0; i<128; i++){
+		dt = map(camPos + rd*t);
+		if(dt<0.005 || t>150.){ break; } 
+		t += dt*0.75;
+	}
+	
+    // The final scene color. Initated to black.
+	vec3 sceneCol = vec3(0.);
+	
+	// The ray has effectively hit the surface, so light it up.
+	if(dt<0.005){
+    	
+    	// Surface position and surface normal.
+	    vec3 sp = t * rd+camPos;
+	    vec3 sn = getNormal(sp);
+        
+        // Texture scale factor.
+        const float tSize0 = 1./1.; 
+        const float tSize1 = 1./4.;
+    	
+    	// Texture-based bump mapping.
+	    if (sp.y<-(FH-0.005)) sn = doBumpMap(iChannel1, sp*tSize1, sn, 0.025); // Floor.
+	    else sn = doBumpMap(iChannel0, sp*tSize0, sn, 0.025); // Walls.
+	    
+	    // Ambient occlusion.
+	    float ao = calculateAO(sp, sn);
+    	
+    	// Light direction vectors.
+	    vec3 ld = light_pos-sp;
+	    vec3 ld2 = light_pos2-sp;
+
+        // Distance from respective lights to the surface point.
+	    float distlpsp = max(length(ld), 0.001);
+	    float distlpsp2 = max(length(ld2), 0.001);
+    	
+    	// Normalize the light direction vectors.
+	    ld /= distlpsp;
+	    ld2 /= distlpsp2;
+	    
+	    // Light attenuation, based on the distances above. In case it isn't obvious, this
+        // is a cheap fudge to save a few extra lines. Normally, the individual light
+        // attenuations would be handled separately... No one will notice, nor care. :)
+	    float atten = min(1./(distlpsp) + 1./(distlpsp2), 1.);
+    	
+    	// Ambient light.
+	    float ambience = 0.25;
+    	
+    	// Diffuse lighting.
+	    float diff = max( dot(sn, ld), 0.0);
+	    float diff2 = max( dot(sn, ld2), 0.0);
+    	
+    	// Specular lighting.
+	    float spec = pow(max( dot( reflect(-ld, sn), -rd ), 0.0 ), 8.);
+	    float spec2 = pow(max( dot( reflect(-ld2, sn), -rd ), 0.0 ), 8.);
+    	
+    	// Curvature.
+	    float crv = clamp(curve(sp, 0.125)*0.5 + 0.5, .0, 1.);
+	    
+	    // Fresnel term. Good for giving a surface a bit of a reflective glow.
+        float fre = pow( clamp(dot(sn, rd) + 1., .0, 1.), 1.);
+        
+        // Obtaining the texel color. If the surface point is above the floor
+        // height use the wall texture, otherwise use the floor texture.
+        vec3 texCol;
+        if (sp.y<-(FH - 0.005)) texCol = tex3D(iChannel1, sp*tSize1, sn); // Floor.
+ 	    else texCol = tex3D(iChannel0, sp*tSize0, sn); // Walls.
+       
+        // Shadertoy doesn't appear to have anisotropic filtering turned on... although,
+        // I could be wrong. Texture-bumped objects don't appear to look as crisp. Anyway, 
+        // this is just a very lame, and not particularly well though out, way to sparkle 
+        // up the blurry bits. It's not really that necessary.
+        //vec3 aniso = (0.5 - hash33(sp))*fre*0.35;
+	    //texCol = clamp(texCol + aniso, 0., 1.);
+    	
+    	// Darkening the crevices. Otherwise known as cheap, scientifically-incorrect shadowing.	
+	    float shading =  crv*0.5 + 0.5; 
+    	
+    	// Combining the above terms to produce the final color. It was based more on acheiving a
+        // certain aesthetic than science.
+        //
+        // Glow.
+        sceneCol = getGrey(texCol)*((diff + diff2)*0.75 + ambience*0.25) + (spec + spec2)*texCol*2. + fre*crv*texCol.zyx*2.;
+        //
+        // Other combinations:
+        //
+        // Shiny.
+        //sceneCol = texCol*((diff + diff2)*vec3(1.0, 0.95, 0.9) + ambience + fre*fre*texCol) + (spec + spec2);
+        // Abstract pen and ink?
+        //float c = getGrey(texCol)*((diff + diff2)*1.75 + ambience + fre*fre) + (spec + spec2)*0.75;
+        //sceneCol = vec3(c*c*c, c*c, c);
+
+	    
+        // Shading.
+        sceneCol *= atten*shading*ao;
+        
+        // Drawing the lines on the walls. Comment this out and change the first texture to
+        // granite for a granite corridor effect.
+        sceneCol *= clamp(1.-abs(curve(sp, 0.0125)), .0, 1.);        
+	   
+	
+	}
+	
+    // Edit: No gamma correction -- I can't remember whether it was a style choice, or whether I forgot at
+    // the time, but you should always gamma correct. In this case, just think of it as rough gamma correction 
+    // on a postprocessed color: sceneCol = sqrt(sceneCol*sceneCol); :D
+	fragColor = vec4(clamp(sceneCol, 0., 1.), 1.0);
+	
+}`,
+"Hexed": `#define r iResolution.xy
+#define PI 3.14159265358979323
+const float sqrt3 = sqrt(3.);
+
+float hstp(float x) {
+    return max(min(x/2.-round(x/6.)*3.,1.),-1.)+round(x/6.)*2.;
+}
+
+vec2 hextosqr(vec2 p) {
+    return (vec2(p.x,0) + vec2(-1,2) * vec2(p.y) / sqrt3 + vec2(-1,1) * hstp(p.x - sqrt3 * p.y)) / 2.;
+}
+
+vec2 sqrtohex(vec2 p) {
+    return vec2(1,sqrt3) * (vec2(3,2) * p - vec2(0,p.x));
+}
+
+void mainImage(out vec4 c,in vec2 o) {
+    for(int x = 0; x++ < 4;)
+    for(int y = 0; y++ < 4;) {
+        float w = 8.;
+        vec2 s = o + vec2(x,y) / 4.;
+        vec2 p = (s / r * 2. - 1.) * sqrt(r / r.yx);
+        float m = iTime * 0.25;
+        float g = m * -0.5 * PI * 3.;
+        p *= mat2(cos(g),sin(g),-sin(g),cos(g)) / pow(w * w,fract(m) + 2.);
+        vec2 l = round(hextosqr(p));
+        vec2 h = p - sqrtohex(l);
+        int a;
+        for(int i = 0; i++ < 32; a++) {
+            vec2 l = round(hextosqr(p));
+            vec2 h = p - sqrtohex(l);
+            c += clamp(vec4(length(h) * cos(mod(atan(h.y,h.x),PI / 3.) - PI / 6.) / 2.) * 25. - 21.,0.,1.) * 0.1;
+            if(l != vec2(0)) {
+                c += vec4(1. - sqrt(1. - length(h) / 2.)) * 0.03;
+                break;
+            }
+            float t = m * (float(i % 2) * 2. - 1.) * PI * 3.;
+            p *= mat2(cos(t),sin(t),-sin(t),cos(t)) * w;
         }
     }
-    return count > 0.0 ? level / count : 0.0;
-}
-
-vec2 rot(vec2 p, float a) {
-    float c = cos(a), s = sin(a);
-    return vec2(p.x * c - p.y * s, p.x * s + p.y * c);
-}
-
-float fractal(vec3 p) {
-    float bass = getAudioLevel(BASS_START, BASS_END);
-    float mids = getAudioLevel(MIDS_START, MIDS_END);
-    float highs = getAudioLevel(HIGHS_START, HIGHS_END);
-    
-    float scale = 1.0 + bass * 0.4;  // Reduced bass influence
-    
-    vec3 z = p;
-    float dr = 1.0;
-    float r = 0.0;
-    
-    for(int i = 0; i < MAX_ITERATIONS; i++) {
-        r = length(z);
-        if(r > BAILOUT) break;
-        
-        float theta = acos(z.z / r);
-        float phi = atan(z.y, z.x);
-        
-        dr = pow(r, POWER - 1.0) * POWER * dr + 1.0;
-        
-        float zr = pow(r, POWER);
-        theta = theta * POWER + mids * 0.4;  // Reduced mid influence
-        phi = phi * POWER + highs * 0.2;     // Reduced high influence
-        
-        z = zr * vec3(
-            sin(theta) * cos(phi),
-            sin(theta) * sin(phi),
-            cos(theta)
-        );
-        
-        z += p * scale;
-    }
-    return 0.5 * log(r) * r / dr;
-}
-
-void mainImage(out vec4 fragColor, in vec2 fragCoord) {
-    vec2 uv = (2.0 * fragCoord - iResolution.xy) / min(iResolution.x, iResolution.y);
-    
-    float bass = getAudioLevel(BASS_START, BASS_END);
-    float mids = getAudioLevel(MIDS_START, MIDS_END);
-    float highs = getAudioLevel(HIGHS_START, HIGHS_END);
-    
-    float time = iTime * 0.3;
-    vec3 camera = vec3(
-        3.0 * sin(time + bass),
-        2.0 * cos(time * 0.5 + mids),
-        4.0 * cos(time + highs)
-    );
-    
-    vec3 lookat = vec3(0.0);
-    vec3 forward = normalize(lookat - camera);
-    vec3 right = normalize(cross(forward, vec3(0.0, 1.0, 0.0)));
-    vec3 up = normalize(cross(right, forward));
-    
-    vec3 rd = normalize(forward + right * uv.x + up * uv.y);
-    
-    float t = 0.0;
-    float detail = 0.001 + bass * 0.01;
-    
-    vec3 color = vec3(0.0);
-    
-    // Adjusted raymarching loop for better depth
-    for(int i = 0; i < 100; i++) {
-        vec3 pos = camera + rd * t;
-        float dist = fractal(pos);
-        
-        if(dist < detail || t > 20.0) break;
-        t += dist * 0.5;
-        
-        // Reduced color intensity and adjusted layering
-        vec3 col = palette(t * 0.15 + iTime * 0.1);
-        col *= 0.7 + bass * 1.5;     // Reduced bass boost
-        col += mids * 0.3 * palette(t * 0.2);   // Reduced mids
-        col += highs * 0.2 * palette(t * 0.3);  // Reduced highs
-        
-        // Adjusted color accumulation with stronger distance falloff
-        color += col * 0.08 * exp(-t * 0.1);
-    }
-    
-    // Enhanced contrast in post-processing
-    color = pow(color, vec3(GAMMA));
-    color *= BRIGHTNESS;
-    color = mix(vec3(length(color)), color, SATURATION);
-    
-    // Stronger vignette effect
-    float vignette = 1.0 - dot(uv, uv) * 0.7;  // Increased vignette intensity
-    vignette = pow(vignette, 1.5 + bass * 1.5);
-    color *= vignette;
-    
-    // Add subtle dark edges
-    color *= 0.8 + 0.2 * smoothstep(0.0, 0.1, length(uv));
-    
-    fragColor = vec4(color, 1.0);
 }`,
 "Chaossss": `void mainImage(out vec4 fragColor, in vec2 fragCoord)
 {
