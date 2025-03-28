@@ -157,35 +157,42 @@ class VideoTextureHandler {
     }
     
     play() {
+        // If video isn't ready yet, set a flag to play when ready
         if (this.videoElement.readyState < this.videoElement.HAVE_METADATA) {
-             console.log("Video metadata not ready yet, play() deferred.");
-             return;
-        }
-        // *** END ADDITION ***
-
-        if (this.videoLoaded || this.videoElement.readyState >= this.videoElement.HAVE_METADATA) { // Modified check
-            this.videoElement.play()
-                .then(() => {
-                    this.isPlaying = true;
-                    this.isPaused = false;
+            console.log("Video metadata not ready yet, play() deferred.");
+            this.playWhenReady = true;
+            
+            // Add one-time event listener to play when metadata loads
+            this.videoElement.addEventListener('loadedmetadata', () => {
+                if (this.playWhenReady) {
+                    console.log("Metadata loaded, starting playback");
                     this.playWhenReady = false;
-                })
-                .catch(error => {
-                    console.error('Error playing video:', error);
-
-                    if (error.name === 'NotAllowedError' && !this.isMuted) {
-                        console.log('Autoplay blocked, attempting mute and retry...');
-                        this.videoElement.muted = true;
-                        this.isMuted = true;
-                        this.play();
-                    } else {
-                       this.playWhenReady = false; 
-                    }
-                });
-        } else {
-             console.log("Play called but video not loaded/ready.");
-             this.playWhenReady = true;
+                    this.play();
+                }
+            }, { once: true });
+            
+            return;
         }
+    
+        // Now we know video is loaded or metadata is ready
+        this.videoElement.play()
+            .then(() => {
+                this.isPlaying = true;
+                this.isPaused = false;
+                this.playWhenReady = false;
+            })
+            .catch(error => {
+                console.error('Error playing video:', error);
+    
+                if (error.name === 'NotAllowedError' && !this.isMuted) {
+                    console.log('Autoplay blocked, attempting mute and retry...');
+                    this.videoElement.muted = true;
+                    this.isMuted = true;
+                    this.play();
+                } else {
+                    this.playWhenReady = false;
+                }
+            });
     }
     
     pause() {
