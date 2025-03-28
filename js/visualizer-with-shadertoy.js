@@ -56,7 +56,6 @@ document.addEventListener('DOMContentLoaded', () => {
     `;
     
     // Default fragment shader - pulled from your index.html
-    
     const fragmentShaderSource = `
     precision highp float;
 
@@ -152,12 +151,18 @@ document.addEventListener('DOMContentLoaded', () => {
         // Output
         gl_FragColor = O;
     }
-        `;
+    `;
     
     // === WEBGL SETUP ===
     const gl = canvas.getContext('webgl2') || canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
     const isWebGL2 = gl instanceof WebGL2RenderingContext;
     const glslVersion = isWebGL2 ? '300 es' : '100';
+    
+    // Initialize video controller after GL context is created
+    let videoController = null;
+    if (gl && typeof VideoController !== 'undefined') {
+        videoController = new VideoController(gl);
+    }
     
     function addVersionHeader(shaderSource, isFragmentShader) {
         const versionHeader = glslVersion === '300 es' 
@@ -531,6 +536,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let startTime = performance.now() / 1000;
     let animationRunning = false;
     
+    // Modified render function with video support
     function render(now) {
         if (!animationRunning) return;
         
@@ -542,6 +548,39 @@ document.addEventListener('DOMContentLoaded', () => {
         deltaTime = nowSec - lastTime;
         lastTime = nowSec;
         frameCount++;
+        
+        // Check if we're in video mode
+        const isVideoMode = videoController && videoController.isInVideoMode && videoController.isInVideoMode();
+        
+        // If in video mode, update the video texture and use the video display shader
+        if (isVideoMode) {
+            // Update video texture
+            videoController.updateVideoTexture();
+            
+            // If we need to switch to the video display shader, do it
+            if (currentProgram && !window.currentShaderIsVideoDisplay) {
+                // Save the current shader for returning later
+                window.savedShaderProgram = currentProgram;
+                window.savedVertexShader = currentVertexShader;
+                window.savedFragmentShader = currentFragmentShader;
+                
+                // Apply the video display shader
+                setupShaderProgram(vertexShaderSource, videoController.getVideoDisplayShader());
+                window.currentShaderIsVideoDisplay = true;
+            }
+        } else if (window.currentShaderIsVideoDisplay) {
+            // If leaving video mode, restore the previous shader
+            if (window.savedShaderProgram) {
+                currentProgram = window.savedShaderProgram;
+                currentVertexShader = window.savedVertexShader;
+                currentFragmentShader = window.savedFragmentShader;
+                gl.useProgram(currentProgram);
+                window.currentShaderIsVideoDisplay = false;
+                
+                // Re-get uniforms
+                uniforms = getShaderUniforms();
+            }
+        }
         
         // Set uniform values for shader if program exists
         if (!currentProgram) return;
@@ -571,13 +610,19 @@ document.addEventListener('DOMContentLoaded', () => {
             gl.uniform1f(uniforms.iSampleRate, audioContext.sampleRate);
         }
         
-        // Update audio texture (Channel 0)
-        updateAudioTexture();
-        
-        // Bind all textures to their proper targets
-        gl.activeTexture(gl.TEXTURE0);
-        gl.bindTexture(gl.TEXTURE_2D, audioTexture);
-        if (uniforms.iChannel0) gl.uniform1i(uniforms.iChannel0, 0);
+        // Determine which texture to use for iChannel0
+        if (isVideoMode && videoController) {
+            // Use video texture for iChannel0
+            gl.activeTexture(gl.TEXTURE0);
+            gl.bindTexture(gl.TEXTURE_2D, videoController.getVideoTexture());
+            if (uniforms.iChannel0) gl.uniform1i(uniforms.iChannel0, 0);
+        } else {
+            // Use audio texture for iChannel0 (original behavior)
+            updateAudioTexture();
+            gl.activeTexture(gl.TEXTURE0);
+            gl.bindTexture(gl.TEXTURE_2D, audioTexture);
+            if (uniforms.iChannel0) gl.uniform1i(uniforms.iChannel0, 0);
+        }
         
         // Set up other channels (currently unused but available for future)
         for (let i = 1; i < 4; i++) {
