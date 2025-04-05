@@ -201,10 +201,11 @@ void main() {
             <div class="sample-videos-section">
                 <h4>Sample Videos</h4>
                 <div class="sample-videos-container">
-                    <button class="sample-video-button" data-video="videos/sample.mp4">Sample</button>
-                    <button class="sample-video-button" data-video="videos/particles.mp4">Particles</button>
-                    <button class="sample-video-button" data-video="videos/neon.mp4">Neon Lights</button>
-                    <button class="sample-video-button" data-video="videos/geometric.mp4">Geometric</button>
+                    <button class="sample-video-button" data-video="videos/sample.mp4">Caramel</button>
+                    <button class="sample-video-button" data-video="videos/ranni.mp4">Ranni</button>
+                    <button class="sample-video-button" data-video="videos/jam.mp4">Jamming</button>
+                    <button class="sample-video-button" data-video="videos/wraith.mp4">Wraith</button>
+                    <button class="sample-video-button" data-video="videos/latest.mp4">Latest</button>
                 </div>
             </div>
 
