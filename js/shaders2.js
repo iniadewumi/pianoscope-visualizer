@@ -1165,6 +1165,47 @@ void mainImage( out vec4 fragColor, in vec2 fragCoord )
     fragColor.xyz = fragColor.zyx;
 	fragColor.xyz = vec3(1)-fragColor.xyz;
 
-}`
+}`,
+
+"Cray Cray": `
+vec3 palette(float t) {
+    vec3 a = vec3(0.5, 0.5, 0.5);
+    vec3 b = vec3(0.5, 0.5, 0.5);
+    vec3 c = vec3(cos(0.5), 0.5, 0.5);
+    vec3 d = vec3(0.5, sin(0.5), 0.35);
+    
+    return a + b * cos(6.24535 * (c * t + d));
+}
+
+void mainImage(out vec4 fragColor, in vec2 fragCoord) {
+    vec3 finalColor = vec3(0.0);
+
+    vec2 uv = (fragCoord * 2.0 - iResolution.xy) / iResolution.y;
+
+    // Get mic input (assumed as 1D texture in iChannel0)
+    // We'll sample the middle point (0.5) for simplicity
+    float micValue = texture(iChannel0, vec2(0.5, 0.0)).r;
+
+    // Scale UV with mic input (adds reactivity)
+    vec2 uv0 = uv * (1.0 + micValue * 0.005); // You can tweak the multiplier
+
+    for (float i = 0.0; i < 3.0; i++) {
+        uv = fract(uv * 2.0) - 0.5;
+
+        float d = length(uv);
+
+        vec3 col = palette(length(uv0) + iTime + micValue); // inject mic here too
+
+        d = sin(d * 8.0 + iTime + micValue * 10.0) / 8.0;
+        d = abs(d);
+        d = 0.02 / d;
+
+        col *= d;
+        finalColor += col * d;
+    }
+
+    fragColor = vec4(finalColor, 1.0);
+}
+`
 }
 

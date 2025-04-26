@@ -584,10 +584,10 @@ void mainImage( out vec4 fragColor, in vec2 fragCoord) {
     col += yLine(uv, sin(uv.x + iTime * 1.0) + sin(uv.y + iTime * 1.0), 0.01);
     col += yLine(uv, sin(uv.x + iTime * 0.2) + cos(uv.y + iTime * 2.0), 0.01);
     col += yLine(uv, sin(uv.x + iTime * 4.0) + sin(uv.y + iTime * 0.5), 0.01);
-    col += yLine(uv, cos(uv.x + iTime * 0.5) + sin(uv.y + iTime * 1.5), 0.01);
+    col += yLine(uv, cos(uv.x + iTime * 0.2) + sin(uv.y + iTime * 1.5), 0.01);
     // In the original the color keeps increasing past the edge of the circle so the whole screen is white,
     // this makes the color falloff back to zero the brighter it gets so we get a ring.
-    col = max(-abs(col - 5.0) + 2.0, 0.0);
+    col = max(-abs(col - 2.0) + 2.0, 0.0);
 
     // Change ivec2 x values to sample different frequencies.
     float r = avgAmp * col.x;
@@ -614,12 +614,13 @@ void mainImage( out vec4 fragColor, in vec2 fragCoord) {
     
     vec3 finalColor = col * vec3(r,g,b);
     fragColor = vec4(finalColor, 1.0);
-}`,
+}
+
+`,
 
 
-"Trippy Cheese Rail":`
-// "Fractal Cartoon" - former "DE edge detection" by Kali
-// Modified with audio reactivity for jumping on beat
+"Trippy Cheese Rail":`// "Fractal Cartoon" with procedural cat replacement
+// Modified from original "DE edge detection" by Kali
 
 // There are no lights and no AO, only color by normals and dark edges.
 
@@ -628,71 +629,24 @@ void mainImage( out vec4 fragColor, in vec2 fragCoord) {
 #define WAVES
 #define BORDER
 
-#define RAY_STEPS 300
+#define RAY_STEPS 150
 
 #define BRIGHTNESS 1.2
 #define GAMMA 1.4
 #define SATURATION .65
 
 #define detail .001
+#define t iTime*.5
 
 const vec3 origin=vec3(-1.,.7,0.);
 float det=0.0;
-
-// Audio analysis variables
-float audioLevel = 0.0;      // Current overall audio level
-float prevAudioLevel = 0.0;  // Previous audio level for beat detection
-float beatIntensity = 0.0;   // Current beat intensity
-float jumpHeight = 0.0;      // Current jump height
-float timeFactor = 0.0;      // Animation time factor
-
-// Audio analysis function
-void processAudio() {
-    // Sample multiple frequency bands for a better overall level
-    float bassLevel = texture2D(iChannel0, vec2(0.05, 0.0)).x * 1.5;
-    float lowMidLevel = texture2D(iChannel0, vec2(0.1, 0.0)).x * 1.0;
-    float midLevel = texture2D(iChannel0, vec2(0.2, 0.0)).x * 0.8;
-    
-    // Calculate overall audio level (emphasizing bass for beat detection)
-    float currentLevel = bassLevel * 0.7 + lowMidLevel * 0.2 + midLevel * 0.1;
-    
-    // Determine audio presence
-    bool hasAudio = currentLevel > 0.01;
-    
-    // Update time factor - move very slowly when no audio, speed up with audio level
-    float baseSpeed = 0.05; // Very slow base speed when no music
-    float audioSpeed = 0.5; // Full speed with audio (original pace)
-    timeFactor = iTime * (baseSpeed + audioLevel * (audioSpeed - baseSpeed));
-    
-    // Beat detection by comparing current level to previous level
-    float beatThreshold = 0.15;  // Minimum intensity to be considered a beat
-    float beatRatio = currentLevel / (prevAudioLevel + 0.01);  // Prevent division by zero
-    
-    // Detect beat when audio level has a significant jump
-    if (beatRatio > 1.5 && currentLevel > beatThreshold) {
-        // New beat detected
-        beatIntensity = currentLevel * 2.5;  // Scale for more impact
-    } else {
-        // Gradually reduce beat intensity
-        beatIntensity *= 0.9;  // Decay factor
-    }
-    
-    // Update jump height based on beat intensity with a maximum cap
-    float gravity = 0.1;
-    float maxJumpHeight = 0.7; // Reduced maximum height to prevent showing only sky
-    jumpHeight = min(maxJumpHeight, max(0.0, jumpHeight + beatIntensity - gravity));
-    
-    // Store current level for next frame comparison
-    prevAudioLevel = mix(prevAudioLevel, currentLevel, 0.3);  // Smooth transition
-    audioLevel = currentLevel;
-}
 
 // 2D rotation function
 mat2 rot(float a) {
     return mat2(cos(a),sin(a),-sin(a),cos(a));    
 }
 
-// "Amazing Surface" fractal - standard, no audio effects
+// "Amazing Surface" fractal
 vec4 formula(vec4 p) {
     p.xz = abs(p.xz+1.)-abs(p.xz-1.)-p.xz;
     p.y-=.25;
@@ -701,16 +655,10 @@ vec4 formula(vec4 p) {
     return p;
 }
 
-// Distance function - with jump effect on beat
+// Distance function
 float de(vec3 pos) {
-    // Apply jump effect - offset Y position based on jumpHeight
-    // The bridge part of the fractal jumps up and falls back
-    // Scale factor reduced to prevent excessive jumping
-    float jumpOffset = jumpHeight * 0.35 * max(0.0, 1.0 - abs(pos.z - sin(timeFactor*6.0)*1.5) / 2.0);
-    pos.y -= jumpOffset;
-    
 #ifdef WAVES
-    pos.y+=sin(pos.z-timeFactor*6.)*.15; //waves!
+    pos.y+=sin(pos.z-t*6.)*.15; //waves!
 #endif
     float hid=0.;
     vec3 tpos=pos;
@@ -727,7 +675,7 @@ float de(vec3 pos) {
     return d;
 }
 
-// Camera path - original path but controlled by audio
+// Camera path
 vec3 path(float ti) {
     ti*=1.5;
     vec3 p=vec3(sin(ti),(1.-sin(ti*2.))*.5,-ti*5.)*.5;
@@ -748,11 +696,11 @@ vec3 normal(vec3 p) {
     return normalize(vec3(d1-d2,d3-d4,d5-d6));
 }
 
-// Used Nyan Cat code by mu6k, with some mods
+// Modified rainbow trail function - no need for external texture
 vec4 rainbow(vec2 p)
 {
     float q = max(p.x,-0.1);
-    float s = sin(p.x*7.0+timeFactor*70.0)*0.08;
+    float s = sin(p.x*7.0+t*70.0)*0.08;
     p.y+=s;
     p.y*=1.1;
     
@@ -772,15 +720,67 @@ vec4 rainbow(vec2 p)
     return c;
 }
 
-vec4 nyan(vec2 p)
+// New procedural cat function that doesn't rely on external textures
+vec4 proceduralCat(vec2 p)
 {
-    vec2 uv = p*vec2(0.4,1.0);
-    float ns=3.0;
-    float nt = timeFactor*ns; nt-=mod(nt,240.0/256.0/6.0); nt = mod(nt,240.0/256.0);
-    float ny = mod(timeFactor*ns,1.0); ny-=mod(ny,0.75); ny*=-0.05;
-    vec4 color = texture(iChannel1,vec2(uv.x/3.0+210.0/256.0-nt+0.05,.5-uv.y-ny));
-    if (uv.x<-0.3) color.a = 0.0;
-    if (uv.x>0.2) color.a=0.0;
+    // Calculate aspect ratio to make cat proportional to screen resolution
+    float aspectRatio = iResolution.x/iResolution.y;
+    float scale = min(1.0, aspectRatio); // Adjust scale based on aspect ratio
+    
+    // Simple cat shape made of circles and rectangles
+    vec2 uv = p*vec2(0.4*scale, 1.0);
+    
+    // Cat animation
+    float wiggle = sin(iTime*3.0)*0.1;
+    
+    // Cat head size - narrower width
+    float headSize = 0.12 * scale;
+    float headOffset = -0.05 * scale;
+    
+    // Cat body (head)
+    float catBody = length(uv - vec2(headOffset, 0.0)) - headSize;
+    
+    // Cat ears - closer together
+    float earSize = 0.06 * scale;
+    float earSpacing = 0.07 * scale;
+    float catEar1 = length(uv - vec2(headOffset-earSpacing*0.7, 0.15 + wiggle*0.2)) - earSize;
+    float catEar2 = length(uv - vec2(headOffset+earSpacing*0.7, 0.15 - wiggle*0.2)) - earSize;
+    
+    // Cat face features - scaled and positioned relative to head
+    float eyeSize = 0.025 * scale;
+    float eyeSpacing = 0.04 * scale;
+    float catEye1 = length(uv - vec2(headOffset-eyeSpacing*0.8, 0.02)) - eyeSize;
+    float catEye2 = length(uv - vec2(headOffset+eyeSpacing*0.8, 0.02)) - eyeSize;
+    float catNose = length(uv - vec2(headOffset, -0.02)) - eyeSize*0.7;
+    
+    // Combine all elements
+    float catShape = min(catBody, min(catEar1, catEar2));
+    
+    // Add the face features
+    vec4 color = vec4(0.0);
+    
+    // Main cat color (pink)
+    if (catShape < 0.0) {
+        color = vec4(0.9, 0.5, 0.6, 0.9);
+    }
+    
+    // Eyes (black)
+    if (catEye1 < 0.0 || catEye2 < 0.0) {
+        color = vec4(0.1, 0.1, 0.1, 1.0);
+    }
+    
+    // Nose (red)
+    if (catNose < 0.0) {
+        color = vec4(0.9, 0.2, 0.2, 1.0);
+    }
+    
+    // Position constraint - adjusted based on scale
+    float edgeConstraint = 0.25 * scale;
+    if (uv.x < -0.3 || uv.x > edgeConstraint) color.a = 0.0;
+    
+    // Add some animation to the cat
+    color.rgb += vec3(sin(iTime*5.0 + uv.y*20.0)*0.1);
+    
     return color;
 }
 
@@ -809,11 +809,11 @@ vec3 raymarch(in vec3 from, in vec3 dir)
 #endif        
     totdist=clamp(totdist,0.,26.);
     dir.y-=.02;
-    float sunsize=7.-max(0.,texture(iChannel0,vec2(.6,.2)).x)*5.; // responsive sun size
-    float an=atan(dir.x,dir.y)+timeFactor*1.5; // angle for drawing and rotating sun
+    float sunsize=9.-max(0.,texture(iChannel0,vec2(.6,.2)).x)*5.; // responsive sun size
+    float an=atan(dir.x,dir.y)+iTime*1.5; // angle for drawing and rotating sun
     float s=pow(clamp(1.0-length(dir.xy)*sunsize-abs(.2-mod(an,.4)),0.,1.),.1); // sun
     float sb=pow(clamp(1.0-length(dir.xy)*(sunsize-.2)-abs(.2-mod(an,.4)),0.,1.),.1); // sun border
-    float sg=pow(clamp(1.0-length(dir.xy)*(sunsize-4.5)-.5*abs(.2-mod(an,.4)),0.,1.),3.); // sun rays
+    float sg=pow(clamp(1.0-length(dir.xy)*(sunsize-3.5)-.5*abs(.2-mod(an,.4)),0.,1.),3.); // sun rays
     float y=mix(.45,1.2,pow(smoothstep(0.,1.,.75-dir.y),2.))*(1.-sb*.5); // gradient sky
     
     // set up background with sky and sun
@@ -830,12 +830,9 @@ vec3 raymarch(in vec3 from, in vec3 dir)
 #else
     col*=vec3(1.,.9,.85);
 #ifdef NYAN
-    // Make Nyan Cat jump up and down with the beat
-    float nyanJump = jumpHeight * 0.7;
-    
     dir.yx*=rot(dir.x);
-    vec2 ncatpos=(dir.xy+vec2(-3.+mod(-timeFactor,6.),-.27-nyanJump)); // Jump applies to Y position
-    vec4 ncat=nyan(ncatpos*5.);
+    vec2 ncatpos=(dir.xy+vec2(-3.+mod(-t,6.),-.27));
+    vec4 ncat=proceduralCat(ncatpos*5.); // Use our procedural cat instead
     vec4 rain=rainbow(ncatpos*10.+vec2(.8,.5));
     if (totdist>8.) col=mix(col,max(vec3(.2),rain.xyz),rain.a*.9);
     if (totdist>8.) col=mix(col,max(vec3(.2),ncat.xyz),ncat.a*.9);
@@ -846,32 +843,21 @@ vec3 raymarch(in vec3 from, in vec3 dir)
 
 // get camera position
 vec3 move(inout vec3 dir) {
-    vec3 go=path(timeFactor);
-    vec3 adv=path(timeFactor+.7);
+    vec3 go=path(t);
+    vec3 adv=path(t+.7);
     float hd=de(adv);
     vec3 advec=normalize(adv-go);
     float an=adv.x-go.x; an*=min(1.,abs(adv.z-go.z))*sign(adv.z-go.z)*.7;
     dir.xy*=mat2(cos(an),sin(an),-sin(an),cos(an));
-    
-    // Add slight camera jump to reflect the beat intensity
-    // This makes the camera jump up and down with the beat
-    float cameraJump = jumpHeight * 0.15; // Scale down for more subtle effect
-    an=advec.y*1.7 + cameraJump;
-    
+    an=advec.y*1.7;
     dir.yz*=mat2(cos(an),sin(an),-sin(an),cos(an));
     an=atan(advec.x,advec.z);
     dir.xz*=mat2(cos(an),sin(an),-sin(an),cos(an));
-    
-    // Apply a small vertical offset to camera position based on jump
-    vec3 jumpOffset = vec3(0.0, jumpHeight * 0.1, 0.0);
-    return go + jumpOffset;
+    return go;
 }
 
 void mainImage( out vec4 fragColor, in vec2 fragCoord )
 {
-    // Process audio first to update all the audio-reactive variables
-    processAudio();
-    
     vec2 uv = fragCoord.xy / iResolution.xy*2.-1.;
     vec2 oriuv=uv;
     uv.y*=iResolution.y/iResolution.x;
@@ -3481,6 +3467,366 @@ void mainImage( out vec4 fragColor, in vec2 fragCoord )
     color = LinearTosRGB(color);
     
     fragColor = vec4(color, 1.0);
+}`,
+"Unseen Vow": `/*
+	Perspex Web Lattice
+	-------------------
+	
+	I felt that Shadertoy didn't have enough Voronoi examples, so I made another one. :) I'm
+	not exactly sure what it's supposed to be... My best guess is that an Alien race with no 
+	common sense designed a monitor system with physics defying materials. :)
+
+	Technically speaking, there's not much to it. It's just some raymarched 2nd order Voronoi.
+	The dark perspex-looking web lattice is created by manipulating the Voronoi value slightly 
+	and giving the effected region an ID value so as to color it differently, but that's about
+	it. The details are contained in the "heightMap" function.
+
+	There's also some subtle edge detection in order to give the example a slight comic look. 
+	3D geometric edge detection doesn't really differ a great deal in concept from 2D pixel 
+	edge detection, but it obviously involves more processing power. However, it's possible to 
+	combine the edge detection with the normal calculation and virtually get it for free. Kali 
+	uses it to great effect in his "Fractal Land" example. It's also possible to do a
+	tetrahedral version... I think Nimitz and some others may have done it already. Anyway, 
+	you can see how it's done in the "nr" (normal) function.
+
+	Geometric edge related examples:
+
+	Fractal Land - Kali
+	https://www.shadertoy.com/view/XsBXWt
+
+	Rotating Cubes - Shau
+	https://www.shadertoy.com/view/4sGSRc
+
+	Voronoi mesh related:
+
+    // I haven't really looked into this, but it's interesting.
+	Weaved Voronoi - FabriceNeyret2 
+    https://www.shadertoy.com/view/ltsXRM
+
+*/
+
+#define FAR 2.
+
+int id = 0; // Object ID - Red perspex: 0; Black lattice: 1.
+
+
+// Tri-Planar blending function. Based on an old Nvidia writeup:
+// GPU Gems 3 - Ryan Geiss: https://developer.nvidia.com/gpugems/GPUGems3/gpugems3_ch01.html
+vec3 tex3D( sampler2D tex, in vec3 p, in vec3 n ){
+   
+    n = max((abs(n) - .2), .001);
+    n /= (n.x + n.y + n.z ); // Roughly normalized.
+    
+	p = (texture(tex, p.yz)*n.x + texture(tex, p.zx)*n.y + texture(tex, p.xy)*n.z).xyz;
+    
+    // Loose sRGB to RGB conversion to counter final value gamma correction...
+    // in case you're wondering.
+    return p*p;
+}
+
+
+// Compact, self-contained version of IQ's 3D value noise function. I have a transparent noise
+// example that explains it, if you require it.
+float n3D(vec3 p){
+    
+	const vec3 s = vec3(7, 157, 113);
+	vec3 ip = floor(p); p -= ip; 
+    vec4 h = vec4(0., s.yz, s.y + s.z) + dot(ip, s);
+    p = p*p*(3. - 2.*p); //p *= p*p*(p*(p * 6. - 15.) + 10.);
+    h = mix(fract(sin(h)*43758.5453), fract(sin(h + s.x)*43758.5453), p.x);
+    h.xy = mix(h.xz, h.yw, p.y);
+    return mix(h.x, h.y, p.z); // Range: [0, 1].
+}
+
+// vec2 to vec2 hash.
+vec2 hash22(vec2 p) { 
+
+    // Faster, but doesn't disperse things quite as nicely. However, when framerate
+    // is an issue, and it often is, this is a good one to use. Basically, it's a tweaked 
+    // amalgamation I put together, based on a couple of other random algorithms I've 
+    // seen around... so use it with caution, because I make a tonne of mistakes. :)
+    float n = sin(dot(p, vec2(41, 289)));
+    //return fract(vec2(262144, 32768)*n); 
+    
+    // Animated.
+    p = fract(vec2(262144, 32768)*n); 
+    // Note the ".45," insted of ".5" that you'd expect to see. When edging, it can open 
+    // up the cells ever so slightly for a more even spread. In fact, lower numbers work 
+    // even better, but then the random movement would become too restricted. Zero would 
+    // give you square cells.
+    return sin( p*6.2831853 + iTime )*.45 + .5; 
+    
+}
+
+// 2D 2nd-order Voronoi: Obviously, this is just a rehash of IQ's original. I've tidied
+// up those if-statements. Since there's less writing, it should go faster. That's how 
+// it works, right? :)
+//
+float Voronoi(in vec2 p){
+    
+	vec2 g = floor(p), o; p -= g;
+	
+	vec3 d = vec3(1); // 1.4, etc. "d.z" holds the distance comparison value.
+    
+	for(int y = -1; y <= 1; y++){
+		for(int x = -1; x <= 1; x++){
+            
+			o = vec2(x, y);
+            o += hash22(g + o) - p;
+            
+			d.z = dot(o, o); 
+            // More distance metrics.
+            //o = abs(o);
+            //d.z = max(o.x*.8666 + o.y*.5, o.y);// 
+            //d.z = max(o.x, o.y);
+            //d.z = (o.x*.7 + o.y*.7);
+            
+            d.y = max(d.x, min(d.y, d.z));
+            d.x = min(d.x, d.z); 
+                       
+		}
+	}
+	
+    return max(d.y/1.2 - d.x*1., 0.)/1.2;
+    //return d.y - d.x; // return 1.-d.x; // etc.
+    
+}
+
+// The height map values. In this case, it's just a Voronoi variation. By the way, I could
+// optimize this a lot further, but it's not a particularly taxing distance function, so
+// I've left it in a more readable state.
+float heightMap(vec3 p){
+    
+    id =0;
+    float c = Voronoi(p.xy*4.); // The fiery bit.
+    
+    // For lower values, reverse the surface direction, smooth, then
+    // give it an ID value of one. Ie: this is the black web-like
+    // portion of the surface.
+    if (c<.07) {c = smoothstep(0.7, 1., 1.-c)*.2; id = 1; }
+
+    return c;
+}
+
+// Standard back plane height map. Put the plane at vec3(0, 0, 1), then add some height values.
+// Obviously, you don't want the values to be too large. The one's here account for about 10%
+// of the distance between the plane and the camera.
+float m(vec3 p){
+   
+    float h = heightMap(p); // texture(iChannel0, p.xy/2.).x; // Texture work too.
+    
+    return 1. - p.z - h*.1;
+    
+}
+
+/*
+// Tetrahedral normal, to save a couple of "map" calls. Courtesy of IQ.
+vec3 nr(in vec3 p){
+
+    // Note the slightly increased sampling distance, to alleviate artifacts due to hit point inaccuracies.
+    vec2 e = vec2(0.005, -0.005); 
+    return normalize(e.xyy * m(p + e.xyy) + e.yyx * m(p + e.yyx) + e.yxy * m(p + e.yxy) + e.xxx * m(p + e.xxx));
+}
+*/
+
+/*
+// Standard normal function - for comparison with the one below.
+vec3 nr(in vec3 p) {
+	const vec2 e = vec2(0.005, 0);
+	return normalize(vec3(m(p + e.xyy) - m(p - e.xyy), m(p + e.yxy) - m(p - e.yxy),	m(p + e.yyx) - m(p - e.yyx)));
+}
+*/
+
+// The normal function with some edge detection rolled into it.
+vec3 nr(vec3 p, inout float edge) { 
+	
+    vec2 e = vec2(.005, 0);
+
+    // Take some distance function measurements from either side of the hit point on all three axes.
+	float d1 = m(p + e.xyy), d2 = m(p - e.xyy);
+	float d3 = m(p + e.yxy), d4 = m(p - e.yxy);
+	float d5 = m(p + e.yyx), d6 = m(p - e.yyx);
+	float d = m(p)*2.;	// The hit point itself - Doubled to cut down on calculations. See below.
+     
+    // Edges - Take a geometry measurement from either side of the hit point. Average them, then see how
+    // much the value differs from the hit point itself. Do this for X, Y and Z directions. Here, the sum
+    // is used for the overall difference, but there are other ways. Note that it's mainly sharp surface 
+    // curves that register a discernible difference.
+    edge = abs(d1 + d2 - d) + abs(d3 + d4 - d) + abs(d5 + d6 - d);
+    //edge = max(max(abs(d1 + d2 - d), abs(d3 + d4 - d)), abs(d5 + d6 - d)); // Etc.
+    
+    // Once you have an edge value, it needs to normalized, and smoothed if possible. How you 
+    // do that is up to you. This is what I came up with for now, but I might tweak it later.
+    edge = smoothstep(0., 1., sqrt(edge/e.x*2.));
+	
+    // Return the normal.
+    // Standard, normalized gradient mearsurement.
+    return normalize(vec3(d1 - d2, d3 - d4, d5 - d6));
+}
+
+/*
+// I keep a collection of occlusion routines... OK, that sounded really nerdy. :)
+// Anyway, I like this one. I'm assuming it's based on IQ's original.
+float cAO(in vec3 p, in vec3 n)
+{
+	float sca = 3., occ = 0.;
+    for(float i=0.; i<5.; i++){
+    
+        float hr = .01 + i*.5/4.;        
+        float dd = m(n * hr + p);
+        occ += (hr - dd)*sca;
+        sca *= 0.7;
+    }
+    return clamp(1.0 - occ, 0., 1.);    
+}
+*/
+
+/*
+// Standard hue rotation formula... compacted down a bit.
+vec3 rotHue(vec3 p, float a){
+
+    vec2 cs = sin(vec2(1.570796, 0) + a);
+
+    mat3 hr = mat3(0.299,  0.587,  0.114,  0.299,  0.587,  0.114,  0.299,  0.587,  0.114) +
+        	  mat3(0.701, -0.587, -0.114, -0.299,  0.413, -0.114, -0.300, -0.588,  0.886) * cs.x +
+        	  mat3(0.168,  0.330, -0.497, -0.328,  0.035,  0.292,  1.250, -1.050, -0.203) * cs.y;
+							 
+    return clamp(p*hr, 0., 1.);
+}
+*/
+
+// Simple environment mapping. Pass the reflected vector in and create some
+// colored noise with it. The normal is redundant here, but it can be used
+// to pass into a 3D texture mapping function to produce some interesting
+// environmental reflections.
+//
+// More sophisticated environment mapping:
+// UI easy to integrate - XT95    
+// https://www.shadertoy.com/view/ldKSDm
+vec3 eMap(vec3 rd, vec3 sn){
+    
+    vec3 sRd = rd; // Save rd, just for some mixing at the end.
+    
+    // Add a time component, scale, then pass into the noise function.
+    rd.xy -= iTime*.25;
+    rd *= 3.;
+    
+    //vec3 tx = tex3D(iChannel0, rd/3., sn);
+    //float c = dot(tx*tx, vec3(.299, .587, .114));
+    
+    float c = n3D(rd)*.57 + n3D(rd*2.)*.28 + n3D(rd*4.)*.15; // Noise value.
+    c = smoothstep(0.5, 1., c); // Darken and add contast for more of a spotlight look.
+    
+    //vec3 col = vec3(c, c*c, c*c*c*c).zyx; // Simple, warm coloring.
+    vec3 col = vec3(min(c*1.5, 1.), pow(c, 2.5), pow(c, 12.)).zyx; // More color.
+    
+    // Mix in some more red to tone it down and return.
+    return mix(col, col.yzx, sRd*.25+.25); 
+    
+}
+
+void mainImage(out vec4 c, vec2 u){
+
+    // Unit direction ray, camera origin and light position.
+    vec3 r = normalize(vec3(u - iResolution.xy*.5, iResolution.y)), 
+         o = vec3(0), l = o + vec3(0, 0, -1);
+   
+    // Rotate the canvas. Note that sine and cosine are kind of rolled into one.
+    vec2 a = sin(vec2(1.570796, 0) + iTime/8.); // Fabrice's observation.
+    r.xy = mat2(a, -a.y, a.x) * r.xy;
+
+    
+    // Standard raymarching routine. Raymarching a slightly perturbed back plane front-on
+    // doesn't usually require many iterations. Unless you rely on your GPU for warmth,
+    // this is a good thing. :)
+    float d, t = 0.;
+    
+    for(int i=0; i<32;i++){
+        
+        d = m(o + r*t);
+        // There isn't really a far plane to go beyond, but it's there anyway.
+        if(abs(d)<0.001 || t>FAR) break;
+        t += d*.7;
+
+    }
+    
+    t = min(t, FAR);
+    
+    // Set the initial scene color to black.
+    c = vec4(0);
+    
+    float edge = 0.; // Edge value - to be passed into the normal.
+    
+    if(t<FAR){
+    
+        vec3 p = o + r*t, n = nr(p, edge);
+
+        l -= p; // Light to surface vector. Ie: Light direction vector.
+        d = max(length(l), 0.001); // Light to surface distance.
+        l /= d; // Normalizing the light direction vector.
+
+        
+ 
+        // Obtain the height map (destorted Voronoi) value, and use it to slightly
+        // shade the surface. Gives a more shadowy appearance.
+        float hm = heightMap(p);
+        
+        // Texture value at the surface. Use the heighmap value above to distort the
+        // texture a bit.
+        vec3 tx = tex3D(iChannel0, (p*2. + hm*.2), n);
+        //tx = floor(tx*15.999)/15.; // Quantized cartoony colors, if you get bored enough.
+
+        c.xyz = vec3(1.)*(hm*.8 + .2); // Applying the shading to the final color.
+        
+        c.xyz *= vec3(1.5)*tx; // Multiplying by the texture value and lightening.
+        
+        
+        // Color the cell part with a fiery (I incorrectly spell it firey all the time) 
+        // palette and the latticey web thing a very dark color.
+        //
+        c.x = dot(c.xyz, vec3(.299, .587, .114)); // Grayscale.
+        if (id==0) c.xyz *= vec3(min(c.x*1.5, 1.), pow(c.x, 5.), pow(c.x, 24.))*2.;
+        else c.xyz *= .1;
+        
+        // Hue rotation, for anyone who's interested.
+        //c.xyz = rotHue(c.xyz, mod(iTime/16., 6.283));
+       
+        
+        float df = max(dot(l, n), 0.); // Diffuse.
+        float sp = pow(max(dot(reflect(-l, n), -r), 0.), 32.); // Specular.
+        
+        if(id == 1) sp *= sp; // Increase specularity on the dark lattice.
+        
+		// Applying some diffuse and specular lighting to the surface.
+        c.xyz = c.xyz*(df + .75) + vec3(1, .97, .92)*sp + vec3(.5, .7, 1)*pow(sp, 32.);
+        
+        // Add the fake environmapping. Give the dark surface less reflectivity.
+        vec3 em = eMap(reflect(r, n), n); // Fake environment mapping.
+        if(id == 1) em *= .5;
+        c.xyz += em;
+        
+        // Edges.
+        //if(id == 0)c.xyz += edge*.1; // Lighter edges.
+        c.xyz *= 1. - edge*.8; // Darker edges.
+        
+        // Attenuation, based on light to surface distance.    
+        c.xyz *= 1./(1. + d*d*.125);
+        
+        // AO - The effect is probably too subtle, in this case, so we may as well
+        // save some cycles.
+        //c.xyz *= cAO(p, n);
+        
+    }
+    
+    
+    // Vignette.
+    //vec2 uv = u/iResolution.xy;
+    //c.xyz = mix(c.xyz, vec3(0, 0, .5), .1 -pow(16.*uv.x*uv.y*(1.-uv.x)*(1.-uv.y), 0.25)*.1);
+    
+    // Apply some statistically unlikely (but close enough) 2.0 gamma correction. :)
+    c = vec4(sqrt(clamp(c.xyz, 0., 1.)), 1.);
+    
+    
 }`
 };
 
