@@ -449,10 +449,10 @@ vec4 Line(vec2 uv, float speed, float height, vec3 col) {
     float amp = 0.2 * (1.0 + audio);
     
     // Create the wave shape
-    uv.y += S(1., 0., abs(uv.x)) * sin(iTime * speed + uv.x * height) * amp;
+    uv.y += S(1., 0.05, abs(uv.x)) * sin(iTime * 0.5 * speed + uv.x * height) * amp;
     
     // Create the line with original thickness
-    return vec4(S(.06 * S(.2, .9, abs(uv.x)), 0., abs(uv.y) - .004) * col, 1.0) 
+    return vec4(S(.006 * S(.002, .9, abs(uv.x)), 0., abs(uv.y) - .004) * col, 1.0) 
            * S(1., .3, abs(uv.x));
 }
 

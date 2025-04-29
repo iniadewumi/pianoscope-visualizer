@@ -7,7 +7,91 @@
 
 document.addEventListener('DOMContentLoaded', () => {
     "use strict";
+// Add this at the top where other global variables are declared
+let globalTextures = [];
+
+// Use a CORS-friendly URL for textures
+const DEFAULT_TEXTURE_URL = "https://picsum.photos/800/600";
+
+// Add this function to your visualizer-with-shadertoy.js
+function setupTextures(gl, program) {
+    // Create texture objects for iChannel0 and iChannel1
+    // We'll use the same texture for both for simplicity
+    const textures = [];
+    const textureCount = 4; // Shadertoy supports up to 4 texture channels
     
+    for (let i = 0; i < textureCount; i++) {
+        textures[i] = gl.createTexture();
+        gl.activeTexture(gl[`TEXTURE${i}`]);
+        gl.bindTexture(gl.TEXTURE_2D, textures[i]);
+        
+        // Set up temporary pixel while we load
+        const pixel = new Uint8Array([128, 128, 128, 255]); // mid-gray
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
+        
+        // Set texture parameters for proper sampling
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        
+        // Set texture uniform
+        const location = gl.getUniformLocation(program, `iChannel${i}`);
+        if (location) {
+            gl.uniform1i(location, i);
+        }
+    }
+    
+    // Load the texture into all channels
+    loadTextureIntoChannels(gl, textures, DEFAULT_TEXTURE_URL);
+    
+    // Save textures globally for use in render loop
+    globalTextures = textures;
+    
+    return textures;
+}
+
+function loadTextureIntoChannels(gl, textures, url) {
+    const image = new Image();
+    image.crossOrigin = "anonymous"; // Important for CORS
+    
+    image.onload = function() {
+        console.log(`Image loaded successfully: ${url}`);
+        console.log(`Dimensions: ${image.width}x${image.height}`);
+        
+        // Load the same image into all texture channels
+        for (let i = 0; i < textures.length; i++) {
+            gl.activeTexture(gl[`TEXTURE${i}`]);
+            gl.bindTexture(gl.TEXTURE_2D, textures[i]);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
+            
+            // Only generate mipmap if power-of-two dimensions
+            if (isPowerOf2(image.width) && isPowerOf2(image.height)) {
+                gl.generateMipmap(gl.TEXTURE_2D);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+                console.log(`Generated mipmaps for texture ${i}`);
+            } else {
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+                console.log(`Using CLAMP_TO_EDGE for non-power-of-two texture ${i}`);
+            }
+            console.log(`Texture ${i} set up completely`);
+        }
+    };
+    
+    image.onerror = function(e) {
+        console.error(`Failed to load texture from ${url}`);
+        console.error(e);
+    };
+    
+    console.log(`Starting to load image from: ${url}`);
+    image.src = url;
+}
+
+function isPowerOf2(value) {
+    return (value & (value - 1)) === 0;
+}
     // === CONFIGURATION ===
     // Easy to modify settings
     const audioSmoothingFactor = 0.8; // How smooth the audio response is (0-1)
@@ -248,67 +332,130 @@ document.addEventListener('DOMContentLoaded', () => {
         
         return program;
     }
-    
-    // Set up a new shader program
-    function setupShaderProgram(vertexSource, fragmentSource) {
-        // Clean up previous program if it exists
-        if (currentProgram) {
-            gl.deleteProgram(currentProgram);
-        }
-        if (currentVertexShader) {
-            gl.deleteShader(currentVertexShader);
-        }
-        if (currentFragmentShader) {
-            gl.deleteShader(currentFragmentShader);
-        }
-        
-        // Create new shaders
-        currentVertexShader = createShader(gl, gl.VERTEX_SHADER, vertexSource);
-        if (!currentVertexShader) return false;
-        
-        currentFragmentShader = createShader(gl, gl.FRAGMENT_SHADER, fragmentSource);
-        if (!currentFragmentShader) return false;
+    // Modified setupShaderProgram function
 
-        window.currentVertexShader = currentVertexShader;
-        window.currentFragmentShader = currentFragmentShader; 
-        
-        // Create and use program
-        currentProgram = createProgram(gl, currentVertexShader, currentFragmentShader);
-        if (!currentProgram) return false;
-        
-        gl.useProgram(currentProgram);
-        
-        // Set up vertex attributes
-        const positions = new Float32Array([
-            -1.0, -1.0,
-             1.0, -1.0,
-            -1.0,  1.0,
-             1.0,  1.0
-        ]);
-        
-        const positionBuffer = gl.createBuffer();
-        gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
-        gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
-        
-        const positionLocation = gl.getAttribLocation(currentProgram, 'position');
-        gl.enableVertexAttribArray(positionLocation);
-        gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
-        
-        // Reset frame counter
-        frameCount = 0;
-        
-        // Get all uniforms after successful program setup
-        uniforms = getShaderUniforms();
-        
-        if (window.kioskWindow && !window.kioskWindow.closed) {
-            window.kioskWindow.postMessage({
-                type: 'shader-update',
-                vertexShader: vertexSource,
-                fragmentShader: fragmentSource
-            }, '*');
-        }
-        return true;
+function setupShaderProgram(vertexSource, fragmentSource) {
+
+    // Clean up previous program if it exists
+
+    if (currentProgram) {
+
+        gl.deleteProgram(currentProgram);
+
     }
+
+    if (currentVertexShader) {
+
+        gl.deleteShader(currentVertexShader);
+
+    }
+
+    if (currentFragmentShader) {
+
+        gl.deleteShader(currentFragmentShader);
+
+    }
+
+    
+
+    // Create new shaders
+
+    currentVertexShader = createShader(gl, gl.VERTEX_SHADER, vertexSource);
+
+    if (!currentVertexShader) return false;
+
+    
+
+    currentFragmentShader = createShader(gl, gl.FRAGMENT_SHADER, fragmentSource);
+
+    if (!currentFragmentShader) return false;
+
+    window.currentVertexShader = currentVertexShader;
+
+    window.currentFragmentShader = currentFragmentShader; 
+
+    
+
+    // Create and use program
+
+    currentProgram = createProgram(gl, currentVertexShader, currentFragmentShader);
+
+    if (!currentProgram) return false;
+
+    
+
+    gl.useProgram(currentProgram);
+
+    
+
+    // Set up vertex attributes
+
+    const positions = new Float32Array([
+
+        -1.0, -1.0,
+
+         1.0, -1.0,
+
+        -1.0,  1.0,
+
+         1.0,  1.0
+
+    ]);
+
+    
+
+    const positionBuffer = gl.createBuffer();
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+
+    gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
+
+    
+
+    const positionLocation = gl.getAttribLocation(currentProgram, 'position');
+
+    gl.enableVertexAttribArray(positionLocation);
+
+    gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
+
+    
+
+    // *** ADD TEXTURE SETUP HERE ***
+
+    setupTextures(gl, currentProgram);
+
+    
+
+    // Reset frame counter
+
+    frameCount = 0;
+
+    
+
+    // Get all uniforms after successful program setup
+
+    uniforms = getShaderUniforms();
+
+    
+
+    if (window.kioskWindow && !window.kioskWindow.closed) {
+
+        window.kioskWindow.postMessage({
+
+            type: 'shader-update',
+
+            vertexShader: vertexSource,
+
+            fragmentShader: fragmentSource
+
+        }, '*');
+
+    }
+
+    return true;
+
+}
+
     
     // Get all shader uniforms to be updated each frame
     function getShaderUniforms() {
@@ -625,15 +772,16 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         
         // Set up other channels (currently unused but available for future)
+        // Fixed version using globalTextures:
         for (let i = 1; i < 4; i++) {
             const channelUniform = uniforms['iChannel' + i];
             if (channelUniform) {
                 gl.activeTexture(gl.TEXTURE0 + i);
+                // Use extraTextures instead since it's already defined
                 gl.bindTexture(gl.TEXTURE_2D, extraTextures[i-1]);
                 gl.uniform1i(channelUniform, i);
             }
         }
-        
         // Draw
         gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     }
