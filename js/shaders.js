@@ -875,267 +875,546 @@ void mainImage( out vec4 fragColor, in vec2 fragCoord )
     fragColor = vec4(color,1.);
 }`,
 
-"Ankara Test": `precision highp float;
+"Jellyfish Migration": `// Luminescence by Martijn Steinrucken aka BigWings - 2017
+// Email:countfrolic@gmail.com Twitter:@The_ArtOfCode
+// License Creative Commons Attribution-NonCommercial-ShareAlike 3.0 Unported License.
 
-uniform vec2 iResolution;
-uniform float iTime;
-uniform sampler2D iChannel0;
-uniform vec4 iMouse;
+// My entry for the monthly challenge (May 2017) on r/proceduralgeneration 
+// Use the mouse to look around. Uncomment the SINGLE define to see one specimen by itself.
+// Code is a bit of a mess, too lazy to clean up. Hope you like it!
 
-// ========== CONFIGURATION ==========
-const float PATTERN_SCALE = 8.0;    // Scale of patterns
-const float ANIMATION_SPEED = 0.3;  // Speed of animations
-const float COLOR_INTENSITY = 1.2;  // Color vibrancy
+// Music by Klaus Lunde
+// https://soundcloud.com/klauslunde/zebra-tribute
 
-// ========== HELPER FUNCTIONS ==========
-// Simple hash function
-float hash(vec2 p) {
-    p = fract(p * vec2(123.34, 456.21));
-    p += dot(p, p + 45.32);
-    return fract(p.x * p.y);
+// YouTube: The Art of Code -> https://www.youtube.com/channel/UCcAlTqd9zID6aNX3TzwxJXg
+// Twitter: @The_ArtOfCode
+
+#define INVERTMOUSE -1.
+
+#define MAX_STEPS 100.
+#define VOLUME_STEPS 8.
+//#define SINGLE
+#define MIN_DISTANCE 0.1
+#define MAX_DISTANCE 100.
+#define HIT_DISTANCE .01
+
+#define S(x,y,z) smoothstep(x,y,z)
+#define B(x,y,z,w) S(x-z, x+z, w)*S(y+z, y-z, w)
+#define sat(x) clamp(x,0.,1.)
+#define SIN(x) sin(x)*.5+.5
+
+const vec3 lf=vec3(1., 0., 0.);
+const vec3 up=vec3(0., 1., 0.);
+const vec3 fw=vec3(0., 0., 1.);
+
+const float halfpi = 1.570796326794896619;
+const float pi = 3.141592653589793238;
+const float twopi = 6.283185307179586;
+
+
+vec3 accentColor1 = vec3(1., .1, .5);
+vec3 secondColor1 = vec3(.1, .5, 1.);
+
+vec3 accentColor2 = vec3(1., .5, .1);
+vec3 secondColor2 = vec3(.1, .5, .6);
+
+vec3 bg;	 	// global background color
+vec3 accent;	// color of the phosphorecence
+
+float N1( float x ) { return fract(sin(x)*5346.1764); }
+float N2(float x, float y) { return N1(x + y*23414.324); }
+
+float N3(vec3 p) {
+    p  = fract( p*0.3183099+.1 );
+	p *= 17.0;
+    return fract( p.x*p.y*p.z*(p.x+p.y+p.z) );
 }
 
-// Basic noise function
-float noise(vec2 p) {
-    vec2 i = floor(p);
-    vec2 f = fract(p);
+struct ray {
+    vec3 o;
+    vec3 d;
+};
+
+struct camera {
+    vec3 p;			// the position of the camera
+    vec3 forward;	// the camera forward vector
+    vec3 left;		// the camera left vector
+    vec3 up;		// the camera up vector
+	
+    vec3 center;	// the center of the screen, in world coords
+    vec3 i;			// where the current ray intersects the screen, in world coords
+    ray ray;		// the current ray: from cam pos, through current uv projected on screen
+    vec3 lookAt;	// the lookat point
+    float zoom;		// the zoom factor
+};
+
+struct de {
+    // data type used to pass the various bits of information used to shade a de object
+	float d;	// final distance to field
+    float m; 	// material
+    vec3 uv;
+    float pump;
     
-    // Smoothstep interpolation
-    vec2 u = f * f * (3.0 - 2.0 * f);
+    vec3 id;
+    vec3 pos;		// the world-space coordinate of the fragment
+};
     
-    // Four corners
-    float a = hash(i);
-    float b = hash(i + vec2(1.0, 0.0));
-    float c = hash(i + vec2(0.0, 1.0));
-    float d = hash(i + vec2(1.0, 1.0));
+struct rc {
+    // data type used to handle a repeated coordinate
+	vec3 id;	// holds the floor'ed coordinate of each cell. Used to identify the cell.
+    vec3 h;		// half of the size of the cell
+    vec3 p;		// the repeated coordinate
+    //vec3 c;		// the center of the cell, world coordinates
+};
     
-    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+rc Repeat(vec3 pos, vec3 size) {
+	rc o;
+    o.h = size*.5;					
+    o.id = floor(pos/size);			// used to give a unique id to each cell
+    o.p = mod(pos, size)-o.h;
+    //o.c = o.id*size+o.h;
+    
+    return o;
+}
+    
+camera cam;
+
+
+void CameraSetup(vec2 uv, vec3 position, vec3 lookAt, float zoom) {
+	
+    cam.p = position;
+    cam.lookAt = lookAt;
+    cam.forward = normalize(cam.lookAt-cam.p);
+    cam.left = cross(up, cam.forward);
+    cam.up = cross(cam.forward, cam.left);
+    cam.zoom = zoom;
+    
+    cam.center = cam.p+cam.forward*cam.zoom;
+    cam.i = cam.center+cam.left*uv.x+cam.up*uv.y;
+    
+    cam.ray.o = cam.p;						// ray origin = camera position
+    cam.ray.d = normalize(cam.i-cam.p);	// ray direction is the vector from the cam pos through the point on the imaginary screen
 }
 
-// West African inspired color palette
-vec3 africanPalette(float t) {
-    // Rich gold, earth tones, and indigo colors inspired by
-    // Kente cloth, mud cloth, and West African textiles
-    const vec3 gold = vec3(0.9, 0.7, 0.1);
-    const vec3 earthRed = vec3(0.75, 0.3, 0.1);
-    const vec3 indigo = vec3(0.1, 0.15, 0.4);
-    const vec3 forestGreen = vec3(0.0, 0.4, 0.2);
-    const vec3 black = vec3(0.1, 0.05, 0.05);
-    
-    t = fract(t);
-    
-    if (t < 0.2) return mix(black, indigo, t * 5.0);
-    else if (t < 0.4) return mix(indigo, forestGreen, (t - 0.2) * 5.0);
-    else if (t < 0.6) return mix(forestGreen, earthRed, (t - 0.4) * 5.0);
-    else if (t < 0.8) return mix(earthRed, gold, (t - 0.6) * 5.0);
-    else return mix(gold, black, (t - 0.8) * 5.0);
+
+// ============== Functions I borrowed ;)
+
+//  3 out, 1 in... DAVE HOSKINS
+vec3 N31(float p) {
+   vec3 p3 = fract(vec3(p) * vec3(.1031,.11369,.13787));
+   p3 += dot(p3, p3.yzx + 19.19);
+   return fract(vec3((p3.x + p3.y)*p3.z, (p3.x+p3.z)*p3.y, (p3.y+p3.z)*p3.x));
 }
 
-// ========== AUDIO ANALYSIS ==========
-// Get bass power
-float getAudioBass() {
-    float bass = 0.0;
-    for (int i = 0; i < 15; i++) {
-        float sample = texture2D(iChannel0, vec2(float(i) / 128.0, 0.0)).x;
-        bass += sample * sample;  // Square for better dynamics
-    }
-    return min(bass * 0.2, 1.0);
+// DE functions from IQ
+float smin( float a, float b, float k )
+{
+    float h = clamp( 0.5+0.5*(b-a)/k, 0.0, 1.0 );
+    return mix( b, a, h ) - k*h*(1.0-h);
 }
 
-// Get mid frequencies
-float getAudioMid() {
-    float mid = 0.0;
-    for (int i = 15; i < 50; i++) {
-        mid += texture2D(iChannel0, vec2(float(i) / 128.0, 0.0)).x;
-    }
-    return min(mid * 0.05, 1.0);
+float smax( float a, float b, float k )
+{
+	float h = clamp( 0.5 + 0.5*(b-a)/k, 0.0, 1.0 );
+	return mix( a, b, h ) + k*h*(1.0-h);
 }
 
-// Get high frequencies
-float getAudioHigh() {
-    float high = 0.0;
-    for (int i = 50; i < 100; i++) {
-        high += texture2D(iChannel0, vec2(float(i) / 128.0, 0.0)).x;
-    }
-    return min(high * 0.04, 1.0);
+float sdSphere( vec3 p, vec3 pos, float s ) { return (length(p-pos)-s); }
+
+// From http://mercury.sexy/hg_sdf
+vec2 pModPolar(inout vec2 p, float repetitions, float fix) {
+	float angle = twopi/repetitions;
+	float a = atan(p.y, p.x) + angle/2.;
+	float r = length(p);
+	float c = floor(a/angle);
+	a = mod(a,angle) - (angle/2.)*fix;
+	p = vec2(cos(a), sin(a))*r;
+
+	return p;
+}
+    
+// -------------------------
+
+
+float Dist( vec2 P,  vec2 P0, vec2 P1 ) {
+    //2d point-line distance
+    
+	vec2 v = P1 - P0;
+    vec2 w = P - P0;
+
+    float c1 = dot(w, v);
+    float c2 = dot(v, v);
+    
+    if (c1 <= 0. )  // before P0
+    	return length(P-P0);
+    
+    float b = c1 / c2;
+    vec2 Pb = P0 + b*v;
+    return length(P-Pb);
 }
 
-// ========== PATTERN FUNCTIONS ==========
-// Create kente-inspired pattern
-float kentePattern(vec2 uv, float time, float audio) {
-    // Scale UV for pattern size
-    vec2 st = uv * PATTERN_SCALE;
+vec3 ClosestPoint(vec3 ro, vec3 rd, vec3 p) {
+    // returns the closest point on ray r to point p
+    return ro + max(0., dot(p-ro, rd))*rd;
+}
+
+vec2 RayRayTs(vec3 ro1, vec3 rd1, vec3 ro2, vec3 rd2) {
+	// returns the two t's for the closest point between two rays
+    // ro+rd*t1 = ro2+rd2*t2
     
-    // Create grid cells
-    vec2 grid = floor(st);
-    float cellX = grid.x;
-    float cellY = grid.y;
+    vec3 dO = ro2-ro1;
+    vec3 cD = cross(rd1, rd2);
+    float v = dot(cD, cD);
     
-    // Create seed for this cell
-    float seed = hash(grid);
+    float t1 = dot(cross(dO, rd2), cD)/v;
+    float t2 = dot(cross(dO, rd1), cD)/v;
+    return vec2(t1, t2);
+}
+
+float DistRaySegment(vec3 ro, vec3 rd, vec3 p1, vec3 p2) {
+	// returns the distance from ray r to line segment p1-p2
+    vec3 rd2 = p2-p1;
+    vec2 t = RayRayTs(ro, rd, p1, rd2);
     
-    // Determine pattern direction (horizontal or vertical stripes)
-    bool horizontal = mod(cellY, 2.0) < 1.0;
+    t.x = max(t.x, 0.);
+    t.y = clamp(t.y, 0., length(rd2));
+                
+    vec3 rp = ro+rd*t.x;
+    vec3 sp = p1+rd2*t.y;
     
-    // Create fractional position within cell
-    vec2 pos = fract(st);
+    return length(rp-sp);
+}
+
+vec2 sph(vec3 ro, vec3 rd, vec3 pos, float radius) {
+	// does a ray sphere intersection
+    // returns a vec2 with distance to both intersections
+    // if both a and b are MAX_DISTANCE then there is no intersection
     
-    // Create stripe pattern
-    float pattern;
+    vec3 oc = pos - ro;
+    float l = dot(rd, oc);
+    float det = l*l - dot(oc, oc) + radius*radius;
+    if (det < 0.0) return vec2(MAX_DISTANCE);
     
-    if (horizontal) {
-        // Horizontal stripes
-        float stripeWidth = 0.2 + 0.2 * seed;
-        pattern = step(stripeWidth, mod(pos.y + time * 0.1, 1.0));
+    float d = sqrt(det);
+    float a = l - d;
+    float b = l + d;
+    
+    return vec2(a, b);
+}
+
+
+vec3 background(vec3 r) {
+	
+    float x = atan(r.x, r.z);		// from -pi to pi	
+	float y = pi*0.5-acos(r.y);  		// from -1/2pi to 1/2pi		
+    
+    vec3 col = bg*(1.+y);
+    
+	float t = iTime;				// add god rays
+    
+    float a = sin(r.x);
+    
+    float beam = sat(sin(10.*x+a*y*5.+t));
+    beam *= sat(sin(7.*x+a*y*3.5-t));
+    
+    float beam2 = sat(sin(42.*x+a*y*21.-t));
+    beam2 *= sat(sin(34.*x+a*y*17.+t));
+    
+    beam += beam2;
+    col *= 1.+beam*.05;
+
+    return col;
+}
+
+
+
+
+float remap(float a, float b, float c, float d, float t) {
+	return ((t-a)/(b-a))*(d-c)+c;
+}
+
+
+
+de map( vec3 p, vec3 id ) {
+
+    float t = iTime*2.;
+    
+    float N = N3(id);
+    
+    de o;
+    o.m = 0.;
+    
+    float x = (p.y+N*twopi)*1.+t;
+    float r = 1.;
+    
+    float pump = cos(x+cos(x))+sin(2.*x)*.2+sin(4.*x)*.02;
+    
+    x = t + N*twopi;
+    p.y -= (cos(x+cos(x))+sin(2.*x)*.2)*.6;
+    p.xz *= 1. + pump*.2;
+    
+    float d1 = sdSphere(p, vec3(0., 0., 0.), r);
+    float d2 = sdSphere(p, vec3(0., -.5, 0.), r);
+    
+    o.d = smax(d1, -d2, .1);
+    o.m = 1.;
+    
+    if(p.y<.5) {
+        float sway = sin(t+p.y+N*twopi)*S(.5, -3., p.y)*N*.3;
+        p.x += sway*N;	// add some sway to the tentacles
+        p.z += sway*(1.-N);
         
-        // Add some detail to stripes
-        if (mod(cellX, 3.0) < 1.0) {
-            float detail = step(0.5, mod(pos.x * 5.0, 1.0));
-            pattern = horizontal ? pattern * detail : pattern;
-        }
-    } else {
-        // Vertical stripes
-        float stripeWidth = 0.2 + 0.2 * seed;
-        pattern = step(stripeWidth, mod(pos.x + time * 0.1, 1.0));
+        vec3 mp = p;
+    	mp.xz = pModPolar(mp.xz, 6., 0.);
         
-        // Add some detail to stripes
-        if (mod(cellY, 3.0) < 1.0) {
-            float detail = step(0.5, mod(pos.y * 5.0, 1.0));
-            pattern = pattern * detail;
+        float d3 = length(mp.xz-vec2(.2, .1))-remap(.5, -3.5, .1, .01, mp.y);
+    	if(d3<o.d) o.m=2.;
+        d3 += (sin(mp.y*10.)+sin(mp.y*23.))*.03;
+        
+        float d32 = length(mp.xz-vec2(.2, .1))-remap(.5, -3.5, .1, .04, mp.y)*.5;
+        d3 = min(d3, d32);
+        o.d = smin(o.d, d3, .5);
+        
+        if( p.y<.2) {
+             vec3 op = p;
+    		op.xz = pModPolar(op.xz, 13., 1.);
+            
+        	float d4 = length(op.xz-vec2(.85, .0))-remap(.5, -3., .04, .0, op.y);
+    		if(d4<o.d) o.m=3.;
+            o.d = smin(o.d, d4, .15);
         }
+    }    
+    o.pump = pump;
+    o.uv = p;
+    
+    o.d *= .8;
+    return o;
+}
+
+vec3 calcNormal( de o ) {
+	vec3 eps = vec3( 0.01, 0.0, 0.0 );
+	vec3 nor = vec3(
+	    map(o.pos+eps.xyy, o.id).d - map(o.pos-eps.xyy, o.id).d,
+	    map(o.pos+eps.yxy, o.id).d - map(o.pos-eps.yxy, o.id).d,
+	    map(o.pos+eps.yyx, o.id).d - map(o.pos-eps.yyx, o.id).d );
+	return normalize(nor);
+}
+
+de CastRay(ray r) {
+    float d = 0.;
+    float dS = MAX_DISTANCE;
+    
+    vec3 pos = vec3(0., 0., 0.);
+    vec3 n = vec3(0.);
+    de o, s;
+    
+    float dC = MAX_DISTANCE;
+    vec3 p;
+    rc q;
+    float t = iTime;
+    vec3 grid = vec3(6., 30., 6.);
+        
+    for(float i=0.; i<MAX_STEPS; i++) {
+        p = r.o + r.d*d;
+        
+        #ifdef SINGLE
+        s = map(p, vec3(0.));
+        #else
+        p.y -= t;  // make the move up
+        p.x += t;  // make cam fly forward
+            
+        q = Repeat(p, grid);
+    	
+        vec3 rC = ((2.*step(0., r.d)-1.)*q.h-q.p)/r.d;	// ray to cell boundary
+        dC = min(min(rC.x, rC.y), rC.z)+.01;		// distance to cell just past boundary
+        
+        float N = N3(q.id);
+        q.p += (N31(N)-.5)*grid*vec3(.5, .7, .5);
+        
+		if(Dist(q.p.xz, r.d.xz, vec2(0.))<1.1)
+        //if(DistRaySegment(q.p, r.d, vec3(0., -6., 0.), vec3(0., -3.3, 0)) <1.1) 
+        	s = map(q.p, q.id);
+        else
+            s.d = dC;
+        
+        
+        #endif
+           
+        if(s.d<HIT_DISTANCE || d>MAX_DISTANCE) break;
+        d+=min(s.d, dC);	// move to distance to next cell or surface, whichever is closest
     }
     
-    // Make pattern react to audio
-    pattern *= 0.7 + audio * 0.5;
+    if(s.d<HIT_DISTANCE) {
+        o.m = s.m;
+        o.d = d;
+        o.id = q.id;
+        o.uv = s.uv;
+        o.pump = s.pump;
+        
+        #ifdef SINGLE
+        o.pos = p;
+        #else
+        o.pos = q.p;
+        #endif
+    }
     
-    return pattern;
+    return o;
 }
 
-// Create circular symbolic patterns
-float symbolPattern(vec2 uv, float time, float audio) {
-    // Distance from center
-    float dist = length(uv);
+float VolTex(vec3 uv, vec3 p, float scale, float pump) {
+    // uv = the surface pos
+    // p = the volume shell pos
     
-    // Angle for radial patterns
-    float angle = atan(uv.y, uv.x);
+	p.y *= scale;
     
-    // Create ripple pattern
-    float ripples = 0.5 + 0.5 * sin(dist * 20.0 - time * 3.0);
+    float s2 = 5.*p.x/twopi;
+    float id = floor(s2);
+    s2 = fract(s2);
+    vec2 ep = vec2(s2-.5, p.y-.6);
+    float ed = length(ep);
+    float e = B(.35, .45, .05, ed);
     
-    // Create radial lines
-    float lines = 0.5 + 0.5 * sin(angle * 8.0);
+   	float s = SIN(s2*twopi*15. );
+	s = s*s; s = s*s;
+    s *= S(1.4, -.3, uv.y-cos(s2*twopi)*.2+.3)*S(-.6, -.3, uv.y);
     
-    // Mix patterns based on audio
-    float pattern = mix(ripples, lines, audio);
+    float t = iTime*5.;
+    float mask = SIN(p.x*twopi*2. + t);
+    s *= mask*mask*2.;
     
-    // Add center circle
-    float circle = 1.0 - smoothstep(0.1, 0.2, dist);
-    
-    return pattern * (1.0 - circle) + circle;
+    return s+e*pump*2.;
 }
 
-// Create mud cloth inspired geometric patterns
-float mudClothPattern(vec2 uv, float time, float audio) {
-    // Scale for pattern
-    vec2 st = uv * (PATTERN_SCALE * 0.5);
+vec4 JellyTex(vec3 p) { 
+    vec3 s = vec3(atan(p.x, p.z), length(p.xz), p.y);
     
-    // Grid cells
-    vec2 grid = floor(st);
-    vec2 pos = fract(st);
+    float b = .75+sin(s.x*6.)*.25;
+    b = mix(1., b, s.y*s.y);
     
-    // Seed for this cell
-    float seed = hash(grid + time * 0.1);
+    p.x += sin(s.z*10.)*.1;
+    float b2 = cos(s.x*26.) - s.z-.7;
+   
+    b2 = S(.1, .6, b2);
+    return vec4(b+b2);
+}
+
+vec3 render( vec2 uv, ray camRay, float depth ) {
+    // outputs a color
     
-    // Choose pattern type based on seed
-    float patternType = floor(seed * 4.0);
+    bg = background(cam.ray.d);
     
-    float pattern = 0.0;
+    vec3 col = bg;
+    de o = CastRay(camRay);
     
-    if (patternType < 1.0) {
-        // Dots pattern
-        vec2 dotPos = pos - 0.5;
-        pattern = 1.0 - smoothstep(0.1, 0.2, length(dotPos));
+    float t = iTime;
+    vec3 L = up;
+    
+
+    if(o.m>0.) {
+        vec3 n = calcNormal(o);
+        float lambert = sat(dot(n, L));
+        vec3 R = reflect(camRay.d, n);
+        float fresnel = sat(1.+dot(camRay.d, n));
+        float trans = (1.-fresnel)*.5;
+        vec3 ref = background(R);
+        float fade = 0.;
+        
+        if(o.m==1.) {	// hood color
+            float density = 0.;
+            for(float i=0.; i<VOLUME_STEPS; i++) {
+                float sd = sph(o.uv, camRay.d, vec3(0.), .8+i*.015).x;
+                if(sd!=MAX_DISTANCE) {
+                    vec2 intersect = o.uv.xz+camRay.d.xz*sd;
+
+                    vec3 uv = vec3(atan(intersect.x, intersect.y), length(intersect.xy), o.uv.z);
+                    density += VolTex(o.uv, uv, 1.4+i*.03, o.pump);
+                }
+            }
+            vec4 volTex = vec4(accent, density/VOLUME_STEPS); 
+            
+            
+            vec3 dif = JellyTex(o.uv).rgb;
+            dif *= max(.2, lambert);
+
+            col = mix(col, volTex.rgb, volTex.a);
+            col = mix(col, vec3(dif), .25);
+
+            col += fresnel*ref*sat(dot(up, n));
+
+            //fade
+            fade = max(fade, S(.0, 1., fresnel));
+        } else if(o.m==2.) {						// inside tentacles
+            vec3 dif = accent;
+    		col = mix(bg, dif, fresnel);
+            
+            col *= mix(.6, 1., S(0., -1.5, o.uv.y));
+            
+            float prop = o.pump+.25;
+            prop *= prop*prop;
+            col += pow(1.-fresnel, 20.)*dif*prop;
+            
+            
+            fade = fresnel;
+        } else if(o.m==3.) {						// outside tentacles
+        	vec3 dif = accent;
+            float d = S(100., 13., o.d);
+    		col = mix(bg, dif, pow(1.-fresnel, 5.)*d);
+        }
+        
+        fade = max(fade, S(0., 100., o.d));
+        col = mix(col, bg, fade);
+        
+        if(o.m==4.)
+            col = vec3(1., 0., 0.);
     } 
-    else if (patternType < 2.0) {
-        // Cross pattern
-        float lineX = 1.0 - smoothstep(0.1, 0.15, abs(pos.x - 0.5));
-        float lineY = 1.0 - smoothstep(0.1, 0.15, abs(pos.y - 0.5));
-        pattern = max(lineX, lineY);
-    }
-    else if (patternType < 3.0) {
-        // Diamond pattern
-        vec2 diamondPos = abs(pos - 0.5);
-        pattern = 1.0 - smoothstep(0.2, 0.25, diamondPos.x + diamondPos.y);
-    }
-    else {
-        // Zigzag pattern
-        float zigzag = abs(pos.y - (0.5 + 0.2 * sin(pos.x * 6.28 + time)));
-        pattern = 1.0 - smoothstep(0.1, 0.15, zigzag);
-    }
+     else
+        col = bg;
     
-    // Make pattern react to audio
-    pattern *= 0.7 + audio * 0.5;
-    
-    return pattern;
+    return col;
 }
 
-// ========== MAIN FUNCTION ==========
-void main() {
-    // Normalized coordinates
-    vec2 uv = gl_FragCoord.xy / iResolution.xy;
+void mainImage( out vec4 fragColor, in vec2 fragCoord )
+{
+	float t = iTime*.04;
     
-    // Center coordinates
-    vec2 centered = (uv - 0.5) * 2.0;
-    centered.x *= iResolution.x / iResolution.y; // Correct aspect ratio
+    vec2 uv = (fragCoord.xy / iResolution.xy);
+    uv -= .5;
+    uv.y *= iResolution.y/iResolution.x; 
     
-    // Time and animation
-    float time = iTime * ANIMATION_SPEED;
+    vec2 m = iMouse.xy/iResolution.xy;
     
-    // Get audio values
-    float bass = getAudioBass();
-    float mid = getAudioMid();
-    float high = getAudioHigh();
-    float audioTotal = bass + mid + high;
-    
-    // Apply mouse movement if active
-    if (iMouse.z > 0.0) {
-        vec2 mouseOffset = 2.0 * (iMouse.xy / iResolution.xy - 0.5);
-        centered += mouseOffset * 0.3;
+    if(m.x<0.05 || m.x>.95) {				// move cam automatically when mouse is not used
+    	m = vec2(t*.5, SIN(t*pi)*.75+.75);
     }
+	
+    accent = mix(accentColor1, accentColor2, SIN(t*15.456));
+    bg = mix(secondColor1, secondColor2, SIN(t*7.345231));
     
-    // Background noise texture
-    float bgNoise = noise(centered * 3.0 + time * 0.1);
+    float turn = (.1-m.x)*twopi;
+    float s = sin(turn);
+    float c = cos(turn);
+    mat3 rotX = mat3(c,  0., s, 0., 1., 0., s,  0., -c);
     
-    // Create base color
-    vec3 color = africanPalette(bgNoise + time * 0.1);
+    #ifdef SINGLE
+    float camDist = -10.;
+    #else
+    float camDist = -.1;
+    #endif
     
-    // Add kente cloth inspired pattern
-    float kente = kentePattern(centered * 0.5, time, mid);
-    color = mix(color, africanPalette(kente + time * 0.2), kente * 0.8);
+    vec3 lookAt = vec3(0., -1., 0.);
     
-    // Add symbolic patterns that react to bass
-    float symbolScale = 0.5 + bass * 0.5; // Pattern gets larger with bass
-    float symbol = symbolPattern(centered * symbolScale, time, bass);
-    color = mix(color, africanPalette(symbol + bass + time * 0.3), symbol * bass * 0.7);
+    vec3 camPos = vec3(0., INVERTMOUSE*camDist*cos((m.y)*pi), camDist)*rotX;
+   	
+    CameraSetup(uv, camPos+lookAt, lookAt, 1.);
     
-    // Add mud cloth inspired patterns for high frequencies
-    float mudCloth = mudClothPattern(centered, time, high);
-    color = mix(color, africanPalette(mudCloth + time * 0.15), mudCloth * high * 0.6);
+    vec3 col = render(uv, cam.ray, 0.);
     
-    // Add global audio reactivity - make everything pulse with the beat
-    color *= 0.8 + audioTotal * 0.4;
+    col = pow(col, vec3(mix(1.5, 2.6, SIN(t+pi))));		// post-processing
+    float d = 1.-dot(uv, uv);		// vignette
+    col *= (d*d*d)+.1;
     
-    // Add subtle vignette
-    float vignette = smoothstep(1.5, 0.5, length(centered));
-    color *= vignette;
-    
-    // Boost saturation
-    color = mix(color, color * COLOR_INTENSITY, 0.5);
-    
-    // Output final color
-    gl_FragColor = vec4(color, 1.0);
-}
-`,
+    fragColor = vec4(col, 1.);
+}`,
 "3D Play": `/*
     Abstract Corridor
     -------------------
@@ -3827,6 +4106,283 @@ void mainImage(out vec4 c, vec2 u){
     c = vec4(sqrt(clamp(c.xyz, 0., 1.)), 1.);
     
     
+}`,
+"Squeeze me": `// Modified from Peleg Gefen's original shader
+// Adapted to work without image textures and to use microphone input
+
+#ifdef GL_FRAGMENT_PRECISION_HIGH
+precision highp float;
+#else
+precision mediump float;
+#endif
+
+// Toggle variable width (on by default)
+#define Shrink
+
+#define ZOOM 20.0
+#define PI 3.141592654
+#define TAU (2.0*PI)
+
+#define MROT(a) mat2(cos(a), sin(a), -sin(a), cos(a))
+const mat2 rot120 = MROT(TAU/3.0);
+
+// Procedural noise and patterns to replace texture channels
+float hash(in vec2 co) {
+  return fract(sin(dot(co.xy, vec2(12.9898, 58.233))) * 13758.5453);
+}
+
+// Additional noise functions to replace textures
+float noise(vec2 p) {
+  vec2 i = floor(p);
+  vec2 f = fract(p);
+  f = f*f*(3.0-2.0*f);
+  return mix(
+    mix(hash(i), hash(i + vec2(1.0, 0.0)), f.x),
+    mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), f.x),
+    f.y
+  );
+}
+
+// FBM (Fractal Brownian Motion) for more organic textures
+float fbm(vec2 p) {
+  float v = 0.0;
+  float a = 0.5;
+  vec2 shift = vec2(100.0);
+  // Rotate to reduce axial bias
+  mat2 rot = mat2(cos(0.5), sin(0.5), -sin(0.5), cos(0.5));
+  for (int i = 0; i < 5; ++i) {
+    v += a * noise(p);
+    p = rot * p * 2.0 + shift;
+    a *= 0.5;
+  }
+  return v;
+}
+
+// Pattern generators to replace texture channels
+vec4 patternA(vec2 uv) {
+  // Colorful swirly pattern
+  uv *= 3.0;
+  float n = fbm(uv * 2.0 + iTime * 0.2);
+  float n2 = fbm(uv * 1.5 - iTime * 0.1 + vec2(n, 0.0));
+  
+  vec3 col = vec3(0.5) + 0.5 * cos(n * 8.0 + vec3(0.0, 1.0, 2.0) + iTime);
+  col = mix(col, vec3(0.7, 0.3, 0.2), n2 * 0.6);
+  
+  return vec4(col, 1.0);
+}
+
+vec4 patternB(vec2 uv) {
+  // More geometric pattern
+  uv *= 5.0;
+  float n = sin(uv.x * 3.0 + iTime) * sin(uv.y * 3.0 + iTime * 0.7) * 0.5 + 0.5;
+  float n2 = fbm(uv * 3.0 + iTime * 0.4);
+  
+  vec3 col = vec3(0.2, 0.5, 0.8) + 0.3 * cos(n * 6.0 + vec3(0.0, 2.0, 4.0));
+  col = mix(col, vec3(0.9, 0.6, 0.1), n2 * 0.5);
+  
+  return vec4(col, 1.0);
+}
+
+vec2 rot(vec2 p, float a) {
+  float c = cos(a);
+  float s = sin(a);
+  return p * mat2(c, s, -s, c);
+}
+
+float hexDist(vec2 p) {
+  p = abs(p);
+  // Distance to the diagonal line
+  float c = dot(p, normalize(vec2(1.0, 1.73)));
+  // Distance to the vertical line
+  c = max(c, p.x);
+  return c;
+}
+
+vec4 hexCoords(vec2 uv) {
+  vec2 r = vec2(1.0, 1.73);
+  vec2 h = r * 0.5;
+  vec2 a = mod(uv, r) - h;
+  vec2 b = mod(uv - h, r) - h;
+
+  vec2 gv;
+  if (length(a) < length(b))
+    gv = a;
+  else
+    gv = b;
+
+  float y = 0.5 - hexDist(gv);
+  float x = atan(gv.x, gv.y);
+  vec2 id = uv - gv;
+  return vec4(x, y, id.x, id.y);
+}
+
+vec4 hexCoordsOffs(vec2 uv) {
+  vec2 r = vec2(1.0, 1.73);
+  vec2 h = r * 0.5;
+  vec2 a = mod(uv, r) - h;
+  vec2 b = mod(uv - h, r) - h;
+
+  vec2 gv;
+  if (length(a) < length(b))
+    gv = a;
+  else
+    gv = b;
+
+  float y = 0.5 - hexDist((gv - vec2(0.0, 0.5)));
+  y = abs(y + 0.25);
+  float x = atan(gv.x, gv.y);
+  
+  vec2 id = uv - gv;
+  return vec4(gv, id.x, id.y);
+}
+
+vec3 Truchet(vec2 uv, vec2 id, float width, vec2 seed, out float rotations) {
+  // Random Rotation
+  float h = hash(id + seed);
+  h *= 3.0;
+  h = floor(h);
+  uv = rot(uv, (h * (TAU / 3.0)));
+  
+  vec2 offs = vec2(0.400, 0.7);
+  float a = length(uv + offs);
+  float b = length(uv - offs);
+  vec2 cUv = uv + offs;
+  float aa = atan(cUv.x, cUv.y);
+  cUv = uv - offs;
+  float bb = atan(cUv.x, cUv.y);
+  
+  float c = smoothstep(0.70001 + width, 0.7 + width, a); 
+  c -= smoothstep(0.70001 - width, 0.7 - width, a); 
+  
+  float d = smoothstep(0.70001 + width, 0.7 + width, b); 
+  d -= smoothstep(0.70001 - width, 0.7 - width, b); 
+  
+  float l1 = length(uv.x - uv.y * 0.585); // Line gradient
+  float w = width * 1.25;
+  float l = smoothstep(w, w - 0.01, l1); // Line mask
+
+  float mask = (c + d + l);
+  
+  float s = length((uv.x + (width * 0.585)) - (uv.y + (width * 0.585)) * 0.585);
+  
+  float subMask = clamp(l - c - d, 0.0, 1.0);
+  float x = (c + d + subMask) * length(uv);
+
+  float y = (
+    (((1.0 - abs((a - (0.705 - (w/2.0))) / w - 0.5))) * c) + // Bottom 
+    (((1.0 - abs((b - (0.705 - (w/2.0))) / w - 0.5))) * d) + // Top
+    clamp(min(l, subMask + w) * (1.0 - (s / w)), 0.0, 1.0)   // Straight line
+  );
+  
+  float m = min(mask, (subMask + c + d));
+
+  if (mod(id.x, 2.0) == 0.0) x = 0.5 - x / m;
+  
+  rotations = h;
+  vec3 tUv = vec3(x, y, m);
+  tUv = clamp(tUv, 0.0, 1.0);
+  return tUv;
+}
+
+void mainImage(out vec4 fragColor, in vec2 fragCoord) {
+  // Get audio data from microphone (iChannel0)
+  float freqs[4];
+  freqs[0] = texture(iChannel0, vec2(0.01, 0.25)).x;
+  freqs[1] = texture(iChannel0, vec2(0.07, 0.25)).x;
+  freqs[2] = texture(iChannel0, vec2(0.15, 0.25)).x;
+  freqs[3] = texture(iChannel0, vec2(0.30, 0.25)).x;
+  float avgFreq = (freqs[0] + freqs[1] + freqs[2] + freqs[3]) / 4.0;
+  
+  float time = iTime * 0.25;
+  time += 800.0;
+  vec2 uv = (fragCoord.xy - 0.5 * iResolution.xy) / iResolution.y;
+  uv = rot(uv, sin((time + (1.0 - freqs[0]) * 0.1) * TAU) * 0.5 + 0.5);
+  
+  vec4 col = vec4(0.0);
+  vec2 uv1 = uv;
+  uv *= max(ZOOM, 1.1) + sin(time) * 5.0;
+  uv += vec2(time * 7.0 + (freqs[1]));
+  
+  uv -= (iMouse.xy / iResolution.xy) * 15.0;
+  
+  vec4 uvid = hexCoords(uv);
+  vec4 uvidOf = hexCoordsOffs(uv);
+  vec4 uvidOf1 = hexCoordsOffs(uv - 0.25);
+
+  vec2 id = uvidOf.zw;
+  vec2 id1 = uvidOf1.zw;
+
+  vec2 huv = uvidOf.xy;
+  vec2 huv1 = uvidOf1.xy;
+
+  #ifdef Shrink
+    float f = (avgFreq - freqs[0]) * freqs[1];
+    float l = length((((fragCoord.xy / iResolution.y) - vec2(0.9, 0.5)) / freqs[1]));
+    vec2 res = ((fragCoord.xy / iResolution.y) - vec2(0.5, 0.5)) * f;
+    res = rot(res, (f + time) * PI);
+    float atanUv = atan(res.x + l, res.y + l);
+    
+    float width = 1.0 - l / atanUv;
+    width = clamp(
+      fract(width + sin((mix(
+        (uv1.x / freqs[1]) + (uv1.y * freqs[2]), 
+        uv1.y * uv1.x, 
+        cos(time * 0.1) * 1.5 + 1.5
+      ))) * 1.5 * freqs[1]) * length((1.0 - uv1) * 0.1),
+      0.3 - freqs[1], // mix
+      0.1
+    );
+  #else
+    float width = 0.07;
+  #endif
+  
+  float r1, r2, r3;
+  vec3 tUv = Truchet(huv, id, width, vec2(0.1, 0.7), r1);
+  
+  vec4 htUv = hexCoordsOffs(fract(tUv.xy * 0.1));
+  
+  vec3 tUv1 = Truchet(huv1, id1, width * 0.75, vec2(0.4, 0.2), r2);
+  
+  float mask = tUv.z;
+  
+  vec3 hUv = Truchet(htUv.xy, htUv.zw, width, vec2(1.1, 4.2), r3);
+  
+  // Replace texture lookups with our procedural patterns
+  vec4 hTruchet = patternA(hUv.xy * 2.0 + vec2(sin(time), cos(time * 0.7)));
+  
+  vec4 truchet1 = patternA(tUv.xy * 1.5 + vec2(-time, 0.0)) * mask * tUv.y;
+  
+  vec4 truchet2 = patternB(tUv1.xy * 1.2 + vec2(-time, 0.0)) * tUv1.z * tUv1.y;
+  
+  // Audio reactive color modifications
+  col += mix(truchet1, truchet2, (tUv.x + (tUv1.y - (tUv.x))) * 0.5);
+  col = mix(col * hTruchet, col, sin(freqs[1]) * 0.5 + 0.5);
+  col /= vec4(hUv * freqs[0], 1.0);
+  
+  // Time-based color cycling
+  vec4 randCol = vec4(
+    sin(time * 0.25) * 0.5 + 0.5,
+    sin(time * 0.5) * 0.5 + 0.5,
+    sin(time) * 0.5 + 0.5,
+    1.0
+  );
+  
+  // Make colors more reactive to audio
+  randCol *= mix(1.0, avgFreq * 3.0, 0.3);
+  
+  col /= randCol;
+  col -= randCol * (1.0 - avgFreq);
+  
+  // Audio reactive glow
+  float glow = smoothstep(0.1, 0.7, freqs[1] * 2.0);
+  col += vec4(glow * vec3(1.0, 0.7, 0.3) * mask, 0.0);
+  
+  // Audio reactive pulsing
+  float pulse = sin(time * 4.0) * freqs[0] * 2.0;
+  col *= 1.0 + pulse * 0.2;
+  
+  col = clamp(col, 0.0, 1.0);
+  fragColor = vec4(col);
 }`
 };
 
