@@ -667,7 +667,7 @@ function setupShaderProgram(vertexSource, fragmentSource) {
             if (dbValue >= loud_volume_threshold) {
                 seconds += 0.5;
                 if (seconds >= 5) {
-                    if (hSub) hSub.innerHTML = "You've been in loud environment for<span> " + Math.floor(seconds) + " </span>seconds.";
+                    // if (hSub) hSub.innerHTML = "You've been in loud environment for<span> " + Math.floor(seconds) + " </span>seconds.";
                 }
             } else {
                 seconds = 0;

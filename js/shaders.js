@@ -719,39 +719,45 @@ vec4 rainbow(vec2 p)
     c.xyz=mix(c.xyz,vec3(length(c.xyz)),.15);
     return c;
 }
-
-// New procedural cat function that doesn't rely on external textures
+// Improved procedural cat function with better proportions
 vec4 proceduralCat(vec2 p)
 {
     // Calculate aspect ratio to make cat proportional to screen resolution
     float aspectRatio = iResolution.x/iResolution.y;
     float scale = min(1.0, aspectRatio); // Adjust scale based on aspect ratio
     
-    // Simple cat shape made of circles and rectangles
-    vec2 uv = p*vec2(0.4*scale, 1.0);
+    // Simple cat shape made of circles and rectangles - use less scaling
+    vec2 uv = p*vec2(0.9*scale, 0.9); // Better proportions
     
-    // Cat animation
-    float wiggle = sin(iTime*3.0)*0.1;
+    // Cat animation - reduced for subtle effect
+    float wiggle = sin(iTime*2.0)*0.05;
     
-    // Cat head size - narrower width
-    float headSize = 0.12 * scale;
-    float headOffset = -0.05 * scale;
+    // Cat head - better positioning
+    float headSize = 0.2;
+    float headOffset = 0.0; // Center the head
     
     // Cat body (head)
     float catBody = length(uv - vec2(headOffset, 0.0)) - headSize;
     
-    // Cat ears - closer together
-    float earSize = 0.06 * scale;
-    float earSpacing = 0.07 * scale;
-    float catEar1 = length(uv - vec2(headOffset-earSpacing*0.7, 0.15 + wiggle*0.2)) - earSize;
-    float catEar2 = length(uv - vec2(headOffset+earSpacing*0.7, 0.15 - wiggle*0.2)) - earSize;
+    // Cat ears - wider positioning and better size
+    float earSize = 0.1;
+    float earSpacing = 0.15;
+    float catEar1 = length(uv - vec2(headOffset-earSpacing, 0.2 + wiggle)) - earSize;
+    float catEar2 = length(uv - vec2(headOffset+earSpacing, 0.2 - wiggle)) - earSize;
     
-    // Cat face features - scaled and positioned relative to head
-    float eyeSize = 0.025 * scale;
-    float eyeSpacing = 0.04 * scale;
-    float catEye1 = length(uv - vec2(headOffset-eyeSpacing*0.8, 0.02)) - eyeSize;
-    float catEye2 = length(uv - vec2(headOffset+eyeSpacing*0.8, 0.02)) - eyeSize;
-    float catNose = length(uv - vec2(headOffset, -0.02)) - eyeSize*0.7;
+    // Cat face features - better proportions
+    float eyeSize = 0.04;
+    float eyeSpacing = 0.1;
+    float catEye1 = length(uv - vec2(headOffset-eyeSpacing, 0.05)) - eyeSize;
+    float catEye2 = length(uv - vec2(headOffset+eyeSpacing, 0.05)) - eyeSize;
+    float catNose = length(uv - vec2(headOffset, -0.05)) - eyeSize*0.8;
+    
+    // Whiskers - simple lines
+    float whiskerThickness = 0.01;
+    float leftWhisker = smoothstep(whiskerThickness, 0.0, abs(uv.y+0.05) - 
+                       whiskerThickness * abs((uv.x+0.15)/0.2));
+    float rightWhisker = smoothstep(whiskerThickness, 0.0, abs(uv.y+0.05) - 
+                        whiskerThickness * abs((uv.x-0.15)/0.2));
     
     // Combine all elements
     float catShape = min(catBody, min(catEar1, catEar2));
@@ -774,16 +780,17 @@ vec4 proceduralCat(vec2 p)
         color = vec4(0.9, 0.2, 0.2, 1.0);
     }
     
-    // Position constraint - adjusted based on scale
-    float edgeConstraint = 0.25 * scale;
-    if (uv.x < -0.3 || uv.x > edgeConstraint) color.a = 0.0;
+    // Whiskers (white)
+    if (leftWhisker > 0.5 || rightWhisker > 0.5) {
+        color = vec4(1.0, 1.0, 1.0, 0.8);
+    }
     
-    // Add some animation to the cat
-    color.rgb += vec3(sin(iTime*5.0 + uv.y*20.0)*0.1);
+    // Position constraint
+    float edgeConstraint = 0.4;
+    if (length(uv) > edgeConstraint) color.a = 0.0;
     
     return color;
 }
-
 // Raymarching and 2D graphics
 vec3 raymarch(in vec3 from, in vec3 dir) 
 {
@@ -874,7 +881,318 @@ void mainImage( out vec4 fragColor, in vec2 fragCoord )
 #endif
     fragColor = vec4(color,1.);
 }`,
+"Trippy Cheese Rail 2": `// "Fractal Land & Clouds" - by Lynxx
 
+// based on "Fractal Cartoon" - former "DE edge detection" by Kali https://www.shadertoy.com/view/XsBXWt
+// and "2D Clouds" by drift: https://www.shadertoy.com/view/4tdSWr
+// There are no lights and no AO, only color by normals and dark edges.
+// update: Nyan Cat cameo, thanks to code from mu6k: https://www.shadertoy.com/view/4dXGWH
+
+//#define SHOWONLYEDGES
+#define NYAN 
+#define WAVES
+#define BORDER
+
+#define RAY_STEPS 150
+
+#define BRIGHTNESS 1.2
+#define GAMMA 1.4
+#define SATURATION .65
+
+#define detail .001
+#define t iTime*.5
+
+const float cloudscale = 1.1;
+const float speed = 0.04;
+const float clouddark = 0.4;
+const float cloudlight = 0.2;
+const float cloudcover = 0.1;
+const float cloudalpha = 5.0;
+const float skytint = 0.4;
+const vec3 skycolour1 = vec3(0.2, 0.4, 0.6);
+const vec3 skycolour2 = vec3(0.4, 0.6, 0.9);
+const mat2 m = mat2( 1.6,  1.2, -1.2,  1.6 );
+
+vec2 hash( vec2 p ) {
+	p = vec2(dot(p,vec2(127.1,311.7)), dot(p,vec2(269.5,183.3)));
+	return -1.0 + 2.0*fract(sin(p)*43758.5453123);
+}
+
+float noise( in vec2 p ) {
+    const float K1 = 0.366025404; // (sqrt(3)-1)/2;
+    const float K2 = 0.211324865; // (3-sqrt(3))/6;
+	vec2 i = floor(p + (p.x+p.y)*K1);	
+    vec2 a = p - i + (i.x+i.y)*K2;
+    vec2 o = (a.x>a.y) ? vec2(1.0,0.0) : vec2(0.0,1.0); //vec2 of = 0.5 + 0.5*vec2(sign(a.x-a.y), sign(a.y-a.x));
+    vec2 b = a - o + K2;
+	vec2 c = a - 1.0 + 2.0*K2;
+    vec3 h = max(0.5-vec3(dot(a,a), dot(b,b), dot(c,c) ), 0.0 );
+	vec3 n = h*h*h*h*vec3( dot(a,hash(i+0.0)), dot(b,hash(i+o)), dot(c,hash(i+1.0)));
+    return dot(n, vec3(70.0));	
+}
+
+float fbm(vec2 n) {
+	float total = 0.0, amplitude = 0.1;
+	for (int i = 0; i < 7; i++) {
+		total += noise(n) * amplitude;
+		n = m * n;
+		amplitude *= 0.4;
+	}
+	return total;
+}
+
+const vec3 origin=vec3(-1.,.7,0.);
+float det=0.0;
+
+// 2D rotation function
+mat2 rot(float a) {
+	return mat2(cos(a),sin(a),-sin(a),cos(a));	
+}
+
+// "Amazing Surface" fractal
+vec4 formula(vec4 p) {
+    p.xz = abs(p.xz+1.)-abs(p.xz-1.)-p.xz;
+    p.y-=.25;
+    p.xy*=rot(radians(35.));
+    p=p*2.0/clamp(dot(p.xyz,p.xyz),.2,1.);
+	return p;
+}
+
+// Distance function
+float de(vec3 pos) {
+#ifdef WAVES
+	pos.y+=cos(pos.z-t*6.)*.25; //waves!
+#endif
+	float hid=0.;
+	vec3 tpos=pos;
+	tpos.z=abs(3.-mod(tpos.z,6.));
+	vec4 p=vec4(tpos,1.);
+	for (int i=0; i<4; i++) {p=formula(p);}
+	float fr=(length(max(vec2(0.),p.yz-1.5))-1.)/p.w;
+	float ro=max(abs(pos.x+1.)-.3,pos.y-.35);
+		  ro=max(ro,-max(abs(pos.x+1.)-.1,pos.y-.5));
+	pos.z=abs(.25-mod(pos.z,.5));
+		  ro=max(ro,-max(abs(pos.z)-.2,pos.y-.3));
+		  ro=max(ro,-max(abs(pos.z)-.01,-pos.y+.32));
+	float d=min(fr,ro);
+	return d;
+}
+
+// Camera path
+vec3 path(float ti) {
+	ti*=1.5;
+	vec3  p=vec3(sin(ti),(1.-sin(ti*2.))*.5,-ti*5.)*.5;
+	return p;
+}
+
+// Calc normals, and here is edge detection, set to variable "edge"
+float edge=0.;
+vec3 normal(vec3 p) { 
+	vec3 e = vec3(0.0,det*5.,0.0);
+
+	float d1=de(p-e.yxx),d2=de(p+e.yxx);
+	float d3=de(p-e.xyx),d4=de(p+e.xyx);
+	float d5=de(p-e.xxy),d6=de(p+e.xxy);
+	float d=de(p);
+	edge=abs(d-0.5*(d2+d1))+abs(d-0.5*(d4+d3))+abs(d-0.5*(d6+d5));//edge finder
+	edge=min(1.,pow(edge,.55)*15.);
+	return normalize(vec3(d5-d6,d1-d2,d3-d4));
+}
+
+// Used Nyan Cat code by mu6k, with some mods
+vec4 rainbow(vec2 p) {
+	float q = max(p.x,-0.1);
+	float s = sin(p.x*7.0+t*70.0)*0.08;
+	p.y+=s;
+	p.y*=1.1;
+	
+	vec4 c;
+	if (p.x>0.0) c=vec4(0,0,0,0); else
+	if (0.0/6.0<p.y&&p.y<1.0/6.0) c= vec4(255,43,14,255)/255.0; else
+	if (1.0/6.0<p.y&&p.y<2.0/6.0) c= vec4(255,168,6,255)/255.0; else
+	if (2.0/6.0<p.y&&p.y<3.0/6.0) c= vec4(255,244,0,255)/255.0; else
+	if (3.0/6.0<p.y&&p.y<4.0/6.0) c= vec4(51,234,5,255)/255.0; else
+	if (4.0/6.0<p.y&&p.y<5.0/6.0) c= vec4(8,163,255,255)/255.0; else
+	if (5.0/6.0<p.y&&p.y<6.0/6.0) c= vec4(122,85,255,255)/255.0; else
+	if (abs(p.y)-.05<0.0001) c=vec4(0.,0.,0.,1.); else
+	if (abs(p.y-1.)-.05<0.0001) c=vec4(0.,0.,0.,1.); else
+		c=vec4(0,0,0,0);
+	c.a*=.8-min(.8,abs(p.x*.08));
+	c.xyz=mix(c.xyz,vec3(length(c.xyz)),.15);
+	return c;
+}
+
+vec4 nyan(vec2 p) {
+	vec2 uv = p*vec2(0.4,1.0);
+	float ns=3.0;
+	float nt = iTime*ns; nt-=mod(nt,240.0/256.0/6.0); nt = mod(nt,240.0/256.0);
+	float ny = mod(iTime*ns,1.0); ny-=mod(ny,0.75); ny*=-0.05;
+	vec4 color = texture(iChannel1,vec2(uv.x/3.0+210.0/256.0-nt+0.05,.5-uv.y-ny));
+	if (uv.x<-0.3) color.a = 0.0;
+	if (uv.x>0.2) color.a=0.0;
+	return color;
+}
+
+vec3 clouds(in vec3 from, in vec3 dir) {
+    vec2 p = (from*dir).xy;
+    p.y+=(dir.y*3.);
+    p.x/=from.x;
+    
+	vec2 uv = p*vec2(iResolution.x/iResolution.y,1.0);    
+    float time = iTime * speed;
+    float q = fbm(uv * cloudscale * 0.5);
+    
+    //ridged noise shape
+	float r = 0.0;
+	uv *= cloudscale;
+    uv -= q - time;
+    float weight = 0.8;
+    for (int i=0; i<8; i++){
+		r += abs(weight*noise( uv ));
+        uv = m*uv + time;
+		weight *= 0.7;
+    }
+    
+    //noise shape
+	float f = 0.0;
+    uv = p*vec2(iResolution.x/iResolution.y,1.0);
+	uv *= cloudscale;
+    uv -= q - time;
+    weight = 0.7;
+    for (int i=0; i<8; i++){
+		f += weight*noise( uv );
+        uv = m*uv + time;
+		weight *= 0.6;
+    }
+    
+    f *= r + f;
+    
+    //noise colour
+    float c = 0.0;
+    time = iTime * speed * 2.0;
+    uv = p*vec2(iResolution.x/iResolution.y,1.0);
+	uv *= cloudscale*2.0;
+    uv -= q - time;
+    weight = 0.4;
+    for (int i=0; i<7; i++){
+		c += weight*noise( uv );
+        uv = m*uv + time;
+		weight *= 0.6;
+    }
+    
+    //noise ridge colour
+    float c1 = 0.0;
+    time = iTime * speed * 3.0;
+    uv = p*vec2(iResolution.x/iResolution.y,1.0);
+	uv *= cloudscale*3.0;
+    uv -= q - time;
+    weight = 0.4;
+    for (int i=0; i<7; i++){
+		c1 += abs(weight*noise( uv ));
+        uv = m*uv + time;
+		weight *= 0.6;
+    }
+	
+    c += c1;
+    
+    vec3 skycolour = mix(skycolour2, skycolour1, p.y);
+    vec3 cloudcolour = vec3(1.1, 1.1, 0.9) * clamp((clouddark + cloudlight*c), 0.0, 1.0);
+    f = cloudcover + cloudalpha*f*r;
+	return mix(skycolour, clamp(skytint * skycolour + cloudcolour, 0.0, 1.0), clamp(f + c, 0.0, 1.0));;
+}
+
+// Raymarching and 2D graphics
+vec3 raymarch(in vec3 from, in vec3 dir) {
+	edge=0.;
+	vec3 p, norm;
+	float d=100.;
+	float totdist=0.;
+	for (int i=0; i<RAY_STEPS; i++) {
+		if (d>det && totdist<25.0) {
+			p=from+totdist*dir;
+			d=de(p);
+			det=detail*exp(.13*totdist);
+			totdist+=d; 
+		}
+        else
+            break;
+	}
+	vec3 col=vec3(0.);
+	p-=(det-d)*dir;
+	norm=normal(p);
+#ifdef SHOWONLYEDGES
+	col=1.-vec3(edge); // show wireframe version
+#else
+	col=(1.-abs(norm))*max(0.,1.-edge*.8); // set normal as color with dark edges
+#endif		
+	totdist=clamp(totdist,0.,26.);
+	dir.y-=.02;
+	float sunsize=7.-max(0.,texture(iChannel0,vec2(.6,.2)).x)*5.; // responsive sun size
+	float an=atan(dir.x,dir.y)+iTime*1.1; // angle for drawing and rotating sun
+	float s=pow(clamp(0.9-length(dir.xy)*sunsize-abs(.2-mod(an,.4)),0.,1.),.1); // sun
+	float sb=pow(clamp(1.-length(dir.xy)*(sunsize-.2)-abs(.2-mod(an,.4)),0.,1.),.1); // sun border
+	float sg=pow(clamp(1.2-length(dir.xy)*(sunsize-4.5)-.5*abs(.2-mod(an,.4)),0.,1.),3.); // sun rays
+	
+	// set up background with clouds and sun
+    vec3 backg = clouds(from,dir);
+		 backg=max(vec3(.84,.9,.1)*s, backg);
+		 backg=max(backg,sg*vec3(.84,.9,.1));
+	
+	col=mix(vec3(1.,.9,.3),col,exp(-.004*totdist*totdist));// distant fading to sun color
+	if (totdist>25.) col=backg; // hit background
+	col=pow(col,vec3(GAMMA))*BRIGHTNESS;
+	col=mix(vec3(length(col)),col,SATURATION);
+#ifdef SHOWONLYEDGES
+	col=1.-vec3(length(col));
+#else
+	col*=vec3(1.,.9,.85);
+#ifdef NYAN
+    if (iTime<180.) {
+        dir.yx*=rot(dir.x);
+        dir.yx/=(1.+(iTime/180.));
+        vec2 ncatpos=(dir.xy+vec2(-3.+mod(-t,6.),-.27));
+        vec4 ncat=nyan(ncatpos*5.);
+        vec4 rain=rainbow(ncatpos*10.+vec2(.8,.5));
+        if (totdist>8.) col=mix(col,max(vec3(.2),rain.xyz),rain.a*.9);
+        if (totdist>8.) col=mix(col,max(vec3(.2),ncat.xyz),ncat.a*.9);
+    }
+#endif
+#endif
+	return col;
+}
+
+// get camera position
+vec3 move(inout vec3 dir) {
+	vec3 go=path(t);
+	vec3 adv=path(t+.7);
+	float hd=de(adv);
+	vec3 advec=normalize(adv-go);
+	float an=adv.x-go.x; an*=min(1.,abs(adv.z-go.z))*sign(adv.z-go.z)*.7;
+	dir.xy*=mat2(cos(an),sin(an),-sin(an),cos(an));
+    an=advec.y*1.7;
+	dir.yz*=mat2(cos(an),sin(an),-sin(an),cos(an));
+	an=atan(advec.x,advec.z);
+	dir.xz*=mat2(cos(an),sin(an),-sin(an),cos(an));
+	return go;
+}
+
+void mainImage( out vec4 fragColor, in vec2 fragCoord ) {
+	vec2 uv = fragCoord.xy / iResolution.xy*2.-1.;
+	vec2 oriuv=uv;
+	uv.y*=iResolution.y/iResolution.x;
+	vec2 mouse=(iMouse.xy/iResolution.xy-.5)*3.;
+	if (iMouse.z<1.) mouse=vec2(0.,-0.05);
+	float fov=.9-max(0.,.7-iTime*.3);
+	vec3 dir=normalize(vec3(uv*fov,1.));
+	dir.yz*=rot(mouse.y);
+	dir.xz*=rot(mouse.x);
+	vec3 from=origin+move(dir);
+	vec3 color=raymarch(from,dir); 
+	#ifdef BORDER
+	color=mix(vec3(0.),color,pow(max(0.,.95-length(oriuv*oriuv*oriuv*vec2(.95,.95))),.4));
+	#endif
+	fragColor = vec4(color,1.);
+}`,
 "Jellyfish Migration": `// Luminescence by Martijn Steinrucken aka BigWings - 2017
 // Email:countfrolic@gmail.com Twitter:@The_ArtOfCode
 // License Creative Commons Attribution-NonCommercial-ShareAlike 3.0 Unported License.
@@ -1416,302 +1734,347 @@ void mainImage( out vec4 fragColor, in vec2 fragCoord )
     fragColor = vec4(col, 1.);
 }`,
 "3D Play": `/*
-    Abstract Corridor
-    -------------------
-    
-    Using Shadertoy user Nimitz's triangle noise idea and his curvature function to fake an abstract, 
-	flat-shaded, point-lit, mesh look.
+    Abstract Corridor with Procedural Textures - Collapsing Tunnel with Rocks
+    -----------------------------------------------------------------------
 
-	It's a slightly trimmed back, and hopefully, much quicker version my previous tunnel example... 
-	which is not interesting enough to link to. :)
-
+    Modified version with original wall textures and falling rocks on strong beats.
 */
 
 #define PI 3.1415926535898
-#define FH 1.0 // Floor height. Set it to 2.0 to get rid of the floor.
+#define FH 1.0 // Floor height.
 
 // Grey scale.
 float getGrey(vec3 p){ return p.x*0.299 + p.y*0.587 + p.z*0.114; }
 
 // Non-standard vec3-to-vec3 hash function.
-vec3 hash33(vec3 p){ 
-    
-    float n = sin(dot(p, vec3(7, 157, 113)));    
-    return fract(vec3(2097152, 262144, 32768)*n); 
+vec3 hash33(vec3 p){
+    float n = sin(dot(p, vec3(7, 157, 113)));
+    return fract(vec3(2097152, 262144, 32768)*n);
+}
+
+// Hash function for procedural textures
+float hash21(vec2 p) {
+    p = fract(p * vec2(123.34, 456.21));
+    p += dot(p, p + 45.32);
+    return fract(p.x * p.y);
 }
 
 // 2x2 matrix rotation.
 mat2 rot2(float a){
-    
     float c = cos(a); float s = sin(a);
-	return mat2(c, s, -s, c);
+    return mat2(c, s, -s, c);
 }
 
-// Tri-Planar blending function. Based on an old Nvidia tutorial.
-vec3 tex3D( sampler2D tex, in vec3 p, in vec3 n ){
-  
-    n = max((abs(n) - 0.2)*7., 0.001); // max(abs(n), 0.001), etc.
-    n /= (n.x + n.y + n.z );  
-    
-	return (texture(tex, p.yz)*n.x + texture(tex, p.zx)*n.y + texture(tex, p.xy)*n.z).xyz;
+// Value noise for procedural textures
+float valueNoise(in vec2 p) {
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+
+    // Smoothstep interpolation
+    vec2 u = f * f * (3.0 - 2.0 * f);
+
+    // Four corners
+    float a = hash21(i);
+    float b = hash21(i + vec2(1.0, 0.0));
+    float c = hash21(i + vec2(0.0, 1.0));
+    float d = hash21(i + vec2(1.0, 1.0));
+
+    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
 }
 
-// The triangle function that Shadertoy user Nimitz has used in various triangle noise demonstrations.
-// See Xyptonjtroz - Very cool. Anyway, it's not really being used to its full potential here.
-vec3 tri(in vec3 x){return abs(x-floor(x)-.5);} // Triangle function.
+// Fractal Brownian Motion for richer textures
+float fbm(vec2 p) {
+    float value = 0.0;
+    float amplitude = 0.5;
+    float frequency = 1.0;
 
-// The function used to perturb the walls of the cavern: There are infinite possibities, but this one is 
-// just a cheap...ish routine - based on the triangle function - to give a subtle jaggedness. Not very fancy, 
-// but it does a surprizingly good job at laying the foundations for a sharpish rock face. Obviously, more 
-// layers would be more convincing. However, this is a GPU-draining distance function, so the finer details 
-// are bump mapped.
+    // 5 octaves of noise
+    for (int i = 0; i < 5; i++) {
+        value += amplitude * valueNoise(p * frequency);
+        amplitude *= 0.5;
+        frequency *= 2.0;
+    }
+
+    return value;
+}
+
+// 3D noise for volume texturing
+float noise3D(vec3 p) {
+    vec3 i = floor(p);
+    vec3 f = fract(p);
+
+    f = f * f * (3.0 - 2.0 * f);
+
+    vec2 uv = (i.xy + vec2(37.0, 17.0) * i.z) + f.xy;
+    vec2 rg = mix(
+        vec2(hash21(uv), hash21(uv + vec2(37.0, 17.0))),
+        vec2(hash21(uv + vec2(1.0, 0.0)), hash21(uv + vec2(1.0, 0.0) + vec2(37.0, 17.0))),
+        f.x);
+
+    return mix(rg.x, rg.y, f.z);
+}
+
+// Wall texture (original)
+vec3 wallTexture(vec2 p) {
+    float scale = 4.0;
+    p *= scale;
+    float n1 = fbm(p);
+    float n2 = fbm(p * 2.0 + vec2(8.76, 3.42));
+    float cracks = smoothstep(0.3, 0.4, fbm(p * 2.5));
+    vec3 baseColor = mix(vec3(0.3, 0.3, 0.4), vec3(0.2, 0.1, 0.3), n1);
+    vec3 accentColor = mix(vec3(0.5, 0.4, 0.6), vec3(0.6, 0.5, 0.7), n2);
+    vec3 col = baseColor * (0.8 + 0.2 * n2);
+    col = mix(col, accentColor, cracks * 0.7);
+    col *= 0.8 + 0.4 * n1;
+    return col;
+}
+
+// Floor texture (original)
+vec3 floorTexture(vec2 p) {
+    float scale = 8.0;
+    p *= scale;
+    vec2 grid = abs(fract(p) - 0.5);
+    float line = smoothstep(0.05, 0.0, min(grid.x, grid.y));
+    float n = fbm(p * 0.5) * 0.5 + 0.5;
+    vec3 col = mix(vec3(0.2), vec3(0.15), n);
+    col = mix(col, vec3(0.1), line * 0.8);
+    col *= 0.7 + 0.3 * n;
+    return col;
+}
+
+// Tri-Planar procedural texturing
+vec3 proceduralTex3D(in vec3 p, in vec3 n, bool isFloor) {
+    n = max((abs(n) - 0.2) * 7.0, 0.001);
+    n /= (n.x + n.y + n.z);
+
+    vec3 texX, texY, texZ;
+
+    if (isFloor) {
+        texX = floorTexture(p.yz);
+        texY = floorTexture(p.zx);
+        texZ = floorTexture(p.xy);
+    } else {
+        texX = wallTexture(p.yz);
+        texY = wallTexture(p.zx);
+        texZ = wallTexture(p.xy);
+    }
+
+    return texX * n.x + texY * n.y + texZ * n.z;
+}
+
+// The triangle function.
+vec3 tri(in vec3 x){return abs(x-floor(x)-.5);}
+
+// The function used to perturb the walls of the cavern (slight increase)
 float surfFunc(in vec3 p){
-    
-	return dot(tri(p*0.5 + tri(p*0.25).yzx), vec3(0.666));
+    return dot(tri(p*0.5 + tri(p*0.25).yzx), vec3(0.666)) * 1.1;
 }
 
-
-// The path is a 2D sinusoid that varies over time, depending upon the frequencies, and amplitudes.
+// The path is a 2D sinusoid that varies over time
 vec2 path(in float z){ float s = sin(z/24.)*cos(z/12.); return vec2(s*12., 0.); }
 
-// Standard tunnel distance function with some perturbation thrown into the mix. A floor has been 
-// worked in also. A tunnel is just a tube with a smoothly shifting center as you traverse lengthwise. 
-// The walls of the tube are perturbed by a pretty cheap 3D surface function.
+// Standard tunnel distance function (slight increase in base perturbation)
 float map(vec3 p){
-
     float sf = surfFunc(p - vec3(0, cos(p.z/3.)*.15, 0));
-    // Square tunnel.
-    // For a square tunnel, use the Chebyshev(?) distance: max(abs(tun.x), abs(tun.y))
     vec2 tun = abs(p.xy - path(p.z))*vec2(0.5, 0.7071);
-    float n = 1. - max(tun.x, tun.y) + (0.5 - sf);
+    float n = 1. - max(tun.x, tun.y) + (0.55 - sf);
     return min(n, p.y + FH);
-
-/*    
-    // Round tunnel.
-    // For a round tunnel, use the Euclidean distance: length(tun.y)
-    vec2 tun = (p.xy - path(p.z))*vec2(0.5, 0.7071);
-    float n = 1.- length(tun) + (0.5 - sf);
-    return min(n, p.y + FH);  
-*/
-    
-/*
-    // Rounded square tunnel using Minkowski distance: pow(pow(abs(tun.x), n), pow(abs(tun.y), n), 1/n)
-    vec2 tun = abs(p.xy - path(p.z))*vec2(0.5, 0.7071);
-    tun = pow(tun, vec2(4.));
-    float n =1.-pow(tun.x + tun.y, 1.0/4.) + (0.5 - sf);
-    return min(n, p.y + FH);
-*/
- 
 }
 
-// Texture bump mapping. Four tri-planar lookups, or 12 texture lookups in total.
-vec3 doBumpMap( sampler2D tex, in vec3 p, in vec3 nor, float bumpfactor){
-   
+// Bump mapping
+vec3 doBumpMap(in vec3 p, in vec3 nor, float bumpfactor, bool isFloor){
     const float eps = 0.001;
-    float ref = getGrey(tex3D(tex,  p , nor));                 
-    vec3 grad = vec3( getGrey(tex3D(tex, vec3(p.x - eps, p.y, p.z), nor)) - ref,
-                      getGrey(tex3D(tex, vec3(p.x, p.y - eps, p.z), nor)) - ref,
-                      getGrey(tex3D(tex, vec3(p.x, p.y, p.z - eps), nor)) - ref )/eps;
-             
-    grad -= nor*dot(nor, grad);          
-                      
-    return normalize( nor + grad*bumpfactor );
-	
+    float ref = getGrey(proceduralTex3D(p, nor, isFloor));
+    vec3 grad = vec3(
+        getGrey(proceduralTex3D(vec3(p.x - eps, p.y, p.z), nor, isFloor)) - ref,
+        getGrey(proceduralTex3D(vec3(p.x, p.y - eps, p.z), nor, isFloor)) - ref,
+        getGrey(proceduralTex3D(vec3(p.x, p.y, p.z - eps), nor, isFloor)) - ref
+    ) / eps;
+
+    grad -= nor * dot(nor, grad);
+    return normalize(nor + grad * bumpfactor);
 }
 
 // Surface normal.
 vec3 getNormal(in vec3 p) {
-	
-	const float eps = 0.001;
-	return normalize(vec3(
-		map(vec3(p.x + eps, p.y, p.z)) - map(vec3(p.x - eps, p.y, p.z)),
-		map(vec3(p.x, p.y + eps, p.z)) - map(vec3(p.x, p.y - eps, p.z)),
-		map(vec3(p.x, p.y, p.z + eps)) - map(vec3(p.x, p.y, p.z - eps))
-	));
-
+    const float eps = 0.001;
+    return normalize(vec3(
+        map(vec3(p.x + eps, p.y, p.z)) - map(vec3(p.x - eps, p.y, p.z)),
+        map(vec3(p.x, p.y + eps, p.z)) - map(vec3(p.x, p.y - eps, p.z)),
+        map(vec3(p.x, p.y, p.z + eps)) - map(vec3(p.x, p.y, p.z - eps))
+    ));
 }
 
 // Based on original by IQ.
 float calculateAO(vec3 p, vec3 n){
-
     const float AO_SAMPLES = 5.0;
     float r = 0.0, w = 1.0, d;
-    
+
     for (float i = 1.0; i<AO_SAMPLES + 1.1; i++){
         d = i/AO_SAMPLES;
         r += w*(d - map(p + n*d));
         w *= 0.5;
     }
-    
+
     return 1.0 - clamp(r, 0.0, 1.0);
 }
 
 // Cool curve function, by Shadertoy user, Nimitz.
-//
-// I wonder if it relates to the discrete finite difference approximation to the 
-// continuous Laplace differential operator? Either way, it gives you a scalar 
-// curvature value for an object's signed distance function, which is pretty handy.
-//
-// From an intuitive sense, the function returns a weighted difference between a surface 
-// value and some surrounding values. Almost common sense... almost. :) If anyone 
-// could provide links to some useful articles on the function, I'd be greatful.
-//
-// Original usage (I think?) - Cheap curvature: https://www.shadertoy.com/view/Xts3WM
-// Other usage: Xyptonjtroz: https://www.shadertoy.com/view/4ts3z2
 float curve(in vec3 p, in float w){
-
     vec2 e = vec2(-1., 1.)*w;
-    
+
     float t1 = map(p + e.yxx), t2 = map(p + e.xxy);
     float t3 = map(p + e.xyx), t4 = map(p + e.yyy);
-    
+
     return 0.125/(w*w) *(t1 + t2 + t3 + t4 - 4.*map(p));
 }
 
-void mainImage( out vec4 fragColor, in vec2 fragCoord ){
-	
-	// Screen coordinates.
-	vec2 uv = (fragCoord - iResolution.xy*0.5)/iResolution.y;
-	
-	// Camera Setup.
-	vec3 camPos = vec3(0.0, 0.0, iTime*5.); // Camera position, doubling as the ray origin.
-	vec3 lookAt = camPos + vec3(0.0, 0.1, 0.5);  // "Look At" position.
- 
-    // Light positioning. One is a little behind the camera, and the other is further down the tunnel.
- 	vec3 light_pos = camPos + vec3(0.0, 0.125, -0.125);// Put it a bit in front of the camera.
-	vec3 light_pos2 = camPos + vec3(0.0, 0.0, 6.0);// Put it a bit in front of the camera.
+// Audio reaction functions
+float getAudioLevel(float freq) {
+    return texture(iChannel0, vec2(freq, 0.0)).x;
+}
 
-	// Using the Z-value to perturb the XY-plane.
-	// Sending the camera, "look at," and two light vectors down the tunnel. The "path" function is 
-	// synchronized with the distance function.
-	lookAt.xy += path(lookAt.z);
-	camPos.xy += path(camPos.z);
-	light_pos.xy += path(light_pos.z);
-	light_pos2.xy += path(light_pos2.z);
+// Function to generate a simple rock shape
+float rockShape(vec3 p) {
+    float s = 1.0;
+    s *= 1.0 - smoothstep(0.4, 0.6, length(p + vec3(0.1, 0.1, 0.1) * sin(iTime * 5.0)));
+    s *= 1.0 - smoothstep(0.4, 0.6, length(p + vec3(-0.1, -0.2, 0.0) * cos(iTime * 7.0)));
+    s *= 1.0 - 0.8 * noise3D(p * 3.0);
+    return s;
+}
 
-    // Using the above to produce the unit ray-direction vector.
-    float FOV = PI/3.; // FOV - Field of view.
+// Distance function for a falling rock
+float fallingRock(vec3 p, float beat, float fallTime) {
+    if (beat > 0.6) { // Only show rocks on strong beats
+        vec3 rockPos = vec3(sin(fallTime * 2.0) * 2.0, 2.0 - fallTime * 3.0, iTime * 5.0 + cos(fallTime * 1.5) * 2.0);
+        return rockShape(p - rockPos) * 0.3; // Scale down the rock
+    }
+    return -100.0; // Return a large negative value to ensure it's not the closest surface
+}
+
+void mainImage(out vec4 fragColor, in vec2 fragCoord){
+    // Screen coordinates.
+    vec2 uv = (fragCoord - iResolution.xy*0.5)/iResolution.y;
+
+    // Get audio levels
+    float bassLevel = getAudioLevel(0.05);
+
+    // Stronger beat detection
+      float beatThreshold = 0.6;
+    float beat = smoothstep(beatThreshold, beatThreshold + 0.1, bassLevel);
+
+
+    // Camera setup with more pronounced shaking on the beat
+    vec3 camPos = vec3(0.0, 0.0, iTime * 5.0);
+    float shakeAmplitude = 0.08;
+    camPos.x += shakeAmplitude * beat * sin(iTime * 30.0);
+    camPos.y += shakeAmplitude * beat * cos(iTime * 25.0);
+    vec3 lookAt = camPos + vec3(0.0, 0.1, 0.5);
+
+    // Light positioning
+    vec3 light_pos = camPos + vec3(0.0, 0.125, -0.125);
+    vec3 light_pos2 = camPos + vec3(0.0, 0.0, 6.0);
+
+    lookAt.xy += path(lookAt.z);
+    camPos.xy += path(camPos.z);
+    light_pos.xy += path(light_pos.z);
+    light_pos2.xy += path(light_pos2.z);
+
+    // Ray direction.
+    float FOV = PI/3.;
     vec3 forward = normalize(lookAt-camPos);
-    vec3 right = normalize(vec3(forward.z, 0., -forward.x )); 
+    vec3 right = normalize(vec3(forward.z, 0., -forward.x));
     vec3 up = cross(forward, right);
-
-    // rd - Ray direction.
     vec3 rd = normalize(forward + FOV*uv.x*right + FOV*uv.y*up);
-    
-    // Swiveling the camera from left to right when turning corners.
-    rd.xy = rot2( path(lookAt.z).x/32. )*rd.xy;
-		
-    // Standard ray marching routine. I find that some system setups don't like anything other than
-    // a "break" statement (by itself) to exit. 
-	float t = 0.0, dt;
-	for(int i=0; i<128; i++){
-		dt = map(camPos + rd*t);
-		if(dt<0.005 || t>150.){ break; } 
-		t += dt*0.75;
-	}
-	
-    // The final scene color. Initated to black.
-	vec3 sceneCol = vec3(0.);
-	
-	// The ray has effectively hit the surface, so light it up.
-	if(dt<0.005){
-    	
-    	// Surface position and surface normal.
-	    vec3 sp = t * rd+camPos;
-	    vec3 sn = getNormal(sp);
-        
-        // Texture scale factor.
-        const float tSize0 = 1./1.; 
-        const float tSize1 = 1./4.;
-    	
-    	// Texture-based bump mapping.
-	    if (sp.y<-(FH-0.005)) sn = doBumpMap(iChannel1, sp*tSize1, sn, 0.025); // Floor.
-	    else sn = doBumpMap(iChannel0, sp*tSize0, sn, 0.025); // Walls.
-	    
-	    // Ambient occlusion.
-	    float ao = calculateAO(sp, sn);
-    	
-    	// Light direction vectors.
-	    vec3 ld = light_pos-sp;
-	    vec3 ld2 = light_pos2-sp;
 
-        // Distance from respective lights to the surface point.
-	    float distlpsp = max(length(ld), 0.001);
-	    float distlpsp2 = max(length(ld2), 0.001);
-    	
-    	// Normalize the light direction vectors.
-	    ld /= distlpsp;
-	    ld2 /= distlpsp2;
-	    
-	    // Light attenuation, based on the distances above. In case it isn't obvious, this
-        // is a cheap fudge to save a few extra lines. Normally, the individual light
-        // attenuations would be handled separately... No one will notice, nor care. :)
-	    float atten = min(1./(distlpsp) + 1./(distlpsp2), 1.);
-    	
-    	// Ambient light.
-	    float ambience = 0.25;
-    	
-    	// Diffuse lighting.
-	    float diff = max( dot(sn, ld), 0.0);
-	    float diff2 = max( dot(sn, ld2), 0.0);
-    	
-    	// Specular lighting.
-	    float spec = pow(max( dot( reflect(-ld, sn), -rd ), 0.0 ), 8.);
-	    float spec2 = pow(max( dot( reflect(-ld2, sn), -rd ), 0.0 ), 8.);
-    	
-    	// Curvature.
-	    float crv = clamp(curve(sp, 0.125)*0.5 + 0.5, .0, 1.);
-	    
-	    // Fresnel term. Good for giving a surface a bit of a reflective glow.
-        float fre = pow( clamp(dot(sn, rd) + 1., .0, 1.), 1.);
-        
-        // Obtaining the texel color. If the surface point is above the floor
-        // height use the wall texture, otherwise use the floor texture.
+    // Camera rotation with slight beat-induced wobble
+    float wobbleIntensity = 0.008;
+    rd.xy = rot2(path(lookAt.z).x/32. + beat * wobbleIntensity * sin(iTime * 40.0)) * rd.xy;
+
+    // Ray marching
+    float t = 0.0, dt;
+    float rockFallTime = 0.0;
+    bool hitRock = false;
+    for(int i=0; i<128; i++){
+        vec3 currentPos = camPos + rd * t;
+        float rockDist = fallingRock(currentPos, beat, rockFallTime);
+        float tunnelDist = map(currentPos);
+
+        if (rockDist > 0.0) {
+            dt = min(tunnelDist, rockDist);
+            if(dt == rockDist){
+                hitRock = true;
+            }
+        } else {
+            dt = tunnelDist;
+        }
+
+        if(dt<0.005 || t>150.){ break; }
+        t += dt*0.75;
+        if(hitRock){
+           rockFallTime += 0.1;
+        }
+    }
+
+    vec3 sceneCol = vec3(0.);
+
+    if(dt<0.005){
+        vec3 sp = t * rd+camPos;
+        vec3 sn = getNormal(sp);
+
+        const float tSize0 = 1.0;
+        const float tSize1 = 1.0 / 4.0;
+
+        bool isFloor = (sp.y < -(FH-0.005));
+
+         if (isFloor) {
+            sn = doBumpMap(sp * tSize1, sn, 0.025, true);
+        } else {
+            sn = doBumpMap(sp * tSize0, sn, 0.025, false);
+        }
+
+        float ao = calculateAO(sp, sn);
+
+        vec3 ld = light_pos-sp;
+        vec3 ld2 = light_pos2-sp;
+        float distlpsp = max(length(ld), 0.001);
+        float distlpsp2 = max(length(ld2), 0.001);
+        ld /= distlpsp;
+        ld2 /= distlpsp2;
+
+        float atten = min(1./(distlpsp) + 1./(distlpsp2), 1.0) * (1.0 + bassLevel * 0.5);
+        float ambience = 0.25;
+        float diff = max(dot(sn, ld), 0.0);
+        float diff2 = max(dot(sn, ld2), 0.0);
+        float spec = pow(max(dot(reflect(-ld, sn), -rd), 0.0), 8.0);
+        float spec2 = pow(max(dot(reflect(-ld2, sn), -rd), 0.0), 8.0);
+        float crv = clamp(curve(sp, 0.125)*0.5 + 0.5, .0, 1.);
+        float fre = pow(clamp(dot(sn, rd) + 1., .0, 1.), 1.0);
         vec3 texCol;
-        if (sp.y<-(FH - 0.005)) texCol = tex3D(iChannel1, sp*tSize1, sn); // Floor.
- 	    else texCol = tex3D(iChannel0, sp*tSize0, sn); // Walls.
-       
-        // Shadertoy doesn't appear to have anisotropic filtering turned on... although,
-        // I could be wrong. Texture-bumped objects don't appear to look as crisp. Anyway, 
-        // this is just a very lame, and not particularly well though out, way to sparkle 
-        // up the blurry bits. It's not really that necessary.
-        //vec3 aniso = (0.5 - hash33(sp))*fre*0.35;
-	    //texCol = clamp(texCol + aniso, 0., 1.);
-    	
-    	// Darkening the crevices. Otherwise known as cheap, scientifically-incorrect shadowing.	
-	    float shading =  crv*0.5 + 0.5; 
-    	
-    	// Combining the above terms to produce the final color. It was based more on acheiving a
-        // certain aesthetic than science.
-        //
-        // Glow.
-        sceneCol = getGrey(texCol)*((diff + diff2)*0.75 + ambience*0.25) + (spec + spec2)*texCol*2. + fre*crv*texCol.zyx*2.;
-        //
-        // Other combinations:
-        //
-        // Shiny.
-        //sceneCol = texCol*((diff + diff2)*vec3(1.0, 0.95, 0.9) + ambience + fre*fre*texCol) + (spec + spec2);
-        // Abstract pen and ink?
-        //float c = getGrey(texCol)*((diff + diff2)*1.75 + ambience + fre*fre) + (spec + spec2)*0.75;
-        //sceneCol = vec3(c*c*c, c*c, c);
+        if(hitRock){
+            texCol = vec3(0.6,0.2,0.1);
+        }
+        else{
+            texCol = proceduralTex3D(sp * (isFloor ? tSize1 : tSize0), sn, isFloor);
+        }
+        float shading = crv * 0.5 + 0.5;
 
-	    
-        // Shading.
-        sceneCol *= atten*shading*ao;
-        
-        // Drawing the lines on the walls. Comment this out and change the first texture to
-        // granite for a granite corridor effect.
-        sceneCol *= clamp(1.-abs(curve(sp, 0.0125)), .0, 1.);        
-	   
-	
-	}
-	
-    // Edit: No gamma correction -- I can't remember whether it was a style choice, or whether I forgot at
-    // the time, but you should always gamma correct. In this case, just think of it as rough gamma correction 
-    // on a postprocessed color: sceneCol = sqrt(sceneCol*sceneCol); :D
-	fragColor = vec4(clamp(sceneCol, 0., 1.), 1.0);
-	
-}`,
+        // Slight brightness boost on beat
+        float brightnessBoost = 1.0 + beat * 0.2;
+
+        sceneCol = texCol * ((diff + diff2) * 0.75 + ambience * 0.25) * brightnessBoost +
+                  (spec + spec2) * texCol * 2.0 +
+                  fre * crv * texCol.zyx * 2.0;
+
+        sceneCol *= atten * shading * ao;
+
+        float lineIntensity = clamp(1.0 - abs(curve(sp, 0.0125)), 0., 1.);
+        sceneCol *= lineIntensity;
+    }
+
+    fragColor = vec4(clamp(sceneCol, 0., 1.), 1.0);
+}
+`,
 "Hexed": `#define r iResolution.xy
 #define PI 3.14159265358979323
 const float sqrt3 = sqrt(3.);
@@ -4383,7 +4746,653 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
   
   col = clamp(col, 0.0, 1.0);
   fragColor = vec4(col);
-}`
+}`,
+"Squeeze": `/*
+
+@lsdlive
+CC-BY-NC-SA
+
+This is my part for "Mist" by Ohno, a 4 kilobytes demo released at the Cookie 2018.
+
+pouet: http://www.pouet.net/prod.php?which=79350
+youtube: https://www.youtube.com/watch?v=UUtU3WVB144
+
+Code/Graphics: Flopine
+Code/Graphics: Lsdlive
+Music: Triace from Desire
+
+Part1 from Flopine here: https://www.shadertoy.com/view/tdBGWD
+
+Information about my process for making this demo here:
+https://twitter.com/lsdlive/status/1090627411379716096
+
+*/
+
+float time = 0.;
+
+float random(vec2 uv) {
+	return fract(sin(dot(uv, vec2(12.2544, 35.1571))) * 5418.548416);
+}
+
+mat2 r2d(float a) {
+	float c = cos(a), s = sin(a);
+	// Explained here why you still get an anti-clockwise rotation with this matrix:
+	// https://www.shadertoy.com/view/wdB3DW
+	return mat2(c, s, -s, c);
+}
+
+vec3 re(vec3 p, float d) {
+	return mod(p - d * .5, d) - d * .5;
+}
+
+void amod2(inout vec2 p, float d) {
+	// should be atan(p.y, p.x) but I had this function for a while
+	// and putting parameters like this add a PI/6 rotation.
+	float a = re(vec3(atan(p.x, p.y)), d).x; 
+	p = vec2(cos(a), sin(a)) * length(p);
+}
+
+void mo(inout vec2 p, vec2 d) {
+	p = abs(p) - d;
+	if (p.y > p.x)p = p.yx;
+}
+
+vec3 get_cam(vec3 ro, vec3 ta, vec2 uv) {
+	vec3 fwd = normalize(ta - ro);
+	vec3 right = normalize(cross(fwd, vec3(0, 1, 0)));
+
+	//vec3 right = normalize(vec3(-fwd.z, 0, fwd.x));
+	return normalize(fwd + right * uv.x + cross(right, fwd) * uv.y);
+}
+
+// signed cube
+// https://iquilezles.org/articles/distfunctions
+float cube(vec3 p, vec3 b) {
+	b = abs(p) - b;
+	return min(max(b.x, max(b.y, b.z)), 0.) + length(max(b, 0.));
+}
+
+// iq's signed cross sc() - https://iquilezles.org/articles/menger
+float sc(vec3 p, float d) {
+	p = abs(p);
+	p = max(p, p.yzx);
+	return min(p.x, min(p.y, p.z)) - d;
+}
+
+
+////////////////////////// SHADER LSDLIVE //////////////////////////
+
+float prim(vec3 p) {
+
+	p.xy *= r2d(3.14 * .5 + p.z * .1); // .1
+
+	amod2(p.xy, 6.28 / 3.); // 3.
+	p.x = abs(p.x) - 9.; // 9.
+
+	p.xy *= r2d(p.z * .2); // .2
+
+	amod2(p.xy, 6.28 /
+		mix(
+			mix(10., 5., smoothstep(59.5, 61.5, time)), // T4
+			3.,
+			smoothstep(77.5, 77.75, time)) // T8
+	); // 3.
+	mo(p.xy, vec2(2.)); // 2.
+
+	p.x = abs(p.x) - .6; // .6
+	return length(p.xy) - .2;//- smoothstep(80., 87., time)*(.5+.5*sin(time)); // .2
+}
+
+float g = 0.; // glow
+float de(vec3 p) {
+
+	if (time > 109.2) {
+		mo(p.xy, vec2(.2));
+		p.x -= 10.;
+	}
+
+	if (time > 101.4) {
+		p.xy *= r2d(time*.2);
+	}
+
+	if (time > 106.5) {
+		mo(p.xy, vec2(5. + sin(time)*3.*cos(time*.5), 0.));
+	}
+
+	if (time > 104.) {
+		amod2(p.xy, 6.28 / 3.);
+		p.x += 5.;
+	}
+
+	if (time > 101.4) {
+		mo(p.xy, vec2(2. + sin(time)*3.*cos(time*.5), 0.));
+	}
+
+	p.xy *= r2d(time * .05); // .05
+
+	p.xy *= r2d(p.z *
+		mix(.05, .002, step(89.5, time)) // P2 - T11
+	); // .05 & .002
+
+	p.x += sin(time) * smoothstep(77., 82., time);
+
+	amod2(p.xy, 6.28 /
+		mix(
+			mix(1., 2., smoothstep(63.5, 68.5, time)), // T6
+			5.,
+			smoothstep(72., 73.5, time)) // T7
+	); // 5.
+	p.x -= 21.; // 21.
+
+	vec3 q = p;
+
+	p.xy *= r2d(p.z * .1); // .1
+
+	amod2(p.xy, 6.28 / 3.); // 3.
+	p.x = abs(p.x) -
+		mix(20., 5., smoothstep(49.5, 55., time)) // T2
+		; // 5.
+
+	p.xy *= r2d(p.z *
+		mix(1., .2, smoothstep(77.5, 77.75, time)) // T8b
+	); // .2
+
+	p.z = re(p.zzz, 3.).x; // 3.
+
+	p.x = abs(p.x);
+	amod2(p.xy, 6.28 /
+		mix(6., 3., smoothstep(77.75, 78.5, time)) // T10
+	); // 3.
+	float sc1 = sc(p,
+		mix(8., 1., smoothstep(45.5, 51., time)) // T1
+	); // 1.
+
+	amod2(p.xz, 6.28 /
+		mix(3., 8., smoothstep(61.5, 65.5, time)) // T5
+	); // 8.
+	mo(p.xz, vec2(.1)); // .1
+
+	p.x = abs(p.x) - 1.;// 1.
+
+	float d = cube(p, vec3(.2, 10, 1)); // fractal primitive: cube substracted by a signed cross
+	d = max(d, -sc1) -
+		mix(.01, 2., smoothstep(56., 58.5, time)) // T3
+		; // 2.
+
+
+	g += .006 / (.01 + d * d); // first layer of glow
+
+	d = min(d, prim(q)); // add twisted cylinders
+
+	g += .004 / (.013 + d * d); // second layer of glow (after the union of two geometries)
+
+	return d;
+}
+
+
+////////////////////////// RAYMARCHING FUNCTIONS //////////////////////////
+
+
+vec3 raymarch_lsdlive(vec3 ro, vec3 rd, vec2 uv) {
+	vec3 p;
+	float t = 0., ri;
+
+	float dither = random(uv);
+
+	for (float i = 0.; i < 1.; i += .02) {// 50 iterations to keep it "fast"
+		ri = i;
+		p = ro + rd * t;
+		float d = de(p);
+		d *= 1. + dither * .05; // avoid banding & add a nice "artistic" little noise to the rendering (leon gave us this trick)
+		d = max(abs(d), .002); // phantom mode trick from aiekick https://www.shadertoy.com/view/MtScWW
+		t += d * .5;
+	}
+
+	// Shading: uv, iteration & glow:
+	vec3 c = mix(vec3(.9, .8, .6), vec3(.1, .1, .2), length(uv) + ri);
+	c.r += sin(p.z * .1) * .2;
+	c += g * .035; // glow trick from balkhan https://www.shadertoy.com/view/4t2yW1
+
+	return c;
+}
+
+// borrowed from (mmerchante) : https://www.shadertoy.com/view/MltcWs
+void glitch(inout vec2 uv, float start_time_stamp, float end_time_stamp)
+{
+	int offset = int(floor(time)*2.) + int((uv.x + uv.y) * 8.0);
+	float res = mix(10., 100.0, random(vec2(offset)));
+
+	// glitch pixellate
+	if (time > start_time_stamp && time <= end_time_stamp) uv = floor(uv * res) / res;
+
+	int seedX = int(gl_FragCoord.x + time) / 32;
+	int seedY = int(gl_FragCoord.y + time) / 32;
+	int seed = mod(time, 2.) > 1. ? seedX : seedY;
+
+
+	// glitch splitter
+	uv.x += (random(vec2(seed)) * 2.0 - 1.0)
+		* step(random(vec2(seed)), pow(sin(time * 4.), 7.0))
+		* random(vec2(seed))
+		* step(start_time_stamp, time)
+		* (1. - step(end_time_stamp, time));
+}
+
+////////////////////////// MAIN FUNCTION //////////////////////////
+
+void mainImage(out vec4 fragColor, in vec2 fragCoord) {
+	vec2 q = fragCoord.xy / iResolution.xy;
+    vec2 uv = (q - .5) * iResolution.xx / iResolution.yx;
+
+	/* just code for the shadertoy port */
+	time = mod(iTime, 43. + 10.4);
+	time = time + 45.;
+	if (time > 88. && time <= 98.6) // 98.
+		time += 10.6;
+
+
+	// added glitch
+	glitch(uv, 0., 2.);
+
+	glitch(uv, 98., 99.);
+	// lsdlive 2nd part
+	glitch(uv, 100.5, 101.5);
+	glitch(uv, 103., 104.);
+	glitch(uv, 105.5, 106.5);
+
+	vec3 lsd_ro = vec3(0, 0, -4. + time * 8.);
+	vec3 lsd_target = vec3(0., 0., time * 8.);
+	vec3 lsd_cam = get_cam(lsd_ro, lsd_target, uv);
+
+	vec3 col = vec3(0.);
+
+	if (time > 45. && time <= 88.) // 43 seconds
+		col = raymarch_lsdlive(lsd_ro, lsd_cam, uv);
+
+	if (time > 98.6 && time <= 109.) // 10.4 seconds
+		col = raymarch_lsdlive(lsd_ro, lsd_cam, uv);
+
+
+	// vignetting (iq)
+	col *= 0.5 + 0.5*pow(16.0*q.x*q.y*(1.0 - q.x)*(1.0 - q.y), 0.25);
+
+	// fading out - end of the demo
+	//col *= 1. - smoothstep(120., 125., time);
+
+	fragColor = vec4(col, 1.);
+}`,
+"Choc Candy": `#define PI 3.14159265
+
+float orenNayarDiffuse(
+  vec3 lightDirection,
+  vec3 viewDirection,
+  vec3 surfaceNormal,
+  float roughness,
+  float albedo) {
+  
+  float LdotV = dot(lightDirection, viewDirection);
+  float NdotL = dot(lightDirection, surfaceNormal);
+  float NdotV = dot(surfaceNormal, viewDirection);
+
+  float s = LdotV - NdotL * NdotV;
+  float t = mix(1.0, max(NdotL, NdotV), step(0.0, s));
+
+  float sigma2 = roughness * roughness;
+  float A = 1.0 + sigma2 * (albedo / (sigma2 + 0.13) + 0.5 / (sigma2 + 0.33));
+  float B = 0.45 * sigma2 / (sigma2 + 0.09);
+
+  return albedo * max(0.0, NdotL) * (A + B * s / t) / PI;
+}
+
+float gaussianSpecular(
+  vec3 lightDirection,
+  vec3 viewDirection,
+  vec3 surfaceNormal,
+  float shininess) {
+  vec3 H = normalize(lightDirection + viewDirection);
+  float theta = acos(dot(H, surfaceNormal));
+  float w = theta / shininess;
+  return exp(-w*w);
+}
+
+float fogFactorExp2(
+  const float dist,
+  const float density
+) {
+  const float LOG2 = -1.442695;
+  float d = density * dist;
+  return 1.0 - clamp(exp2(d * d * LOG2), 0.0, 1.0);
+}
+
+//
+// Description : Array and textureless GLSL 2D/3D/4D simplex
+//               noise functions.
+//      Author : Ian McEwan, Ashima Arts.
+//  Maintainer : ijm
+//     Lastmod : 20110822 (ijm)
+//     License : Copyright (C) 2011 Ashima Arts. All rights reserved.
+//               Distributed under the MIT License. See LICENSE file.
+//               https://github.com/ashima/webgl-noise
+//
+
+vec4 mod289(vec4 x) {
+  return x - floor(x * (1.0 / 289.0)) * 289.0; }
+
+float mod289(float x) {
+  return x - floor(x * (1.0 / 289.0)) * 289.0; }
+
+vec4 permute(vec4 x) {
+     return mod289(((x*34.0)+1.0)*x);
+}
+
+float permute(float x) {
+     return mod289(((x*34.0)+1.0)*x);
+}
+
+vec4 taylorInvSqrt(vec4 r)
+{
+  return 1.79284291400159 - 0.85373472095314 * r;
+}
+
+float taylorInvSqrt(float r)
+{
+  return 1.79284291400159 - 0.85373472095314 * r;
+}
+
+vec4 grad4(float j, vec4 ip)
+  {
+  const vec4 ones = vec4(1.0, 1.0, 1.0, -1.0);
+  vec4 p,s;
+
+  p.xyz = floor( fract (vec3(j) * ip.xyz) * 7.0) * ip.z - 1.0;
+  p.w = 1.5 - dot(abs(p.xyz), ones.xyz);
+  s = vec4(lessThan(p, vec4(0.0)));
+  p.xyz = p.xyz + (s.xyz*2.0 - 1.0) * s.www;
+
+  return p;
+  }
+
+// (sqrt(5) - 1)/4 = F4, used once below
+#define F4 0.309016994374947451
+
+float snoise(vec4 v)
+  {
+  const vec4  C = vec4( 0.138196601125011,  // (5 - sqrt(5))/20  G4
+                        0.276393202250021,  // 2 * G4
+                        0.414589803375032,  // 3 * G4
+                       -0.447213595499958); // -1 + 4 * G4
+
+// First corner
+  vec4 i  = floor(v + dot(v, vec4(F4)) );
+  vec4 x0 = v -   i + dot(i, C.xxxx);
+
+// Other corners
+
+// Rank sorting originally contributed by Bill Licea-Kane, AMD (formerly ATI)
+  vec4 i0;
+  vec3 isX = step( x0.yzw, x0.xxx );
+  vec3 isYZ = step( x0.zww, x0.yyz );
+//  i0.x = dot( isX, vec3( 1.0 ) );
+  i0.x = isX.x + isX.y + isX.z;
+  i0.yzw = 1.0 - isX;
+//  i0.y += dot( isYZ.xy, vec2( 1.0 ) );
+  i0.y += isYZ.x + isYZ.y;
+  i0.zw += 1.0 - isYZ.xy;
+  i0.z += isYZ.z;
+  i0.w += 1.0 - isYZ.z;
+
+  // i0 now contains the unique values 0,1,2,3 in each channel
+  vec4 i3 = clamp( i0, 0.0, 1.0 );
+  vec4 i2 = clamp( i0-1.0, 0.0, 1.0 );
+  vec4 i1 = clamp( i0-2.0, 0.0, 1.0 );
+
+  //  x0 = x0 - 0.0 + 0.0 * C.xxxx
+  //  x1 = x0 - i1  + 1.0 * C.xxxx
+  //  x2 = x0 - i2  + 2.0 * C.xxxx
+  //  x3 = x0 - i3  + 3.0 * C.xxxx
+  //  x4 = x0 - 1.0 + 4.0 * C.xxxx
+  vec4 x1 = x0 - i1 + C.xxxx;
+  vec4 x2 = x0 - i2 + C.yyyy;
+  vec4 x3 = x0 - i3 + C.zzzz;
+  vec4 x4 = x0 + C.wwww;
+
+// Permutations
+  i = mod289(i);
+  float j0 = permute( permute( permute( permute(i.w) + i.z) + i.y) + i.x);
+  vec4 j1 = permute( permute( permute( permute (
+             i.w + vec4(i1.w, i2.w, i3.w, 1.0 ))
+           + i.z + vec4(i1.z, i2.z, i3.z, 1.0 ))
+           + i.y + vec4(i1.y, i2.y, i3.y, 1.0 ))
+           + i.x + vec4(i1.x, i2.x, i3.x, 1.0 ));
+
+// Gradients: 7x7x6 points over a cube, mapped onto a 4-cross polytope
+// 7*7*6 = 294, which is close to the ring size 17*17 = 289.
+  vec4 ip = vec4(1.0/294.0, 1.0/49.0, 1.0/7.0, 0.0) ;
+
+  vec4 p0 = grad4(j0,   ip);
+  vec4 p1 = grad4(j1.x, ip);
+  vec4 p2 = grad4(j1.y, ip);
+  vec4 p3 = grad4(j1.z, ip);
+  vec4 p4 = grad4(j1.w, ip);
+
+// Normalise gradients
+  vec4 norm = taylorInvSqrt(vec4(dot(p0,p0), dot(p1,p1), dot(p2, p2), dot(p3,p3)));
+  p0 *= norm.x;
+  p1 *= norm.y;
+  p2 *= norm.z;
+  p3 *= norm.w;
+  p4 *= taylorInvSqrt(dot(p4,p4));
+
+// Mix contributions from the five corners
+  vec3 m0 = max(0.6 - vec3(dot(x0,x0), dot(x1,x1), dot(x2,x2)), 0.0);
+  vec2 m1 = max(0.6 - vec2(dot(x3,x3), dot(x4,x4)            ), 0.0);
+  m0 = m0 * m0;
+  m1 = m1 * m1;
+  return 49.0 * ( dot(m0*m0, vec3( dot( p0, x0 ), dot( p1, x1 ), dot( p2, x2 )))
+               + dot(m1*m1, vec2( dot( p3, x3 ), dot( p4, x4 ) ) ) ) ;
+
+}
+
+
+
+//------------------------------------------------------------------------
+// Camera
+//
+// Move the camera. In this case it's using time and the mouse position
+// to orbitate the camera around the origin of the world (0,0,0), where
+// the yellow sphere is.
+//------------------------------------------------------------------------
+void doCamera( out vec3 camPos, out vec3 camTar, in float time, in float mouseX )
+{
+    float an = 10.0*mouseX+4.5;
+	camPos = vec3(3.5*sin(an),1.0,3.5*cos(an));
+    camTar = vec3(0.0,0.0,0.0);
+}
+
+
+//------------------------------------------------------------------------
+// Background 
+//
+// The background color. In this case it's just a black color.
+//------------------------------------------------------------------------
+vec3 doBackground( void )
+{
+    return vec3(0.003,0.003,0.005);
+}
+    
+//------------------------------------------------------------------------
+// Modelling 
+//
+// Defines the shapes (a sphere in this case) through a distance field, in
+// this case it's a sphere of radius 1.
+//------------------------------------------------------------------------
+float doModel( vec3 p )
+{
+    float r = texture(iChannel0, vec2(0.8, 0.)).r + 0.5;
+    float n = max(0., texture(iChannel0, vec2(0.05, 0.)).r * 3.5 - 1.);
+    
+    n = n * exp(snoise(vec4(p * 2.1, iTime * 2.3)));
+    
+    return length(p) - (1. + n * 0.05) * .9;
+}
+
+//------------------------------------------------------------------------
+// Material 
+//
+// Defines the material (colors, shading, pattern, texturing) of the model
+// at every point based on its position and normal. In this case, it simply
+// returns a constant yellow color.
+//------------------------------------------------------------------------
+vec3 doMaterial( in vec3 pos, in vec3 nor )
+{
+    return vec3(0.125,0.1,0.2)+(vec3(.6,0.9,.4)*3.*clamp(length(pos)-0.94,0.,1.));
+}
+
+//------------------------------------------------------------------------
+// Lighting
+//------------------------------------------------------------------------
+float calcSoftshadow( in vec3 ro, in vec3 rd );
+
+vec3 doLighting( in vec3 pos, in vec3 nor, in vec3 rd, in float dis, in vec3 mal )
+{
+    vec3 lin = vec3(0.0);
+
+    // key light
+    //-----------------------------
+    vec3  view = normalize(-rd);
+    vec3  lig1 = normalize(vec3(1.0,0.7,0.9));
+    vec3  lig2 = normalize(vec3(1.0,0.9,0.9)*-1.);
+    
+    float spc1 = gaussianSpecular(lig1, view, nor, 0.95)*0.5;
+    float dif1 = max(0., orenNayarDiffuse(lig1, view, nor, -20.1, 1.0));
+    float sha1 = 0.0; if( dif1>0.01 ) sha1=calcSoftshadow( pos+0.01*nor, lig1 );
+    vec3  col1 = vec3(2.,4.2,4.);
+    lin += col1*spc1+dif1*col1*sha1;
+    
+    float spc2 = gaussianSpecular(lig2, view, nor, 0.95);
+    float dif2 = max(0., orenNayarDiffuse(lig2, view, nor, -20.1, 1.0));
+    float sha2 = 0.0; if( dif2>0.01 ) sha2=calcSoftshadow( pos+0.01*nor, lig2 );
+    vec3  col2 = vec3(2.00,0.05,0.15);
+    lin += col2*spc2+dif2*col2*sha1;
+
+    // ambient light
+    //-----------------------------
+    lin += vec3(0.05);
+
+    
+    // surface-light interacion
+    //-----------------------------
+    vec3 col = mal*lin;
+
+    return col;
+}
+
+float calcIntersection( in vec3 ro, in vec3 rd )
+{
+	const float maxd = 20.0;           // max trace distance
+	const float precis = 0.001;        // precission of the intersection
+    float h = precis*2.0;
+    float t = 0.0;
+	float res = -1.0;
+    for( int i=0; i<90; i++ )          // max number of raymarching iterations is 90
+    {
+        if( h<precis||t>maxd ) break;
+	    h = doModel( ro+rd*t );
+        t += h;
+    }
+
+    if( t<maxd ) res = t;
+    return res;
+}
+
+vec3 calcNormal( in vec3 pos )
+{
+    const float eps = 0.002;             // precision of the normal computation
+
+    const vec3 v1 = vec3( 1.0,-1.0,-1.0);
+    const vec3 v2 = vec3(-1.0,-1.0, 1.0);
+    const vec3 v3 = vec3(-1.0, 1.0,-1.0);
+    const vec3 v4 = vec3( 1.0, 1.0, 1.0);
+
+	return normalize( v1*doModel( pos + v1*eps ) + 
+					  v2*doModel( pos + v2*eps ) + 
+					  v3*doModel( pos + v3*eps ) + 
+					  v4*doModel( pos + v4*eps ) );
+}
+
+float calcSoftshadow( in vec3 ro, in vec3 rd )
+{
+    float res = 1.0;
+    float t = 0.0001;                 // selfintersection avoidance distance
+	float h = 1.0;
+    for( int i=0; i<5; i++ )         // 40 is the max numnber of raymarching steps
+    {
+        h = doModel(ro + rd*t);
+        res = min( res, 4.0*h/t );   // 64 is the hardness of the shadows
+		t += clamp( h, 0.02, 2.0 );   // limit the max and min stepping distances
+    }
+    return clamp(res,0.0,1.0);
+}
+
+mat3 calcLookAtMatrix( in vec3 ro, in vec3 ta, in float roll )
+{
+    vec3 ww = normalize( ta - ro );
+    vec3 uu = normalize( cross(ww,vec3(sin(roll),cos(roll),0.0) ) );
+    vec3 vv = normalize( cross(uu,ww));
+    return mat3( uu, vv, ww );
+}
+
+void mainImage( out vec4 fragColor, in vec2 fragCoord )
+{
+    vec2 p = (-iResolution.xy + 2.0*fragCoord.xy)/iResolution.y;
+    vec2 m = iMouse.xy/iResolution.xy;
+
+    //-----------------------------------------------------
+    // camera
+    //-----------------------------------------------------
+    
+    // camera movement
+    vec3 ro, ta;
+    doCamera( ro, ta, iTime, m.x );
+
+    // camera matrix
+    mat3 camMat = calcLookAtMatrix( ro, ta, 0.0 );  // 0.0 is the camera roll
+    
+	// create view ray
+	vec3 rd = normalize( camMat * vec3(p.xy,2.0) ); // 2.0 is the lens length
+
+    //-----------------------------------------------------
+	// render
+    //-----------------------------------------------------
+
+	vec3 col = doBackground();
+
+	// raymarch
+    float t = calcIntersection( ro, rd );
+    if( t>-0.5 )
+    {
+        // geometry
+        vec3 pos = ro + t*rd;
+        vec3 nor = calcNormal(pos);
+
+        // materials
+        vec3 mal = doMaterial( pos, nor );
+        vec3 lcl = doLighting( pos, nor, rd, t, mal );
+
+        col = mix(lcl, col, fogFactorExp2(t, 0.1));
+	}
+
+	//-----------------------------------------------------
+	// postprocessing
+    //-----------------------------------------------------
+    // gamma
+	col = pow( clamp(col,0.0,1.0), vec3(0.4545) );
+    col += dot(p,p*0.035);
+    col.r = smoothstep(0.1,1.1,col.r);
+    col.g = pow(col.g, 1.1);
+	   
+    fragColor = vec4( col, 1.0 );
+}`,
 };
 
 

@@ -148,20 +148,79 @@ void main() {
 
         const sampleContainer = document.createElement('div');
         sampleContainer.className = 'sample-container';
-        // Add sample shader buttons
-        for (const [name, code] of Object.entries(SAMPLE_SHADERS)) {
-            const sampleButton = document.createElement('button');
-            sampleButton.textContent = name;
-            sampleButton.className = 'sample-button';
-            sampleButton.addEventListener('click', () => {
-                sampleButton.style.transform = 'scale(0.95)';
-                setTimeout(() => { sampleButton.style.transform = ''; }, 150);
-                shaderTextarea.value = code;
-                showMessage('Sample shader loaded: ' + name, 'info');
-            });
-            sampleContainer.appendChild(sampleButton);
-        }
+// Create a custom dropdown container
+const dropdownContainer = document.createElement('div');
+dropdownContainer.className = 'custom-dropdown';
 
+// Create the input field that will also act as the dropdown trigger
+const searchInput = document.createElement('input');
+searchInput.type = 'text';
+searchInput.className = 'dropdown-input';
+searchInput.placeholder = 'Search shaders...';
+
+// Create the options container
+const optionsContainer = document.createElement('div');
+optionsContainer.className = 'dropdown-options';
+
+// Track the currently selected option
+let selectedOption = '';
+
+// Populate options from SAMPLE_SHADERS
+for (const name of Object.keys(SAMPLE_SHADERS)) {
+  const option = document.createElement('div');
+  option.className = 'dropdown-option';
+  option.textContent = name;
+  option.dataset.value = name;
+  
+  option.addEventListener('click', () => {
+    selectedOption = name;
+    searchInput.value = name;
+    optionsContainer.style.display = 'none';
+    
+    // Handle shader loading
+    shaderTextarea.value = SAMPLE_SHADERS[name];
+    showMessage(`Loaded shader: ${name}`, 'info');
+  });
+  
+  optionsContainer.appendChild(option);
+}
+
+// Filter options based on input
+searchInput.addEventListener('input', () => {
+  const query = searchInput.value.toLowerCase();
+  const options = optionsContainer.children;
+  let hasVisibleOptions = false;
+  
+  Array.from(options).forEach(option => {
+    const matches = option.textContent.toLowerCase().includes(query);
+    option.style.display = matches ? 'block' : 'none';
+    if (matches) hasVisibleOptions = true;
+  });
+  
+  optionsContainer.style.display = hasVisibleOptions ? 'block' : 'none';
+});
+
+// Show options when input is focused
+searchInput.addEventListener('focus', () => {
+  optionsContainer.style.display = 'block';
+});
+
+// Handle clicks outside the dropdown
+document.addEventListener('click', (e) => {
+  if (!dropdownContainer.contains(e.target)) {
+    optionsContainer.style.display = 'none';
+  }
+});
+
+// Prevent hiding options when clicking inside the dropdown
+dropdownContainer.addEventListener('click', (e) => {
+  e.stopPropagation();
+});
+
+// Assemble the dropdown
+dropdownContainer.appendChild(searchInput);
+dropdownContainer.appendChild(optionsContainer);
+shaderTabContent.appendChild(dropdownContainer);
         const shaderTextarea = document.createElement('textarea');
         shaderTextarea.className = 'shader-editor-textarea';
         shaderTextarea.placeholder = 'Paste Shadertoy shader code here...';
