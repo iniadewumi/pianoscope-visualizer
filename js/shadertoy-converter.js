@@ -265,6 +265,11 @@ shaderTabContent.appendChild(dropdownContainer);
                     <button class="sample-video-button" data-video="videos/jam.mp4">Jamming</button>
                     <button class="sample-video-button" data-video="videos/wraith.mp4">Wraith</button>
                     <button class="sample-video-button" data-video="videos/latest.mp4">Latest</button>
+                    <button class="sample-video-button" data-video="videos/Tunnel - 26475.mp4">Tunnel 1</button>
+                    <button class="sample-video-button" data-video="videos/Tunnel - 37139.mp4">Tunnel 2</button>
+                    <button class="sample-video-button" data-video="videos/Tunnel - 65493.mp4">Tunnel 3</button>
+                    <button class="sample-video-button" data-video="videos/Wireframe - 26592.mp4">Wireframe</button>
+                    <button class="sample-video-button" data-video="videos/Wireframe - 36028.mp4">Wireframe 2</button>
                 </div>
             </div>
 
