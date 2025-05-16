@@ -64,43 +64,377 @@ void mainImage( out vec4 fragColor, in vec2 fragCoord )
 	}
 }
 `,
-"Needs Work - Big Bang": `
-void mainImage(out vec4 o, vec2 F) {
+"Fractal Leaves w Sound":`vec2 cmul(vec2 a, vec2 b) { return vec2(a.x * b.x - a.y * b.y, a.x * b.y + a.y * b.x); }
+
+// Superior palette function for gorgeous color blending
+vec3 palette(float t, float audio) {
+    // Create dynamic palette coefficients that respond to audio
+    float audioShift = audio * 0.4; // Audio influence
+    
+    // Color palette parameters - these create the "mood" of your visualization
+    vec3 a = vec3(0.5, 0.5, 0.5);  // Brightness and contrast
+    vec3 b = vec3(0.5, 0.5, 0.5);  // Color balance
+    vec3 c = vec3(1.0, 1.0, 1.0);  // Phase shifts (3.0, 2.0, 1.0 for rainbow)
+    vec3 d = vec3(0.30, 0.20, 0.020);  // Color density
+    
+    // Make palette dynamic with time
+    float timeScale = 0.1; // How fast colors cycle
+    
+    // Shift colors based on audio for bass reactivity
+    c.x += sin(audioShift * 2.0) * 0.2; // Red phase shift
+    c.y += audioShift * 0.3;           // Green phase shift
+    c.z -= audioShift * 0.1;           // Blue phase shift
+    
+    // Add richness to color mixing
+    a.x += sin(iTime * timeScale) * 0.1;
+    b.y += cos(iTime * timeScale * 0.7) * 0.1;
+    
+    // The magic formula that creates beautiful color gradients
+    return a + b * cos(6.28318 * (c * t + d + iTime * timeScale));
+}
+
+// A smoother glow function
+float smoothGlow(float dist, float radius, float intensity) {
+    return intensity * exp(-dist * dist / (radius * radius));
+}
+
+void mainImage(out vec4 fragColor, in vec2 fragCoord)
+{
+    vec2 surfacePosition = 0.5 * (2.0 * fragCoord - iResolution.xy) / min(iResolution.x, iResolution.y);
+    
+    // --- AUDIO SAMPLING WITH FREQUENCY SEPARATION ---
+    const int N = 128;
+    float bassSum = 0.0;
+    float midSum = 0.0;
+    float highSum = 0.0;
+    
+    // Frequency-based audio sampling
+    for(int i = 0; i < N; ++i) {
+        float audioValue = texelFetch(iChannel0, ivec2(i, 0), 0).r;
+        if(i < 32) { // Bass frequencies
+            bassSum += audioValue;
+        } else if(i < 96) { // Mid frequencies
+            midSum += audioValue;
+        } else { // High frequencies
+            highSum += audioValue;
+        }
+    }
+    
+    float bassAmp = bassSum / 32.0;
+    float midAmp = midSum / 64.0;
+    float highAmp = highSum / 32.0;
+    
+    // Smoother responses
+    float smoothBass = mix(bassAmp, 0.5, 0.7);
+    float smoothMid = mix(midAmp, 0.5, 0.6);
+    float smoothHigh = mix(highAmp, 0.5, 0.5);
+    
+    // Calculate zoom based primarily on bass
+    float dampFactor = 0.3;
+    float baseZoom = 0.5;
+    float maxZoomMultiplier = 2.5;
+    float zoomDelta = smoothBass * dampFactor;
+    float zoom = baseZoom + zoomDelta * (maxZoomMultiplier - 1.0);
+    
+    // --- ORBITAL CAMERA MOVEMENT ---
+    float orbitSpeed = 0.05;
+    float orbitRadius = 0.01;
+    vec2 basePosition = vec2(0.805, -0.176);
+    vec2 orbitOffset = vec2(
+        cos(iTime * orbitSpeed) * orbitRadius,
+        sin(iTime * orbitSpeed) * orbitRadius
+    );
+    
+    vec2 p = zoom * 0.016 * surfacePosition - (basePosition + orbitOffset);
+    vec2 z = p;
+    vec2 c = p;
+    vec2 dz = vec2(1.0, 0.0);
+    float it = 0.0;
+    
+    // Fractal iteration
+    for(float i = 0.0; i < 1024.0; i += 1.0) {
+        dz = 2.0 * cmul(z, dz) + vec2(1.0, 0.0);
+        z = cmul(z, z) + c;
+        float a = sin(iTime * 1.5 + i * 2.0) * 0.3 + i * 1.3;
+        vec2 t = mat2(cos(a), sin(a), -sin(a), cos(a)) * z;
+        if(abs(t.x) > 2.0 && abs(t.y) > 2.0) { it = i; break; }
+    }
+    
+    // Rendering with enhanced colors
+    if (it == 0.0) {
+        fragColor = vec4(vec3(0.0), 1.0);
+    } else {
+        float z2 = z.x * z.x + z.y * z.y;
+        float dist = log(z2) * sqrt(z2) / length(dz);
+        float r = sqrt(z2);
+        float pixelsize = fwidth(p.x);
+        float diagonal = length(iResolution.xy);
+        float glowsize = pixelsize * diagonal / 400.0;
+        float shadowsize = pixelsize * diagonal / 80.0;
+        
+        float fadeout = 0.0, glow = 0.0;
+        if(dist < pixelsize) {
+            fadeout = dist / pixelsize;
+            glow = 1.0;
+        } else {
+            fadeout = min(shadowsize / (dist + shadowsize - pixelsize) + 1.0 / (r + 1.0), 1.0);
+            glow = min(glowsize / (dist + glowsize - pixelsize), 1.0);
+        }
+        
+        // Dynamic coloring based on iteration count, audio, and glow
+        float colorIndex = it / 128.0; // Normalized iteration count
+        
+        // Create phase shifts based on different frequency bands
+        colorIndex = fract(colorIndex + smoothBass * 0.2 + smoothMid * 0.1);
+        
+        // Get beautiful color from our palette function
+        vec3 color = palette(colorIndex, smoothBass);
+        
+        // Apply glow effect (use mid frequencies to control glow intensity)
+        float glowIntensity = 1.0 + smoothMid * 2.0;
+        vec3 glowColor = palette(fract(colorIndex + 0.5), smoothHigh);
+        color = mix(color, glowColor, glow * glowIntensity);
+        
+        // Apply fadeout and additional high-frequency modulation
+        color *= fadeout;
+        color += glowColor * smoothGlow(dist, glowsize * 4.0, smoothHigh * 0.3);
+        
+        fragColor = vec4(color, 1.0);
+    }
+}`,
+"Fractal leaves Jumper":`vec2 cmul(vec2 a, vec2 b) { return vec2(a.x * b.x - a.y * b.y, a.x * b.y + a.y * b.x); }
+
+// Superior palette function with brightness control and complementary colors
+vec3 palette(float t, float audio) {
+    // Enhanced audio response curve
+    float audioReactive = audio * 0.5 + pow(audio, 3.0) * 0.5;
+    
+    // Higher baseline brightness to prevent darkness
+    vec3 a = vec3(0.65, 0.60, 0.65);  // Increased minimum brightness
+    
+    // More controlled amplitude for better color harmony
+    vec3 b = vec3(0.35, 0.30, 0.35);  // Smaller variations for harmony
+    
+    // Carefully tuned frequency ratios for complementary colors
+    // Using golden ratio (1.618) relationships creates natural harmony
+    float phi = 1.618;
+    vec3 c = vec3(1.0, 1.0/phi, 1.0/(phi*phi));
+    
+    // Phase shifts designed for complementary color schemes
+    vec3 d = vec3(0.2, 0.4, 0.6);  // Spaced for better color distribution
+    
+    // Gentle time evolution that preserves color harmony
+    float timeFlow = iTime * 0.05;
+    d.x += timeFlow;
+    d.y += timeFlow * 0.7;
+    d.z += timeFlow * 0.3;
+    
+    // Audio influences color temperature rather than arbitrary shifts
+    // This maintains color harmony while still being reactive
+    float warmth = audio * 0.3;
+    a += vec3(warmth, warmth*0.5, 0.0);  // Warm colors with audio
+    
+    // Controlled audio reactivity that preserves harmony
+    b += vec3(0.05, 0.05, 0.15) * audioReactive;
+    
+    // Add subtle pulsing for electronic music feel without breaking harmony
+    float pulse = sin(iTime * 0.75) * 0.5 + 0.5;
+    b *= 1.0 + pulse * 0.2 * audioReactive;
+    
+    // The core palette calculation
+    vec3 color = a + b * cos(6.28318 * (c * t + d));
+    
+    // Brightness safeguard - ensure no colors are too dark
+    color = max(color, vec3(0.15, 0.15, 0.2)); 
+    
+    // Subtle saturation boost for vibrant but harmonious colors
+    float luminance = dot(color, vec3(0.299, 0.587, 0.114));
+    color = mix(vec3(luminance), color, 1.2);
+    
+    return color;
+}
+
+// A smoother glow function
+float smoothGlow(float dist, float radius, float intensity) {
+    return intensity * exp(-dist * dist / (radius * radius));
+}
+
+// Smoother zoom calculation with temporal smoothing
+float getSmoothedZoom(float bassAudio) {
+    // Create a smooth base zoom oscillation
+    float slowOsc = sin(iTime * 0.07);
+    float baseZoom = 1.0 + 0.4 * slowOsc;
+    
+    // Apply cubic easing to the bass response for gentler acceleration
+    float bassResponse = bassAudio * bassAudio * (3.0 - 2.0 * bassAudio);
+    
+    // Create a memory effect by blending with delayed signals
+    float delay1 = sin(iTime * 0.11 - 0.3) * 0.5 + 0.5;
+    float delay2 = sin(iTime * 0.05 - 0.7) * 0.5 + 0.5;
+    
+    // Blend for temporal smoothness (using multiple different phases)
+    float blendFactor = 0.1;
+    float smoothedBass = mix(
+        mix(delay1, delay2, 0.3),
+        bassResponse,
+        blendFactor
+    );
+    
+    // Apply smoothstep for more organic transitions
+    smoothedBass = smoothstep(0.0, 1.0, smoothedBass);
+    
+    // Calculate final zoom with gentler multipliers
+    float zoomVariation = 1.2 + 0.5 * sin(iTime * 0.03);
+    
+    // Final smooth zoom value
+    return baseZoom + smoothedBass * zoomVariation;
+}
+
+void mainImage(out vec4 fragColor, in vec2 fragCoord)
+{
+    vec2 surfacePosition = 0.5 * (2.0 * fragCoord - iResolution.xy) / min(iResolution.x, iResolution.y);
+    
+    // --- AUDIO SAMPLING WITH FREQUENCY SEPARATION ---
+    const int N = 128;
+    float bassSum = 0.0;
+    float midSum = 0.0;
+    float highSum = 0.0;
+    
+    // Frequency-based audio sampling
+    for(int i = 0; i < N; ++i) {
+        float audioValue = texelFetch(iChannel0, ivec2(i, 0), 0).r;
+        if(i < 32) { // Bass frequencies
+            bassSum += audioValue;
+        } else if(i < 96) { // Mid frequencies
+            midSum += audioValue;
+        } else { // High frequencies
+            highSum += audioValue;
+        }
+    }
+    
+    float bassAmp = bassSum / 32.0;
+    float midAmp = midSum / 64.0;
+    float highAmp = highSum / 32.0;
+    
+    // Smoother responses
+    float smoothBass = mix(bassAmp, 0.5, 0.7);
+    float smoothMid = mix(midAmp, 0.5, 0.6);
+    float smoothHigh = mix(highAmp, 0.5, 0.5);
+    
+    // Calculate zoom with our new smooth function
+    float zoom = getSmoothedZoom(smoothBass);
+    
+    // --- ORBITAL CAMERA MOVEMENT ---
+    float orbitSpeed = 0.05;
+    float orbitRadius = 0.01;
+    vec2 basePosition = vec2(0.805, -0.176);
+    vec2 orbitOffset = vec2(
+        cos(iTime * orbitSpeed) * orbitRadius,
+        sin(iTime * orbitSpeed) * orbitRadius
+    );
+    
+    vec2 p = zoom * 0.016 * surfacePosition - (basePosition + orbitOffset);
+    vec2 z = p;
+    vec2 c = p;
+    vec2 dz = vec2(1.0, 0.0);
+    float it = 0.0;
+    
+    // Fractal iteration
+    for(float i = 0.0; i < 1024.0; i += 1.0) {
+        dz = 2.0 * cmul(z, dz) + vec2(1.0, 0.0);
+        z = cmul(z, z) + c;
+        float a = sin(iTime * 1.5 + i * 2.0) * 0.3 + i * 1.3;
+        vec2 t = mat2(cos(a), sin(a), -sin(a), cos(a)) * z;
+        if(abs(t.x) > 2.0 && abs(t.y) > 2.0) { it = i; break; }
+    }
+    
+    // Rendering with enhanced colors
+    if (it == 0.0) {
+        fragColor = vec4(vec3(0.0), 1.0);
+    } else {
+        float z2 = z.x * z.x + z.y * z.y;
+        float dist = log(z2) * sqrt(z2) / length(dz);
+        float r = sqrt(z2);
+        float pixelsize = fwidth(p.x);
+        float diagonal = length(iResolution.xy);
+        float glowsize = pixelsize * diagonal / 400.0;
+        float shadowsize = pixelsize * diagonal / 80.0;
+        
+        float fadeout = 0.0, glow = 0.0;
+        if(dist < pixelsize) {
+            fadeout = dist / pixelsize;
+            glow = 1.0;
+        } else {
+            fadeout = min(shadowsize / (dist + shadowsize - pixelsize) + 1.0 / (r + 1.0), 1.0);
+            glow = min(glowsize / (dist + glowsize - pixelsize), 1.0);
+        }
+        
+        // Dynamic coloring based on iteration count, audio, and glow
+        float colorIndex = it / 128.0; // Normalized iteration count
+        
+        // Create phase shifts based on different frequency bands
+        colorIndex = fract(colorIndex + smoothBass * 0.2 + smoothMid * 0.1);
+        
+        // Get beautiful color from our palette function
+        vec3 color = palette(colorIndex, smoothBass);
+        
+        // Apply glow effect (use mid frequencies to control glow intensity)
+        float glowIntensity = 1.0 + smoothMid * 2.0;
+        vec3 glowColor = palette(fract(colorIndex + 0.5), smoothHigh);
+        color = mix(color, glowColor, glow * glowIntensity);
+        
+        // Apply fadeout and additional high-frequency modulation
+        color *= fadeout;
+        color += glowColor * smoothGlow(dist, glowsize * 4.0, smoothHigh * 0.3);
+        
+        fragColor = vec4(color, 1.0);
+    }
+}`,
+"Needs Work - Big Bang": `void mainImage(out vec4 o, vec2 F) {
     vec2 R = iResolution.xy; 
     o-=o;
     
-    // Audio reactivity
-    float bass = texture(iChannel0, vec2(0.05, 0.0)).x;  // Low frequencies
-    float mids = texture(iChannel0, vec2(0.3, 0.0)).x;   // Mid frequencies
-    float high = texture(iChannel0, vec2(0.7, 0.0)).x;   // High frequencies
+    // Audio reactivity with dampening
+    float bass = texture(iChannel0, vec2(0.05, 0.0)).x;  
+    float mids = texture(iChannel0, vec2(0.3, 0.0)).x;   
+    float high = texture(iChannel0, vec2(0.7, 0.0)).x;   
     
-    for(float d, t = iTime*.1, i = 0.; i > -1.; i -= .06) {
-        // Audio-reactive speed modulation
-        d = fract(i - 3.*t * (1.0 + bass * 0.5));
+    // Apply smoothing to audio values (very important for stability)
+    bass = mix(bass, 0.5, 0.8);  // Heavily dampen towards neutral value
+    mids = mix(mids, 0.5, 0.7);  // Less sensitive to rapid changes
+    high = mix(high, 0.5, 0.6);  // Slightly more responsive for highs
+    
+    // Reduce overall movement speed by 2x
+    float baseSpeed = 0.05;  // Was effectively 0.1 (t * 0.1)
+    
+    for(float d, t = iTime * baseSpeed, i = 0.; i > -1.; i -= .06) {
+        // Greatly reduced audio impact on speed
+        float speedMod = 1.0 + bass * 0.1;  // Was 0.5, now only 10% variation
+        d = fract(i - 3.*t * speedMod);
         
-        // Audio-reactive scaling
-        float scale = 28.0 + mids * 10.0;
+        // Minimal scaling adjustment from mids
+        float scale = 28.0 + mids * 2.0;  // Was 10.0, reduced to 2.0
         vec4 c = vec4((F - R *.5) / R.y * d, i, 0) * scale;
         
         for (int j=0; j++ < 27;) {
-            // Audio-reactive parameters
-            float param1 = 7.0 - 0.2 * sin(t) - bass * 2.0;
-            float param2 = 6.3 + high * 1.5;
-            float param3 = 0.7 + mids * 0.5;
-            float param4 = 1.0 - cos(t/0.8) + high * 0.5;
+            // Keep some parameters static, reduce audio influence on others
+            float param1 = 7.0 - 0.2 * sin(t);  // Removed bass influence
+            float param2 = 6.3 + high * 0.5;    // Was 1.5, reduced to 0.5
+            float param3 = 0.7;                 // Removed mids influence completely
+            float param4 = 1.0 - cos(t/0.8) + high * 0.2;  // Was 0.5, reduced to 0.2
             
             c.xzyw = abs(c / dot(c,c) - vec4(param1, param2, param3, param4)/7.0);
         }
         
-        // Audio-reactive color intensity
-        float intensity = 1.0 + bass * 2.0 + mids * 1.0;
+        // Much gentler color intensity modulation
+        float intensity = 1.0 + bass * 0.5 + mids * 0.3;  // Was 2.0 & 1.0
         o -= c * c.yzww * d--*d / vec4(3, 5, 1, 1) * intensity;
     }
     
-    // Add subtle color variation based on audio
-    o.r += high * 0.2;
-    o.g += mids * 0.1;
-    o.b += bass * 0.3;
+    // Retain subtle color variation
+    o.r += high * 0.1;  // Was 0.2
+    o.g += mids * 0.05; // Was 0.1
+    o.b += bass * 0.15; // Was 0.3
 }`,
 "Black Hole": `
     precision highp float;
@@ -201,7 +535,7 @@ void mainImage(out vec4 o, vec2 F) {
 
 #define time iTime*.01
 #define width .005
-float zoom = .18;
+float zoom = .12;
 
 float shape = 0.;
 vec3 color = vec3(0.), randcol;
@@ -3825,7 +4159,10 @@ void main() {
     // Final color with gamma correction for vibrant display
     gl_FragColor = vec4(pow(color, vec3(0.8)), 1.0);
 }`,
-"SHINY GLOPPP!": `#define PI 3.14159265359
+"SHINY GLOPPP!": `
+
+// REMEMBER TAN() ON COLOR FOR LIGHTING
+#define PI 3.14159265359
 
 // Comment/uncomment this to disable/enable anti-aliasing.
 // #define AA
@@ -4250,10 +4587,34 @@ void mainImage( out vec4 fragColor, in vec2 fragCoord )
     vec3 lookAt = vec3(0.0, 0.25, 0.0);
     float phi = iTime * 0.25 + PI; // horizontal plane angle
     float theta = 0.3; // left-right (around y-axis) angle
+    
+    // === AUDIO-REACTIVE CAMERA BOBBING ===
+    // Sample bass frequencies for beat detection with smoothing
+    float bassFreq = texture(iChannel0, vec2(0.07, 0.0)).x; // Bass frequency
+    
+    // Create a proper bounce effect that goes up and down
+    // Store the "impact" of the bass hit in a variable that decays over time
+    float decay = 2.0; // Higher value = faster decay
+    float bassImpact = sin(iTime * decay) * 0.5 + 0.5; // Baseline oscillation
+    
+    // Add audio impact that amplifies the bounce
+    float smoothBass = bassFreq * 0.6; // Reduce intensity
+    
+    // Create a proper bouncing motion that goes up and returns
+    float bounce = smoothBass * (0.25 - 0.15 * bassImpact);
+    
+    // Clamp to prevent extreme movements
+    bounce = clamp(bounce, 0.0, 0.25);
+    
 #if ROTATE_CAMERA
-    vec3 eyePosition = vec3(cos(theta)*cos(phi), sin(theta), cos(theta)*sin(phi)) * 4.0;
+    // Original orbit motion + vertical audio-reactive bounce
+    vec3 eyePosition = vec3(
+        cos(theta) * cos(phi), 
+        sin(theta) + bounce, // Smooth, limited audio-reactive bounce
+        cos(theta) * sin(phi)
+    ) * 4.0;
 #else
-    vec3 eyePosition = vec3(0.0, 1.0, -4.0);
+    vec3 eyePosition = vec3(0.0, 1.0 + bounce, -4.0);
 #endif
     
     // Calculate the camera matrix.
@@ -4304,7 +4665,102 @@ void mainImage( out vec4 fragColor, in vec2 fragCoord )
     // Gamma correction
     color = LinearTosRGB(color);
     
-    fragColor = vec4(color, 1.0);
+    fragColor = vec4(tan(color), 1.0);
+}`,
+"SHINY GLOPPP! 2": `vec3 palette( float t)
+{
+    vec3 a = vec3(0.848, 0.500, 0.588);
+    vec3 b = vec3(0.718, 0.500, 0.500);
+    vec3 c = vec3(0.750, 1.000, 0.667);
+    vec3 d = vec3(-0.082, -0.042, 0.408);
+    
+    return a + b*cos( 6.28318*(c*t+d) );
+}
+
+float distance_from_sphere(in vec3 p, in vec3 c, float r)
+{
+    return length(p - c) - r;
+}
+
+float map_shape(in vec3 p)
+{
+    // Sample audio data from different frequency bands
+    float bassLevel = texture(iChannel0, vec2(0.05, 0.0)).x; // Low frequencies
+    float midLevel = texture(iChannel0, vec2(0.2, 0.0)).x;   // Mid frequencies
+    float highLevel = texture(iChannel0, vec2(0.5, 0.0)).x;  // High frequencies
+    
+    // Use bass for the main displacement amplitude
+    float audioAmplitude = bassLevel * 2.6 + midLevel * 0.3 + highLevel * 0.1;
+    
+    // Add a baseline motion so it's always animated even with no audio
+    float baselineMotion = sin(iTime * 2.0 + cos(iTime * 12.0));
+    
+    // Combine audio amplitude with baseline motion (weighted so audio is prominent)
+    float combinedAmplitude = mix(baselineMotion * 0.5, audioAmplitude * 0.9, 0.7);
+    
+    // Calculate displacement using the combined amplitude
+    float displacement = sin(3.0 * p.x) * sin(3.0 * p.y) * sin(3.0 * p.z) * 0.25 * combinedAmplitude;
+    
+    // Make sphere surface slightly ripple based on higher frequencies
+    float detailRipple = sin(8.0 * p.x + iTime) * sin(8.0 * p.y + iTime) * sin(8.0 * p.z) * highLevel * 0.15;
+    
+    float sphere_0 = distance_from_sphere(p, vec3(0.0), 1.8);
+    
+    // Add both types of displacement to the sphere
+    return sphere_0 + displacement + detailRipple;
+}
+
+vec3 calculate_normal(in vec3 p)
+{
+    const vec3 small_step = vec3(0.001, 0.0, 0.0);
+    float gradient_x = map_shape(p + small_step.xyy) - map_shape(p - small_step.xyy);
+    float gradient_y = map_shape(p + small_step.yxy) - map_shape(p - small_step.yxy);
+    float gradient_z = map_shape(p + small_step.yyx) - map_shape(p - small_step.yyx);
+    vec3 normal = vec3(gradient_x, gradient_y, gradient_z);
+    return normalize(normal);
+}
+
+vec3 ray_march(in vec3 ro, in vec3 rd)
+{
+    float distance_traveled = 0.0;
+    const int max_steps = 32;
+    const float min_hit_dist = 0.001;
+    const float max_trace_dist = 1000.0;
+    vec3 col = palette(length(ro) + (iTime * 0.2));
+    for (int i = 0; i < max_steps; i++)
+    {
+        vec3 current_position = ro + distance_traveled * rd;
+        float distance_to_closest = map_shape(current_position);
+        
+        if (distance_to_closest < min_hit_dist) 
+        {
+           vec3 normal = calculate_normal(current_position);
+           vec3 light_position = vec3(2.0, -5.0, 3.0);
+           vec3 direction_to_light = normalize(current_position - light_position);
+           float diffuse_intensity = max(0.0, dot(normal, direction_to_light));
+           return vec3(1.0, 0.0, 0.0) * diffuse_intensity;
+        }
+        if (distance_traveled > max_trace_dist)
+        {
+            break;
+        }
+        
+        distance_traveled += distance_to_closest;
+    }
+    
+    return col;
+}
+
+void mainImage( out vec4 fragColor, in vec2 fragCoord )
+{
+    vec2 uv = fragCoord/iResolution.xy * 2.0 - 1.0; 
+    uv.x *= iResolution.x / iResolution.y;
+    
+    vec3 camera_position = vec3(0.0, 0.0, -5.0);
+    vec3 ro = camera_position;
+    vec3 rd = vec3(uv, 1.0);
+    vec3 shaded_color = ray_march(ro, rd);
+    fragColor = vec4(shaded_color, 1.0);
 }`,
 "Unseen Vow": `/*
 	Perspex Web Lattice

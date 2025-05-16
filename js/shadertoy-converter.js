@@ -148,79 +148,79 @@ void main() {
 
         const sampleContainer = document.createElement('div');
         sampleContainer.className = 'sample-container';
-// Create a custom dropdown container
-const dropdownContainer = document.createElement('div');
-dropdownContainer.className = 'custom-dropdown';
+        // Create a custom dropdown container
+        const dropdownContainer = document.createElement('div');
+        dropdownContainer.className = 'custom-dropdown';
 
-// Create the input field that will also act as the dropdown trigger
-const searchInput = document.createElement('input');
-searchInput.type = 'text';
-searchInput.className = 'dropdown-input';
-searchInput.placeholder = 'Search shaders...';
+        // Create the input field that will also act as the dropdown trigger
+        const searchInput = document.createElement('input');
+        searchInput.type = 'text';
+        searchInput.className = 'dropdown-input';
+        searchInput.placeholder = 'Search shaders...';
 
-// Create the options container
-const optionsContainer = document.createElement('div');
-optionsContainer.className = 'dropdown-options';
+        // Create the options container
+        const optionsContainer = document.createElement('div');
+        optionsContainer.className = 'dropdown-options';
 
-// Track the currently selected option
-let selectedOption = '';
+        // Track the currently selected option
+        let selectedOption = '';
 
-// Populate options from SAMPLE_SHADERS
-for (const name of Object.keys(SAMPLE_SHADERS)) {
-  const option = document.createElement('div');
-  option.className = 'dropdown-option';
-  option.textContent = name;
-  option.dataset.value = name;
-  
-  option.addEventListener('click', () => {
-    selectedOption = name;
-    searchInput.value = name;
-    optionsContainer.style.display = 'none';
-    
-    // Handle shader loading
-    shaderTextarea.value = SAMPLE_SHADERS[name];
-    showMessage(`Loaded shader: ${name}`, 'info');
-  });
-  
-  optionsContainer.appendChild(option);
-}
+        // Populate options from SAMPLE_SHADERS
+        for (const name of Object.keys(SAMPLE_SHADERS)) {
+            const option = document.createElement('div');
+            option.className = 'dropdown-option';
+            option.textContent = name;
+            option.dataset.value = name;
 
-// Filter options based on input
-searchInput.addEventListener('input', () => {
-  const query = searchInput.value.toLowerCase();
-  const options = optionsContainer.children;
-  let hasVisibleOptions = false;
-  
-  Array.from(options).forEach(option => {
-    const matches = option.textContent.toLowerCase().includes(query);
-    option.style.display = matches ? 'block' : 'none';
-    if (matches) hasVisibleOptions = true;
-  });
-  
-  optionsContainer.style.display = hasVisibleOptions ? 'block' : 'none';
-});
+            option.addEventListener('click', () => {
+                selectedOption = name;
+                searchInput.value = name;
+                optionsContainer.style.display = 'none';
 
-// Show options when input is focused
-searchInput.addEventListener('focus', () => {
-  optionsContainer.style.display = 'block';
-});
+                // Handle shader loading
+                shaderTextarea.value = SAMPLE_SHADERS[name];
+                showMessage(`Loaded shader: ${name}`, 'info');
+            });
 
-// Handle clicks outside the dropdown
-document.addEventListener('click', (e) => {
-  if (!dropdownContainer.contains(e.target)) {
-    optionsContainer.style.display = 'none';
-  }
-});
+            optionsContainer.appendChild(option);
+        }
 
-// Prevent hiding options when clicking inside the dropdown
-dropdownContainer.addEventListener('click', (e) => {
-  e.stopPropagation();
-});
+        // Filter options based on input
+        searchInput.addEventListener('input', () => {
+            const query = searchInput.value.toLowerCase();
+            const options = optionsContainer.children;
+            let hasVisibleOptions = false;
 
-// Assemble the dropdown
-dropdownContainer.appendChild(searchInput);
-dropdownContainer.appendChild(optionsContainer);
-shaderTabContent.appendChild(dropdownContainer);
+            Array.from(options).forEach(option => {
+                const matches = option.textContent.toLowerCase().includes(query);
+                option.style.display = matches ? 'block' : 'none';
+                if (matches) hasVisibleOptions = true;
+            });
+
+            optionsContainer.style.display = hasVisibleOptions ? 'block' : 'none';
+        });
+
+        // Show options when input is focused
+        searchInput.addEventListener('focus', () => {
+            optionsContainer.style.display = 'block';
+        });
+
+        // Handle clicks outside the dropdown
+        document.addEventListener('click', (e) => {
+            if (!dropdownContainer.contains(e.target)) {
+                optionsContainer.style.display = 'none';
+            }
+        });
+
+        // Prevent hiding options when clicking inside the dropdown
+        dropdownContainer.addEventListener('click', (e) => {
+            e.stopPropagation();
+        });
+
+        // Assemble the dropdown
+        dropdownContainer.appendChild(searchInput);
+        dropdownContainer.appendChild(optionsContainer);
+        shaderTabContent.appendChild(dropdownContainer);
         const shaderTextarea = document.createElement('textarea');
         shaderTextarea.className = 'shader-editor-textarea';
         shaderTextarea.placeholder = 'Paste Shadertoy shader code here...';
@@ -259,17 +259,25 @@ shaderTabContent.appendChild(dropdownContainer);
 
             <div class="sample-videos-section">
                 <h4>Sample Videos</h4>
-                <div class="sample-videos-container">
-                    <button class="sample-video-button" data-video="videos/sample.mp4">Caramel</button>
-                    <button class="sample-video-button" data-video="videos/ranni.mp4">Ranni</button>
+                <div class="sample-videos-container">    
+                    <button class="sample-video-button" data-video="videos/10742597-uhd_3824_2160_30fps.mp4">UHD Footage 10742597</button>
+                    <button class="sample-video-button" data-video="videos/11909795_1920_1080_24fps.mp4">Film 11909795</button>
+                    <button class="sample-video-button" data-video="videos/12176194_1920_1080_30fps.mp4">Footage 12176194</button>
+                    <button class="sample-video-button" data-video="videos/12617979_3840_2160_25fps.mp4">UHD 12617979</button>
+                    <button class="sample-video-button" data-video="videos/12820568_3840_2160_25fps.mp4">UHD 12820568</button>
+                    <button class="sample-video-button" data-video="videos/12852054_1920_1080_30fps.mp4">Footage 12852054</button>
+                    <button class="sample-video-button" data-video="videos/13583272_3840_2160_25fps.mp4">UHD 13583272</button>
+                    <button class="sample-video-button" data-video="videos/13583308_3840_2160_24fps.mp4">Film 13583308</button>
                     <button class="sample-video-button" data-video="videos/jam.mp4">Jamming</button>
-                    <button class="sample-video-button" data-video="videos/wraith.mp4">Wraith</button>
                     <button class="sample-video-button" data-video="videos/latest.mp4">Latest</button>
+                    <button class="sample-video-button" data-video="videos/ranni.mp4">Ranni</button>
+                    <button class="sample-video-button" data-video="videos/sample.mp4">Sample</button>
                     <button class="sample-video-button" data-video="videos/Tunnel - 26475.mp4">Tunnel 1</button>
                     <button class="sample-video-button" data-video="videos/Tunnel - 37139.mp4">Tunnel 2</button>
                     <button class="sample-video-button" data-video="videos/Tunnel - 65493.mp4">Tunnel 3</button>
-                    <button class="sample-video-button" data-video="videos/Wireframe - 26592.mp4">Wireframe</button>
+                    <button class="sample-video-button" data-video="videos/Wireframe - 26592.mp4">Wireframe 1</button>
                     <button class="sample-video-button" data-video="videos/Wireframe - 36028.mp4">Wireframe 2</button>
+                    <button class="sample-video-button" data-video="videos/wraith.mp4">Wraith</button>
                 </div>
             </div>
 
@@ -341,7 +349,7 @@ shaderTabContent.appendChild(dropdownContainer);
                 // Notify controller about mode change explicitly if necessary
                 // Check if videoController exists and has a method to set mode
                 if (typeof videoController !== 'undefined' && videoController && typeof videoController.setVideoMode === 'function') {
-                     videoController.setVideoMode(button.dataset.tab === 'video');
+                    videoController.setVideoMode(button.dataset.tab === 'video');
                 }
             });
         });
@@ -421,14 +429,14 @@ shaderTabContent.appendChild(dropdownContainer);
 
             // Update textarea content after attempting reset
             // Check if getDefaultFragmentShaderSource exists, otherwise use fallback
-             let defaultFragSource = '';
-             if (typeof window.visualizer !== 'undefined' && window.visualizer && typeof window.visualizer.getDefaultFragmentShaderSource === 'function') {
-                  defaultFragSource = window.visualizer.getDefaultFragmentShaderSource();
-             }
-             // If function doesn't exist or returns empty, use the hardcoded fallback
-             if (!defaultFragSource) {
-                 defaultFragSource = SAMPLE_SHADERS[defaultShaderName] || Object.values(SAMPLE_SHADERS)[0] || '';
-             }
+            let defaultFragSource = '';
+            if (typeof window.visualizer !== 'undefined' && window.visualizer && typeof window.visualizer.getDefaultFragmentShaderSource === 'function') {
+                defaultFragSource = window.visualizer.getDefaultFragmentShaderSource();
+            }
+            // If function doesn't exist or returns empty, use the hardcoded fallback
+            if (!defaultFragSource) {
+                defaultFragSource = SAMPLE_SHADERS[defaultShaderName] || Object.values(SAMPLE_SHADERS)[0] || '';
+            }
             shaderTextarea.value = defaultFragSource;
 
         });
