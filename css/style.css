@@ -10,6 +10,15 @@ html, body {
     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
 }
 
+.logo{
+    position: fixed;
+    top: 15px;
+    left: 15px;
+    z-index: 101;
+    height: 2rem;
+    width: 3rem;
+}
+
 canvas {
     display: block;
     width: 100%;
