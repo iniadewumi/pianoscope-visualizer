@@ -1,4 +1,1866 @@
 export const SHADERS2 = {
+    "Piano Optic Cables": `struct Ray {
+    vec3 origin;
+    vec3 direction;
+};
+
+struct Light {
+    vec3 position;
+    float strongth;
+    vec3 color;
+};
+
+#define PI 3.1415926
+    
+mat4 euler(float x, float y, float z) {
+    mat4 xmat = mat4(vec4(1.0,  0.0,    0.0,    0.0),
+                     vec4(0.0,  cos(x), sin(x), 0.0),
+                     vec4(0.0, -sin(x), cos(x), 0.0),
+                     vec4(0.0,  0.0,    0.0,    1.0));
+    mat4 ymat = mat4(vec4( cos(y), 0.0, sin(y), 0.0),
+                     vec4( 0.0,    1.0, 0.0,    0.0),
+                     vec4(-sin(y), 0.0, cos(y), 0.0),
+                     vec4( 0.0,    0.0, 0.0,    1.0));
+    mat4 zmat = mat4(vec4( cos(z),  sin(z), 0.0, 0.0),
+                     vec4(-sin(z),  cos(z), 0.0, 0.0),
+                     vec4( 0.0,     0.0,    1.0, 0.0),
+                     vec4( 0.0,     0.0,    0.0, 1.0));
+    
+    return xmat*ymat*zmat;
+}
+
+mat4 transform(float x, float y, float z) {
+    return mat4(vec4(1.0, 0.0, 0.0, 0.0),
+                vec4(0.0, 1.0, 0.0, 0.0),
+                vec4(0.0, 0.0, 1.0, 0.0),
+                vec4(x,   y,   z,   1.0));
+}
+
+float sphereSDF(vec3 center, float radius, vec3 point) {
+    return length(point - center) - radius;
+}
+
+float planeSDF(vec3 origin, vec3 normal, vec3 point) {
+    return dot(point - origin, normal);
+}
+
+float ropeSDF(float coiledness, uint n, vec3 point) {
+    for (uint i = 0u; i < n; ++i) {
+        float r = length(point.xz);
+    	float t = atan(-point.x, -point.z) + PI;
+        
+        t -= 2.0*PI*coiledness;
+        t = mod(t, 2.0*PI/3.0) + 2.0*PI/3.0;
+        
+        point.x = r*sin(t);
+        point.z = r*cos(t);
+        
+        point.z += 1.0;
+        point.xz *= 1.0 + 1.0/sin(PI/3.0);
+        //point.z *= -1.0;
+    }
+    
+    point.xz /= 1.0 + sin(PI/3.0);
+    
+    float lpxz = length(point.xz);
+    
+    vec2 d = vec2(lpxz, abs(point.y + 0.5)) - vec2(1.0,0.5);
+    
+    for (uint i = 0u; i < n; ++i) d.x /= 1.0 + 1.0/sin(PI/3.0);
+    
+    d.x *= 1.0 + sin(PI/3.0);
+    
+    return min(max(d.x,d.y), 0.0) + length(max(d, 0.0));
+}
+
+float sceneSDF(vec3 point) {
+    point.y /= 20.0;
+    return ropeSDF(1.0-(0.5*sin(iTime*0.2)+0.5)*(point.y+1.0), 6u, point);
+   /*return min(
+       min(
+           min(
+               sphereSDF(vec3(-0.7, 0.7, 0.0), 0.5, point),
+               sphereSDF(vec3(0.7, 0.7, 0.0), 0.5, point)
+           ),
+           sphereSDF(vec3(0.0), 1.0, point)
+       ),
+       planeSDF(vec3(0.0), vec3(0.0, 1.0, 0.0), point)
+     );
+   */
+}
+
+vec3 sceneSDFGradient(vec3 point, float epsilon) {
+    vec3 xe = vec3(epsilon, 0.0, 0.0)/2.0;
+    vec3 ye = vec3(0.0, epsilon, 0.0)/2.0;
+    vec3 ze = vec3(0.0, 0.0, epsilon)/2.0;
+    
+    return vec3(
+        (sceneSDF(point + xe) - sceneSDF(point - xe)) / epsilon,
+        (sceneSDF(point + ye) - sceneSDF(point - ye)) / epsilon,
+        (sceneSDF(point + ze) - sceneSDF(point - ze)) / epsilon
+      );
+}
+
+vec3 sceneSDFNormal(vec3 point) {
+    return normalize(sceneSDFGradient(point, 0.01));
+}
+
+vec3 rayPoint(Ray ray, float dist) {
+    return ray.origin + dist * ray.direction;
+}
+
+vec3 screen(vec3 a, vec3 b) {
+    return vec3(1.0) - (vec3(1.0) - a)*(vec3(1.0) - b);
+}
+
+vec3 lightPoint(Light light, vec3 point, vec3 normal, vec3 camera, vec3 diffuse, vec3 bounce, vec3 current) {
+    vec3 lightchord = light.position - point;
+    
+    vec3 lightcolor = light.color * 1.0 / pow(length(lightchord/3.0)/light.strongth+1.0, 2.0);
+    
+    vec3 colour = diffuse * lightcolor * max(dot(normal, normalize(lightchord)), 0.0);
+    colour = screen(colour, bounce * lightcolor * max(vec3(1.0) - 5.0*(vec3(1.0) - dot(normalize(lightchord), reflect(normalize(point - camera), normal))), 0.0));
+    
+    return screen(current, colour);
+}
+
+void mainImage( out vec4 fragColor, in vec2 fragCoord )
+{
+    float lightangle = iTime;
+    
+    Light light1 = Light(vec3(2.0*cos(lightangle), 2.0, 2.0*sin(lightangle)), 10.0, vec3(1.0, 0.0, 0.0));
+    
+    lightangle += PI*2./3.;
+    
+    Light light2 = Light(vec3(2.0*cos(lightangle), 2.0, 2.0*sin(lightangle)), 10.0, vec3(0.0, 1.0, 0.0));
+    
+    lightangle += PI*2./3.;
+    
+    Light light3 = Light(vec3(2.0*cos(lightangle), 2.0, 2.0*sin(lightangle)), 10.0, vec3(0.0, 0.0, 1.0));
+    
+    float disttoscreen = 1.0;
+    
+    vec2 uv = fragCoord/iResolution.xy - vec2(0.5);
+    uv.y *= iResolution.y/iResolution.x;
+    
+    vec3 camorigin = vec3(-6.0, 6.0, 0.0);
+    
+    mat4 camtoscene = transform(camorigin.x, camorigin.y, camorigin.z)*euler(PI*0.5, -PI*0.18, 0.0);
+    
+    Ray ray = Ray((camtoscene*vec4(vec3(0.0),1.0)).xyz,
+                  normalize(camtoscene*vec4(uv.x, uv.y, disttoscreen, 0.0)).xyz);
+    
+    vec3 point = camorigin;
+    
+    float scenedist = sceneSDF(point);
+    float raydist = 0.0;
+    
+    float epsilon = 0.001;
+    float end = 100.0;
+    
+    while (scenedist > epsilon) {
+        if (raydist > end) {
+            fragColor = vec4(0.0, 0.0, 0.0, texture(iChannel0, vec2(0.1, 0.5)).r / 1. );
+            return;
+        }
+        
+        point = rayPoint(ray, raydist);
+        
+        scenedist = sceneSDF(point);
+        
+        raydist += scenedist;
+    }
+    
+    vec3 normal = sceneSDFNormal(point);
+    vec3 diffuse = vec3(1.0);
+    vec3 bounce = vec3(1.0);
+        
+    vec3 colour = lightPoint(light1, point, normal, camorigin, diffuse, bounce, vec3(0.0));
+    colour = lightPoint(light2, point, normal, camorigin, diffuse, bounce, colour);
+    colour = lightPoint(light3, point, normal, camorigin, diffuse, bounce, colour);
+
+    // Output to screen
+    fragColor = vec4(colour,1.0);
+}`,
+    "Checker Rau": `void mainImage( out vec4 fragColor, in vec2 fragCoord )
+{
+
+    // Sample audio data
+    float audioL = texture(iChannel0, vec2(0.1, 0.5)).r;
+    float audioH = texture(iChannel0, vec2(0.9, 0.5)).r;
+    float audio = mix(audioL, audioH, 0.5);
+    float speed = 0.25 / (iResolution.x / 120.0 + texture(iChannel0, vec2(0.1, 0.5)).r * 0.5);
+    float colorResolution = audio;
+    
+    int x = int(floor(fragCoord.x));
+    int y = int(floor(fragCoord.y));
+    int positionFactor = (x - y) & (y + x);
+    float speedFactor = iTime * speed;
+    float outColor = 
+    mod(
+        mod(
+            float(positionFactor) * (speedFactor), 
+            float(iResolution.x)
+        ), 
+        colorResolution
+    ) / colorResolution;
+    fragColor = vec4(sin(audioL), outColor * sin(audioH), tan(outColor), 1.0);
+}`,
+    "10 Eyes - Needs sound effect": `vec2 cMul(vec2 a, vec2 b) {
+	return vec2(a.x*b.x -  a.y*b.y,a.x*b.y + a.y * b.x);
+}
+
+vec2 cInverse(vec2 a) {
+	return	vec2(a.x,-a.y)/dot(a,a);
+}
+
+
+vec2 cDiv(vec2 a, vec2 b) {
+	return cMul( a,cInverse(b));
+}
+
+
+vec2 cPower(vec2 z, float n) {
+	float r2 = dot(z,z);
+	return pow(r2,n/2.0)*vec2(cos(n*atan(z.y/z.x)),sin(n*atan(z.y/z.x)));
+}
+
+void mainImage( out vec4 fragColor, in vec2 fragCoord )
+{
+	vec2 p = fragCoord.xy / iResolution.xy;
+	
+	float t = iTime;
+
+	float zPower = 1.16578;
+	float aa = -0.15000;
+	float bb = 0.89400;
+	float cc = -0.05172;
+	float dd = 0.10074;
+	int i = 0;
+
+	vec2 A = vec2(aa, aa);
+	vec2 B = vec2(bb, bb);
+	vec2 C = vec2(cc, cc);
+	vec2 D = vec2(dd, dd);
+	
+	float speed = 0.25;
+	vec2 c = vec2(cos(t*speed), sin(t*speed));
+	float s = 2.5;
+    vec2 z = s*((-1.0 + 2.0*p)*vec2(iResolution.x/(iResolution.y),1.0));
+	const int iter = 96;
+	float e = 128.0;
+
+    for( int j=0; j<iter; j++ )
+    {
+		z = cPower(z, zPower);
+		z = abs(z);
+		z = cMul(z,z) + c;		
+		
+		z = cDiv((cMul(A, z) + B), (cMul(z,C) + D));
+		
+    	if (dot(z,z) > e) break;
+		i++;
+	}
+	
+	float ci = float(i) + 1.0 - log2(0.5*log2(dot(z,z)));
+
+	float red = 0.5 + 0.5*cos(6.0*ci+0.0);
+	float green = 0.5+0.5*cos(6.0*ci+0.4);
+	float blue = 0.5+0.5*cos(6.0*ci+0.8);
+
+	fragColor = vec4(red, green, blue, 1.0);
+}
+`,
+"Drive Home": `
+// "The Drive Home" by Martijn Steinrucken aka BigWings - 2017
+// License Creative Commons Attribution-NonCommercial-ShareAlike 3.0 Unported License.
+// Email:countfrolic@gmail.com Twitter:@The_ArtOfCode
+//
+// I was looking for something 3d, that can be made just with a point-line distance function.
+// Then I saw the cover graphic of the song I'm using here on soundcloud, which is a bokeh traffic
+// shot which is a perfect for for what I was looking for.
+//
+// It took me a while to get to a satisfying rain effect. Most other people use a render buffer for
+// this so that is how I started. In the end though, I got a better effect without. Uncomment the
+// DROP_DEBUG define to get a better idea of what is going on.
+//
+// If you are watching this on a weaker device, you can uncomment the HIGH_QUALITY define
+//
+// Music:
+// Mr. Bill - Cheyah (Zefora's digital rain remix) 
+// https://soundcloud.com/zefora/cheyah
+//
+// Video can be found here:
+// https://www.youtube.com/watch?v=WrxZ4AZPdOQ
+//
+// Making of tutorial:
+// https://www.youtube.com/watch?v=eKtsY7hYTPg
+//
+
+#define S(x, y, z) smoothstep(x, y, z)
+#define B(a, b, edge, t) S(a-edge, a+edge, t)*S(b+edge, b-edge, t)
+#define sat(x) clamp(x,0.,1.)
+
+#define streetLightCol vec3(1., .7, .3)
+#define headLightCol vec3(.8, .8, 1.)
+#define tailLightCol vec3(1., .1, .1)
+
+#define HIGH_QUALITY
+#define CAM_SHAKE 1.
+#define LANE_BIAS .5
+#define RAIN
+//#define DROP_DEBUG
+
+vec3 ro, rd;
+
+float N(float t) {
+	return fract(sin(t*10234.324)*123423.23512);
+}
+vec3 N31(float p) {
+    //  3 out, 1 in... DAVE HOSKINS
+   vec3 p3 = fract(vec3(p) * vec3(.1031,.11369,.13787));
+   p3 += dot(p3, p3.yzx + 19.19);
+   return fract(vec3((p3.x + p3.y)*p3.z, (p3.x+p3.z)*p3.y, (p3.y+p3.z)*p3.x));
+}
+float N2(vec2 p)
+{	// Dave Hoskins - https://www.shadertoy.com/view/4djSRW
+	vec3 p3  = fract(vec3(p.xyx) * vec3(443.897, 441.423, 437.195));
+    p3 += dot(p3, p3.yzx + 19.19);
+    return fract((p3.x + p3.y) * p3.z);
+}
+
+
+float DistLine(vec3 ro, vec3 rd, vec3 p) {
+	return length(cross(p-ro, rd));
+}
+ 
+vec3 ClosestPoint(vec3 ro, vec3 rd, vec3 p) {
+    // returns the closest point on ray r to point p
+    return ro + max(0., dot(p-ro, rd))*rd;
+}
+
+float Remap(float a, float b, float c, float d, float t) {
+	return ((t-a)/(b-a))*(d-c)+c;
+}
+
+float BokehMask(vec3 ro, vec3 rd, vec3 p, float size, float blur) {
+	float d = DistLine(ro, rd, p);
+    float m = S(size, size*(1.-blur), d);
+    
+    #ifdef HIGH_QUALITY
+    m *= mix(.7, 1., S(.8*size, size, d));
+    #endif
+    
+    return m;
+}
+
+
+
+float SawTooth(float t) {
+    return cos(t+cos(t))+sin(2.*t)*.2+sin(4.*t)*.02;
+}
+
+float DeltaSawTooth(float t) {
+    return 0.4*cos(2.*t)+0.08*cos(4.*t) - (1.-sin(t))*sin(t+cos(t));
+}  
+
+vec2 GetDrops(vec2 uv, float seed, float m) {
+    
+    float t = iTime+m*30.;
+    vec2 o = vec2(0.);
+    
+    #ifndef DROP_DEBUG
+    uv.y += t*.05;
+    #endif
+    
+    uv *= vec2(10., 2.5)*2.;
+    vec2 id = floor(uv);
+    vec3 n = N31(id.x + (id.y+seed)*546.3524);
+    vec2 bd = fract(uv);
+    
+    vec2 uv2 = bd;
+    
+    bd -= .5;
+    
+    bd.y*=4.;
+    
+    bd.x += (n.x-.5)*.6;
+    
+    t += n.z * 6.28;
+    float slide = SawTooth(t);
+    
+    float ts = 1.5;
+    vec2 trailPos = vec2(bd.x*ts, (fract(bd.y*ts*2.-t*2.)-.5)*.5);
+    
+    bd.y += slide*2.;								// make drops slide down
+    
+    #ifdef HIGH_QUALITY
+    float dropShape = bd.x*bd.x;
+    dropShape *= DeltaSawTooth(t);
+    bd.y += dropShape;								// change shape of drop when it is falling
+    #endif
+    
+    float d = length(bd);							// distance to main drop
+    
+    float trailMask = S(-.2, .2, bd.y);				// mask out drops that are below the main
+    trailMask *= bd.y;								// fade dropsize
+    float td = length(trailPos*max(.5, trailMask));	// distance to trail drops
+    
+    float mainDrop = S(.2, .1, d);
+    float dropTrail = S(.1, .02, td);
+    
+    dropTrail *= trailMask;
+    o = mix(bd*mainDrop, trailPos, dropTrail);		// mix main drop and drop trail
+    
+    #ifdef DROP_DEBUG
+    if(uv2.x<.02 || uv2.y<.01) o = vec2(1.);
+    #endif
+    
+    return o;
+}
+
+void CameraSetup(vec2 uv, vec3 pos, vec3 lookat, float zoom, float m) {
+	ro = pos;
+    vec3 f = normalize(lookat-ro);
+    vec3 r = cross(vec3(0., 1., 0.), f);
+    vec3 u = cross(f, r);
+    float t = iTime;
+    
+    vec2 offs = vec2(0.);
+    #ifdef RAIN
+    vec2 dropUv = uv; 
+    
+    #ifdef HIGH_QUALITY
+    float x = (sin(t*.1)*.5+.5)*.5;
+    x = -x*x;
+    float s = sin(x);
+    float c = cos(x);
+    
+    mat2 rot = mat2(c, -s, s, c);
+   
+    #ifndef DROP_DEBUG
+    dropUv = uv*rot;
+    dropUv.x += -sin(t*.1)*.5;
+    #endif
+    #endif
+    
+    offs = GetDrops(dropUv, 1., m);
+    
+    #ifndef DROP_DEBUG
+    offs += GetDrops(dropUv*1.4, 10., m);
+    #ifdef HIGH_QUALITY
+    offs += GetDrops(dropUv*2.4, 25., m);
+    //offs += GetDrops(dropUv*3.4, 11.);
+    //offs += GetDrops(dropUv*3., 2.);
+    #endif
+    
+    float ripple = sin(t+uv.y*3.1415*30.+uv.x*124.)*.5+.5;
+    ripple *= .005;
+    offs += vec2(ripple*ripple, ripple);
+    #endif
+    #endif
+    vec3 center = ro + f*zoom;
+    vec3 i = center + (uv.x-offs.x)*r + (uv.y-offs.y)*u;
+    
+    rd = normalize(i-ro);
+}
+
+vec3 HeadLights(float i, float t) {
+    float z = fract(-t*2.+i);
+    vec3 p = vec3(-.3, .1, z*40.);
+    float d = length(p-ro);
+    
+    float size = mix(.03, .05, S(.02, .07, z))*d;
+    float m = 0.;
+    float blur = .1;
+    m += BokehMask(ro, rd, p-vec3(.08, 0., 0.), size, blur);
+    m += BokehMask(ro, rd, p+vec3(.08, 0., 0.), size, blur);
+    
+    #ifdef HIGH_QUALITY
+    m += BokehMask(ro, rd, p+vec3(.1, 0., 0.), size, blur);
+    m += BokehMask(ro, rd, p-vec3(.1, 0., 0.), size, blur);
+    #endif
+    
+    float distFade = max(.01, pow(1.-z, 9.));
+    
+    blur = .8;
+    size *= 2.5;
+    float r = 0.;
+    r += BokehMask(ro, rd, p+vec3(-.09, -.2, 0.), size, blur);
+    r += BokehMask(ro, rd, p+vec3(.09, -.2, 0.), size, blur);
+    r *= distFade*distFade;
+    
+    return headLightCol*(m+r)*distFade;
+}
+
+
+vec3 TailLights(float i, float t) {
+    t = t*1.5+i;
+    
+    float id = floor(t)+i;
+    vec3 n = N31(id);
+    
+    float laneId = S(LANE_BIAS, LANE_BIAS+.01, n.y);
+    
+    float ft = fract(t);
+    
+    float z = 3.-ft*3.;						// distance ahead
+    
+    laneId *= S(.2, 1.5, z);				// get out of the way!
+    float lane = mix(.6, .3, laneId);
+    vec3 p = vec3(lane, .1, z);
+    float d = length(p-ro);
+    
+    float size = .05*d;
+    float blur = .1;
+    float m = BokehMask(ro, rd, p-vec3(.08, 0., 0.), size, blur) +
+    			BokehMask(ro, rd, p+vec3(.08, 0., 0.), size, blur);
+    
+    #ifdef HIGH_QUALITY
+    float bs = n.z*3.;						// start braking at random distance		
+    float brake = S(bs, bs+.01, z);
+    brake *= S(bs+.01, bs, z-.5*n.y);		// n.y = random brake duration
+    
+    m += (BokehMask(ro, rd, p+vec3(.1, 0., 0.), size, blur) +
+    	BokehMask(ro, rd, p-vec3(.1, 0., 0.), size, blur))*brake;
+    #endif
+    
+    float refSize = size*2.5;
+    m += BokehMask(ro, rd, p+vec3(-.09, -.2, 0.), refSize, .8);
+    m += BokehMask(ro, rd, p+vec3(.09, -.2, 0.), refSize, .8);
+    vec3 col = tailLightCol*m*ft; 
+    
+    float b = BokehMask(ro, rd, p+vec3(.12, 0., 0.), size, blur);
+    b += BokehMask(ro, rd, p+vec3(.12, -.2, 0.), refSize, .8)*.2;
+    
+    vec3 blinker = vec3(1., .7, .2);
+    blinker *= S(1.5, 1.4, z)*S(.2, .3, z);
+    blinker *= sat(sin(t*200.)*100.);
+    blinker *= laneId;
+    col += blinker*b;
+    
+    return col;
+}
+
+vec3 StreetLights(float i, float t) {
+	 float side = sign(rd.x);
+    float offset = max(side, 0.)*(1./16.);
+    float z = fract(i-t+offset); 
+    vec3 p = vec3(2.*side, 2., z*60.);
+    float d = length(p-ro);
+	float blur = .1;
+    vec3 rp = ClosestPoint(ro, rd, p);
+    float distFade = Remap(1., .7, .1, 1.5, 1.-pow(1.-z,6.));
+    distFade *= (1.-z);
+    float m = BokehMask(ro, rd, p, .05*d, blur)*distFade;
+    
+    return m*streetLightCol;
+}
+
+vec3 EnvironmentLights(float i, float t) {
+	float n = N(i+floor(t));
+    
+    float side = sign(rd.x);
+    float offset = max(side, 0.)*(1./16.);
+    float z = fract(i-t+offset+fract(n*234.));
+    float n2 = fract(n*100.);
+    vec3 p = vec3((3.+n)*side, n2*n2*n2*1., z*60.);
+    float d = length(p-ro);
+	float blur = .1;
+    vec3 rp = ClosestPoint(ro, rd, p);
+    float distFade = Remap(1., .7, .1, 1.5, 1.-pow(1.-z,6.));
+    float m = BokehMask(ro, rd, p, .05*d, blur);
+    m *= distFade*distFade*.5;
+    
+    m *= 1.-pow(sin(z*6.28*20.*n)*.5+.5, 20.);
+    vec3 randomCol = vec3(fract(n*-34.5), fract(n*4572.), fract(n*1264.));
+    vec3 col = mix(tailLightCol, streetLightCol, fract(n*-65.42));
+    col = mix(col, randomCol, n);
+    return m*col*.2;
+}
+
+void mainImage( out vec4 fragColor, in vec2 fragCoord )
+{
+	float t = iTime;
+    vec3 col = vec3(0.);
+    vec2 uv = fragCoord.xy / iResolution.xy; // 0 <> 1
+    
+    uv -= .5;
+    uv.x *= iResolution.x/iResolution.y;
+    
+    vec2 mouse = iMouse.xy/iResolution.xy;
+    
+    vec3 pos = vec3(.3, .15, 0.);
+    
+    float bt = t * 5.;
+    float h1 = N(floor(bt));
+    float h2 = N(floor(bt+1.));
+    float bumps = mix(h1, h2, fract(bt))*.1;
+    bumps = bumps*bumps*bumps*CAM_SHAKE;
+    
+    pos.y += bumps;
+    float lookatY = pos.y+bumps;
+    vec3 lookat = vec3(0.3, lookatY, 1.);
+    vec3 lookat2 = vec3(0., lookatY, .7);
+    lookat = mix(lookat, lookat2, sin(t*.1)*.5+.5);
+    
+    uv.y += bumps*4.;
+    CameraSetup(uv, pos, lookat, 2., mouse.x);
+   
+    t *= .03;
+    t += mouse.x;
+    
+    // fix for GLES devices by MacroMachines
+    #ifdef GL_ES
+	const float stp = 1./8.;
+	#else
+	float stp = 1./8.;
+	#endif
+    
+    for(float i=0.; i<1.; i+=stp) {
+       col += StreetLights(i, t);
+    }
+    
+    for(float i=0.; i<1.; i+=stp) {
+        float n = N(i+floor(t));
+    	col += HeadLights(i+n*stp*.7, t);
+    }
+    
+    #ifndef GL_ES
+    #ifdef HIGH_QUALITY
+    stp = 1./32.;
+    #else
+    stp = 1./16.;
+    #endif
+    #endif
+    
+    for(float i=0.; i<1.; i+=stp) {
+       col += EnvironmentLights(i, t);
+    }
+    
+    col += TailLights(0., t);
+    col += TailLights(.5, t);
+    
+    col += sat(rd.y)*vec3(.6, .5, .9);
+    
+	fragColor = vec4(col, 1.);
+}`,
+"Opaque Door - needs colors": `
+// The three possible variations of the 3-mirror kaleidoscope [1,2].
+// The image is composed by reflections of a base triangle, tiling the plane.
+// Here, I adopted the folding scheme [3,4] for the Euclidean plane whereas
+// in general it also works for the spherical and hyperbolic case. 
+// A similar example with good comments is also found in [5]. 
+// You may also try using the webcam in iChannel0
+// (don't forget setting Filter->mipmap and Wrap->repeat).
+// Note: lines marked by '//o' are comment-switchable (optional).
+// '//p' indicates parameters for manual tuning.
+// Shadertoy plugin: use Alt + R/L arrows to switch modes
+//
+// See also https://www.shadertoy.com/view/ssyyRG for a visualization of the folding scheme.
+//
+// [1] https://en.wikipedia.org/wiki/Kaleidoscope#Different_versions_suggested_by_Brewster
+// [2] https://en.wikipedia.org/wiki/Triangle_group
+// [3] mla, Wythoffian Tiling Generator, https://shadertoy.com/view/wlGSWc
+// [4] knighty, Tilings, https://www.shadertoy.com/view/4sf3zX
+// [5] TotallyReal, Euclidean triangle groups, https://www.shadertoy.com/view/7lV3Wy
+// [6] Artleet, The most compact hueshift, https://www.shadertoy.com/view/3tjGWm
+// [7] https://de.wikipedia.org/wiki/Datei:Kaleidoscope-abc.jpg
+
+#define C .03  // emphasize parent tile
+#define H 1.  // hold between transitions
+
+#define PI 3.14159265
+#define R iResolution
+
+// The angles are defined by divisors of PI in each row (1st row: classical kaleidoscope, [1]).
+// In the Euclidean plane their inverses must sum to one.
+const mat3 D = mat3(
+    3,3,3,
+    2,4,4,
+    2,3,6);
+
+vec3 hs(vec3 c, float s) {  // hue shift [6]
+    vec3 m = vec3(cos(s), s=sin(s)*.5774, -s);
+    return c*mat3(m+=(1.-m.x)/3., m.zxy, m.yzx);
+}
+
+// Iterative folding/reflection adopted from [3,4] and streamlined for the Euclidean case.
+// The fold count (nf) can be useful, e.g. to attenuate reflections as in a real kaleidoscope [7].
+vec4 fold(vec2 p, float sc, vec3 ang, out int nf) {
+    vec3 c = cos(ang), s = sin(ang);
+    mat3 N = mat3(1, 0, C,
+                 -c.x, s.x, 0,
+                 -c.z, -(c.y+c.x*c.z)/s.x, 1);  // normals
+    sc *= s.z;  // set longest edge to unit length
+    vec3 u, q = vec3(p,sc);
+    nf = 0;  // fold counter
+    for(int i=0; i<9999; i++) {
+        for(int j=0; j<3; j++) {
+            u[j] = dot(q, N[j]);
+            if(u[j] < 0.) {q -= 2.*u[j]*N[j]*vec3(1,1,0); nf++;}
+        }
+        if(i >= nf) break;  // base triangle is reached
+    }
+    return vec4(q.xy, u.yz);  // q.xy: cartesian coords, u.xyz: trilinear coords, note that u.x = q.x
+}
+
+
+void mainImage(out vec4 O, vec2 U) {
+    const float sc = 5.;  //p scale
+    float t = iTime*.2;  //p global speed
+        
+    int m = 2, mm = m;  //p reflection mode (0,1,2)
+    m = int(t)%3, mm = int(t+1.)%3;  //o cycle modes
+    //m = int(U.x*3./R.x); mm = m;  //o simultaneous view    
+        
+    U = sc*(U*2. - R.xy)/R.y;
+        
+    int nf;    
+    float f = smoothstep(0.,1.,mod(t,1.)*(H+1.)-H);  // blending
+    O = fold(U, 1., mix(PI/D[m],PI/D[mm],f), nf);
+    U = O.xy;
+    vec3 u = O.xzw;
+        
+    if(iMouse.z>0.) U -= (iMouse.xy*2.-R.xy)/R.y;
+    else U -= t*.5; //o auto-scroll
+    //U += vec2(nf)*.01;  //o reflection shift
+    O = texture(iChannel0,U);
+    O.rgb = hs((O.bgr-.25)*2., PI*(1.-.5*mix(float(m),float(mm),f)));  //o color modes
+    //O = vec4(1);  //o monochrome background
+    
+    O *= exp(-float(nf)/sc*.4)*1.5;  //o attenuate reflections
+    //O *= .6 + .4*float(nf%2);  //o 'checkerboard'
+    //O *= .9 + .15*(dFdx(U.x)-.3*dFdy(U.x))/sc*R.y;  //o relief (cheap)
+    O *= smoothstep(-1.,1.,(min(u.x,min(u.y,u.z))-.01)*R.y/(sc*2.));  //o edges
+    
+    O.a= 1.;  // who knows...
+}
+
+`,
+"Bottles": `mat2 rot(float a){return mat2(cos(a),-sin(a),sin(a),cos(a));}
+
+void mainImage( out vec4 fragColor, in vec2 fragCoord )
+{
+
+    vec3 col;
+    float t;
+    
+    for(int c=0;c<3;c++){
+	    vec2 uv = (fragCoord*20.0-iResolution.xy)/iResolution.y;
+        t = iTime;
+        for(int i=0;i<5;i++)
+        {
+            uv += sin(col.yx);
+        	uv += float(i) + (sin(iTime+uv.x)+cos(iTime+uv.y));
+        }
+     col[c] = (sin(uv.x)+cos(uv.y));
+	}
+    
+    fragColor = vec4(col,1.0);
+    
+}
+`,
+"Radio active Shrooms": `#define T (iTime/clamp(40.-iTime, -15.,40.)+165.)
+#define HPI 1.5707963267948966
+#define PI 3.141592653589793
+const int Iterations = 29;
+const float Eps = 0.0002;
+float C3, S3, C2, S2, C1, S1;
+
+float map(vec3 p) {
+    float len, t = 0.6;
+    for (int i = 0; i <= Iterations; i++) {
+   // p.y -= (p.y*p.x*p.x*p.x)/(4300./float(i*6));
+        p.xz = S3 * p.xz + C3 * vec2(-1.0, 1.0) * p.zx;
+        
+        p = p.yzx;
+        p.xz = S2 * p.xz + C2 * vec2(-1.0, 1.0) * p.zx;
+        p = p.yzx;
+        
+        p.xz = S1 * p.xz + C1 * vec2(-1.0, 1.0) * p.zx;
+         p = p.yzx;
+        p.xy = -abs(p.xy);
+      
+        p.xy += vec2(t, t*1.2 +0.0);
+        t *= .618;
+    }
+     len = length(p)-.001;
+    return len ;
+}
+
+vec3 GetColorAmount(vec3 p) {
+    float amount = 0.54 * clamp(2.1 - (pow(length(p), abs(sin(T * 0.1)) * 2.8) / 6.0), 0.0, 1.1);
+    vec3 col = 0.2 + (cos(T * 0.33) * 0.130) * cos(6.28319 * (vec3(0.00021, 0.0009, cos(T * 0.23) * 0.330) + (amount / 1.101) * vec3(0.50, 0.5, 0.0995)));
+    return col * amount;
+}
+
+void mainImage(out vec4 fragColor, in vec2 fragCoord) {
+    vec2 uv = (fragCoord - 0.5 * iResolution.xy) / iResolution.y;
+    float time = pow(abs((sin(T * .35))) * 1., 1.4) + T*.633 ;
+    float t = time; S1 = sin(t); C1 = cos(t);
+    t = time * PI; S2 = sin(t); C2 = cos(t);
+    t = t * PI; S3 = sin(t); C3 = cos(t);
+    float angle = T * 0.5;
+    vec3 camPos = vec3(3.0 * cos(angle), 1.5, 3.0 * sin(angle));
+    vec3 target = vec3(0.0);
+    vec3 camDir = normalize(target - camPos);
+    vec3 up = vec3(0.0, 1.0, 0.0);
+    vec3 camRight = normalize(cross(camDir, up));
+    vec3 camUp = cross(camRight, camDir);
+    vec3 rayDir = normalize(camDir + uv.x * camRight + uv.y * camUp);
+    vec3 rayPos = camPos;
+    float totalDist = 0.0;
+    vec3 color = vec3(0.0);
+    for (int i = 0; i < 35; i++) {
+        float d = map(rayPos);
+        vec3 glow = GetColorAmount(rayPos);
+        color += glow * exp(-0.61 * totalDist);
+        if (abs(d) < Eps) break;
+        rayPos += rayDir * d;
+        totalDist += d;
+    }
+    fragColor = vec4(pow(color.grb*1.5, color.bbb*12.), 2.0 - pow(totalDist, 0.5));
+}
+//https://www.shadertoy.com/view/sldGRS
+//https://www.shadertoy.com/view/Ns2Gz3
+//iq
+
+//thanks
+`,
+"Howww???": `/*
+
+	Raymarched 2D Sierpinski
+	------------------------
+
+	Raymarching a 2D Sierpinski Carpet pattern. The raymarching process is pretty straight
+	forward. Basically, Sierpinski height values are added to a plane. Height maps with 
+	sharp edges don't raymarch particularly well, so a little edge smoothing was necessary,
+	but that's about it.
+
+	The rest is just lighting. Most of it is made up. A bit of diffuse, specular, fake 
+	environment mapping, etc.
+	
+
+*/
+
+#define FAR 5.
+
+// Tri-Planar blending function. Based on an old Nvidia writeup:
+// GPU Gems 3 - Ryan Geiss: https://developer.nvidia.com/gpugems/GPUGems3/gpugems3_ch01.html
+vec3 tex3D( sampler2D tex, in vec3 p, in vec3 n ){
+   
+    n = max((abs(n) - .2)*7., .001);
+    n /= (n.x + n.y + n.z );  
+    
+	p = (texture(tex, p.yz)*n.x + texture(tex, p.zx)*n.y + texture(tex, p.xy)*n.z).xyz;
+    
+    return p*p;
+}
+
+// Compact, self-contained version of IQ's 3D value noise function.
+float n3D(vec3 p){
+    
+	const vec3 s = vec3(7, 157, 113);
+	vec3 ip = floor(p); p -= ip; 
+    vec4 h = vec4(0., s.yz, s.y + s.z) + dot(ip, s);
+    p = p*p*(3. - 2.*p); //p *= p*p*(p*(p * 6. - 15.) + 10.);
+    h = mix(fract(sin(h)*43758.5453), fract(sin(h + s.x)*43758.5453), p.x);
+    h.xy = mix(h.xz, h.yw, p.y);
+    return mix(h.x, h.y, p.z); // Range: [0, 1].
+}
+
+// Sierpinski Carpet heightmap - Essentially, space is divided into 3 each iteration, 
+// and a shape of some kind is rendered. In this case, it's a smooth edged rectangle (w)
+// with a bit of curvature (l) around the sides.
+//
+// There are some opportunites to optimize, but I'll leave it partly readable for now.
+//
+float heightMap(vec2 p){
+    
+    p /= 2.; // Extra scaling.
+    
+    float  h = 0., a = 1., sum = 0.; // Height, amplitude, sum.
+    
+    for(int i=0; i<4; i++){
+    
+        p = fract(p)*3.; // Subdividing space.
+        // Far more interesting, mutated subdivision, courtesy of Aiekick.
+        //p = fract(p+sin(p.yx*9.)*0.025 + cos(p.yx*9.)*0.025)*3.; 
+        // Another one with a time component.
+        //p = fract(p + sin(p*9. + cos(p.yx*13. + iTime*2.))*0.02)*3.;
+        
+        vec2 w = .5 - abs(p - 1.5); // Prepare to make a square. Other shapes are also possible.
+        float l = sqrt( max(16.0*w.x*w.y*(1.0-w.x)*(1.0-w.y), 0.))*.5+.5; // Edge shaping.
+        w = smoothstep(0., .05, w); // Smooth edge stepping.
+        h = max(h, w.x*w.y*a*l); // Producing the smooth edged, shaped square.
+        //h += w.x*w.y*a*l;
+        //h = max(h, abs(abs(w.x)-abs(w.y))*a*l);
+        sum += a; // Keep a total... This could be hardcoded to save cycles.
+        a *= .4; // Lower the amplitude for the next subdivision, just because it looks tidier.
+        //if(i==2)a*=.75;
+    }
+    
+    return h/sum;
+    
+}
+
+// Raymarching a heightmap on an XY-plane. Pretty standard.
+float map(vec3 p){
+
+    // Cheap, lame distortion, if you wanted it.
+    //p.xy += sin(p.xy*7. + cos(p.yx*13. + iTime))*.01;
+    
+    // Back plane, placed at vec3(0, 0, 1), with plane normal vec3(0., 0., -1).
+    // Adding some height to the plane from the heightmap. Not much else to it.
+    return 1. - p.z - heightMap(p.xy)*.125;
+    
+}
+
+// Texture bump mapping. Four tri-planar lookups, or 12 texture lookups in total. I tried to 
+// make it as concise as possible. Whether that translates to speed, or not, I couldn't say.
+vec3 doBumpMap( sampler2D tx, in vec3 p, in vec3 n, float bf){
+   
+    const vec2 e = vec2(0.001, 0);
+    
+    // Three gradient vectors rolled into a matrix, constructed with offset greyscale texture values.    
+    mat3 m = mat3( tex3D(tx, p - e.xyy, n), tex3D(tx, p - e.yxy, n), tex3D(tx, p - e.yyx, n));
+    
+    vec3 g = vec3(0.299, 0.587, 0.114)*m; // Converting to greyscale.
+    g = (g - dot(tex3D(tx,  p , n), vec3(0.299, 0.587, 0.114)) )/e.x; g -= n*dot(n, g);
+                      
+    return normalize( n + g*bf ); // Bumped normal. "bf" - bump factor.
+    
+}
+
+
+// Standard normal function.
+vec3 getNormal(in vec3 p) {
+	const vec2 e = vec2(0.0025, 0);
+	return normalize(vec3(map(p + e.xyy) - map(p - e.xyy), map(p + e.yxy) - map(p - e.yxy),	map(p + e.yyx) - map(p - e.yyx)));
+}
+
+// I keep a collection of occlusion routines... OK, that sounded really nerdy. :)
+// Anyway, I like this one. I'm assuming it's based on IQ's original.
+float calculateAO(in vec3 pos, in vec3 nor)
+{
+	float sca = 3., occ = 0.;
+    for(int i=0; i<5; i++){
+    
+        float hr = .01 + float(i)*.5/4.;        
+        float dd = map(nor * hr + pos);
+        occ += (hr - dd)*sca;
+        sca *= 0.7;
+    }
+    return clamp(1.0 - occ, 0., 1.);    
+}
+
+// Basic raymarcher.
+float trace(in vec3 ro, in vec3 rd){
+    
+    // Note that the ray is starting just above the raised plane, since nothing is
+    // in the way. It's normal practice to start at zero.
+    float d, t = 0.75; 
+    for(int j=0;j<32;j++){
+      
+        d = map(ro + rd*t); // distance to the function.
+        // The plane "is" the far plane, so no far=plane break is needed.
+        if(abs(d)<0.001*(t*.125 + 1.) || t>FAR) break;
+
+        t += d*.7; // Total distance from the camera to the surface.
+    
+    }
+
+    return min(t, FAR);
+    
+}
+
+// Cool curve function, by Shadertoy user, Nimitz.
+//
+// It gives you a scalar curvature value for an object's signed distance function, which 
+// is pretty handy for all kinds of things. Here's it's used to darken the crevices.
+//
+// From an intuitive sense, the function returns a weighted difference between a surface 
+// value and some surrounding values - arranged in a simplex tetrahedral fashion for minimal
+// calculations, I'm assuming. Almost common sense... almost. :)
+//
+// Original usage (I think?) - Cheap curvature: https://www.shadertoy.com/view/Xts3WM
+// Other usage: Xyptonjtroz: https://www.shadertoy.com/view/4ts3z2
+float curve(in vec3 p){
+
+    const float eps = 0.02, amp = 8., ampInit = 0.6;
+
+    vec2 e = vec2(-1., 1.)*eps; //0.05->3.5 - 0.04->5.5 - 0.03->10.->0.1->1.
+    
+    float t1 = map(p + e.yxx), t2 = map(p + e.xxy);
+    float t3 = map(p + e.xyx), t4 = map(p + e.yyy);
+    
+    return clamp((t1 + t2 + t3 + t4 - 4.*map(p))*amp + ampInit, 0., 1.);
+}
+
+
+// Simple environment mapping. Pass the reflected vector in and create some
+// colored noise with it. The normal is redundant here, but it can be used
+// to pass into a 3D texture mapping function to produce some interesting
+// environmental reflections.
+vec3 envMap(vec3 rd, vec3 sn){
+    
+    vec3 sRd = rd; // Save rd, just for some mixing at the end.
+    
+    // Add a time component, scale, then pass into the noise function.
+    rd.xy -= iTime*.25;
+    rd *= 3.;
+    
+    float c = n3D(rd)*.57 + n3D(rd*2.)*.28 + n3D(rd*4.)*.15; // Noise value.
+    c = smoothstep(0.4, 1., c); // Darken and add contast for more of a spotlight look.
+    
+    vec3 col = vec3(c, c*c, c*c*c*c); // Simple, warm coloring.
+    //vec3 col = vec3(min(c*1.5, 1.), pow(c, 2.5), pow(c, 12.)); // More color.
+    
+    // Mix in some more red to tone it down and return.
+    return mix(col, col.yzx, sRd*.25+.25); 
+    
+}
+
+void mainImage( out vec4 fragColor, in vec2 fragCoord ){
+    
+    
+    // Unit directional ray with no divide, courtesy of Coyote.
+    vec3 rd = normalize(vec3(2.*fragCoord - iResolution.xy, iResolution.y));
+    
+    // Rotating the XY-plane back and forth, for a bit of variance.
+    // 2D rotation with fewer instructions, courtesy of Fabrice Neyret.
+    vec2 a = sin(vec2(1.570796, 0) - sin(iTime/4.)*.3);
+    rd.xy = rd.xy*mat2(a, -a.y, a.x);
+    
+    
+    // Ray origin. Moving in the X-direction to the right.
+    vec3 ro = vec3(iTime, cos(iTime/4.), 0.);
+    
+    
+    // Light position, hovering around camera.
+    vec3 lp = ro + vec3(cos(iTime/2.)*.5, sin(iTime/2.)*.5, -.5);
+    
+    // Standard raymarching segment. Because of the straight forward setup, not many 
+    // iterations are needed.
+ 	float t = trace(ro, rd);
+    
+   
+    // Surface postion, surface normal and light direction.
+    vec3 sp = ro + rd*t;
+    vec3 sn = getNormal(sp);
+    
+    
+	// Texture scale factor.
+    const float tSize0 = 1./2.;
+    // Texture-based bump mapping.
+	sn = doBumpMap(iChannel0, sp*tSize0, sn, 0.002);    
+    
+    
+    // Point light.
+    vec3 ld = lp - sp; // Light direction vector.
+    float lDist = max(length(ld), 0.001); // Light distance.
+    float atten = 1./(1. + lDist*lDist*.125); // Light attenuation.
+    ld /= lDist; // Normalizing the light direction vector.
+    
+   // Obtaining the surface texel, then ramping up the contrast a bit.
+    vec3 oC = smoothstep(0., 1., tex3D(iChannel0, sp*tSize0, sn));
+    // Using the height map to highlight the raised squares. Not for any particular reason.
+    oC *= smoothstep(0., .125, heightMap(sp.xy))*1.5 + .5;
+
+    
+    float diff = max(dot(ld, sn), 0.); // Diffuse.
+    float spec = pow(max( dot( reflect(-ld, sn), -rd ), 0.0 ), 32.); // Specular.
+    float fre = clamp(dot(sn, rd) + 1., .0, 1.); // Fake fresnel, for the glow.
+    
+    // Shading. Note, there are no actual shadows. The camera is front on, so the following
+    // two functions are enough to give a shadowy appearance.
+    float crv = curve(sp); // Curve value, to darken the crevices.
+    float ao = calculateAO(sp, sn); // Ambient occlusion, for self shadowing.
+ 
+    
+    // Combining the terms above to light the texel.
+    vec3 col = (oC*(diff + .25) + vec3(1, .7, .3)*spec) + vec3(.1, .3, 1)*pow(fre, 4.)*4.;
+    
+    col += (oC*.5+.5)*envMap(reflect(rd, sn), sn)*6.; // Fake environment mapping.
+    //col += envMap(reflect(rd, sn), sn)*4.;
+    
+    // Applying the shades.
+    col *= (atten*crv*ao);
+    
+    // Vignette.
+    vec2 uv = fragCoord/iResolution.xy;
+    col *= pow(16.*uv.x*uv.y*(1.-uv.x)*(1.-uv.y), 0.125);
+
+    
+    // Presenting to the screen.
+	fragColor = vec4(sqrt(clamp(col, 0., 1.)), 1.);
+}
+`,
+"Voxel Corridor": `/*
+
+	Voxel Corridor
+	--------------
+
+	I love the voxel aesthetic, so after looking at some of Akohdr's examples, I went on a bit 
+	of a voxel trip and put this simple scene together... Although, "scene" would  be putting 
+	it loosely. :)
+
+	Quasi-discreet distance calculations sound simple enough to perform in theory, but are just 
+	plain fiddly to code, so I was very thankful to have fb39ca4's, IQ's, Reinder's, and everyone 
+	elses voxel examples to refer to.
+
+	The code is pretty straight forward. I tried my best to write it in such way that enables
+	someone to plug in any normal distance function and have it render the voxelized version.
+
+	Mainly based on the following:
+
+	Voxel Ambient Occlusion - fb39ca4
+    https://www.shadertoy.com/view/ldl3DS
+
+	Minecraft - Reinder
+    https://www.shadertoy.com/view/4ds3WS
+
+	Other examples:
+	Rounded Voxels - IQ
+    https://www.shadertoy.com/view/4djGWR
+
+	Sampler - w23
+	https://www.shadertoy.com/view/MlfGRM
+
+	Text In Space - akohdr
+	https://www.shadertoy.com/view/4d3SWB
+
+*/
+
+#define PI 3.14159265
+#define FAR 60.
+
+// 2x2 matrix rotation. Note the absence of "cos." It's there, but in disguise, and comes courtesy
+// of Fabrice Neyret's "ouside the box" thinking. :)
+mat2 rot2( float a ){ vec2 v = sin(vec2(1.570796, 0) + a);	return mat2(v, -v.y, v.x); }
+
+// Tri-Planar blending function. Based on an old Nvidia tutorial.
+vec3 tex3D( sampler2D tex, in vec3 p, in vec3 n ){
+  
+    n = max(abs(n), 0.001);//n = max((abs(n) - 0.2)*7., 0.001); //  etc.
+    n /= (n.x + n.y + n.z ); 
+	p = (texture(tex, p.yz)*n.x + texture(tex, p.zx)*n.y + texture(tex, p.xy)*n.z).xyz;
+    return p*p;
+}
+
+// The path is a 2D sinusoid that varies over time, depending upon the frequencies, and amplitudes.
+vec2 path(in float z){ 
+    //return vec2(0); // Straight.
+    float a = sin(z * 0.11);
+    float b = cos(z * 0.14);
+    return vec2(a*4. -b*1.5, b*1.7 + a*1.5); 
+    //return vec2(a*4. -b*1.5, 0.); // Just X.
+    //return vec2(0, b*1.7 + a*1.5); // Just Y.
+}
+
+/*
+// Alternate distance field -- Twisted planes. 
+float map(vec3 p){
+    
+     // You may need to reposition the light to work in with the shadows, but for
+     // now, I'm repositioning the scene up a bit.
+     p.y -= .75;
+     p.xy -= path(p.z); // Move the scene around a sinusoidal path.
+     p.xy = rot2(p.z/8.)*p.xy; // Twist it about XY with respect to distance.
+    
+     float n = dot(sin(p*1. + sin(p.yzx*.5 + iTime*.0)), vec3(.25)); // Sinusoidal layer.
+     
+     return 4. - abs(p.y) + n; // Warped double planes, "abs(p.y)," plus surface layers.
+ 
+}
+*/
+
+// Standard perturbed tunnel function.
+//
+float map(vec3 p){
+     
+     // Offset the tunnel about the XY plane as we traverse Z.
+     p.xy -= path(p.z);
+    
+     // Standard tunnel.
+     float n = 5. - length(p.xy*vec2(1, .8));
+     // Square tunnel. Almost redundant in a voxel renderer. :)
+     //float n = 5. - max(abs(p.x), abs(p.y*.8));
+     
+     // Tunnel with a floor.
+     return min(p.y + 3., n); //n = min(-abs(p.y) + 3., n);
+ 
+}
+
+/*
+float brickShade(vec2 p){
+    
+    p.x -= step(p.y, 1.)*.5;
+    
+    p = fract(p);
+    
+    return pow(16.*p.x*p.y*(1.-p.x)*(1.-p.y), 0.25);
+    
+}
+*/
+
+// The brick groove pattern. Thrown together too quickly.
+// Needs some tidy up, but it's quick enough for now.
+//
+const float w2h = 2.; // Width to height ratio.
+const float mortW = 0.05; // Morter width.
+
+float brickMorter(vec2 p){
+	
+    p.x -= step(1., p.y)*.5;
+    
+    p = abs(fract(p + vec2(0, .5)) - .5)*2.;
+    
+    // Smooth grooves. Better for bump mapping.
+    return smoothstep(0., mortW, p.x)*smoothstep(0., mortW*w2h, p.y);
+    
+}
+
+float brick(vec2 p){
+    
+	p = fract(p*vec2(0.5/w2h, 0.5))*2.;
+
+    return brickMorter(p);//*(brickShade(p)*.25 + .75);
+}
+
+
+// Surface bump function. Cheap, but with decent visual impact.
+float bumpSurf3D( in vec3 p, in vec3 n){
+
+    n = abs(n);
+    
+    if (n.x>0.5) p.xy = p.zy;
+    else if (n.y>0.5) p.xy = p.xz;
+    
+    return brick(p.xy);
+    
+}
+
+// Standard function-based bump mapping function.
+vec3 doBumpMap(in vec3 p, in vec3 nor, float bumpfactor){
+    
+    const vec2 e = vec2(0.001, 0);
+    float ref = bumpSurf3D(p, nor);                 
+    vec3 grad = (vec3(bumpSurf3D(p - e.xyy, nor),
+                      bumpSurf3D(p - e.yxy, nor),
+                      bumpSurf3D(p - e.yyx, nor) )-ref)/e.x;                     
+          
+    grad -= nor*dot(nor, grad);          
+                      
+    return normalize( nor + grad*bumpfactor );
+	
+}
+
+// Texture bump mapping. Four tri-planar lookups, or 12 texture lookups in total. I tried to 
+// make it as concise as possible. Whether that translates to speed, or not, I couldn't say.
+vec3 doBumpMap( sampler2D tx, in vec3 p, in vec3 n, float bf){
+   
+    const vec2 e = vec2(0.001, 0);
+    
+    // Three gradient vectors rolled into a matrix, constructed with offset greyscale texture values.    
+    mat3 m = mat3( tex3D(tx, p - e.xyy, n), tex3D(tx, p - e.yxy, n), tex3D(tx, p - e.yyx, n));
+    
+    vec3 g = vec3(0.299, 0.587, 0.114)*m; // Converting to greyscale.
+    g = (g - dot(tex3D(tx,  p , n), vec3(0.299, 0.587, 0.114)) )/e.x; g -= n*dot(n, g);
+                      
+    return normalize( n + g*bf ); // Bumped normal. "bf" - bump factor.
+    
+}
+
+
+// This is just a slightly modified version of fb39ca4's code, with some
+// elements from IQ and Reinder's examples. They all work the same way:
+// Obtain the current voxel, then test the distance field for a hit. If
+// the ray has moved into the voxelized isosurface, break. Otherwise, move
+// to the next voxel. That involves a bit of decision making - due to the
+// nature of voxel boundaries - and the "mask," "side," etc, variable are
+// an evolution of that. If you're not familiar with the process, it's 
+// pretty straight forward, and there are a lot of examples on Shadertoy, 
+// plus a lot more articles online.
+//
+vec3 voxelTrace(vec3 ro, vec3 rd, out vec3 mask){
+    
+    vec3 p = floor(ro) + .5;
+
+	vec3 dRd = 1./abs(rd); // 1./max(abs(rd), vec3(.0001));
+	rd = sign(rd);
+    vec3 side = dRd*(rd*(p - ro) + .5);
+    
+    mask = vec3(0);
+	
+	for (int i = 0; i < 64; i++) {
+		
+        if (map(p)<0.) break;
+        
+        // Note that I've put in the messy reverse step to accomodate
+        // the "less than or equals" logic, rather than just the "less than."
+        // Without it, annoying seam lines can appear... Feel free to correct
+        // me on that, if my logic isn't up to par. It often isn't. :)
+        mask = step(side, side.yzx)*(1. - step(side.zxy, side));
+		side += mask*dRd;
+		p += mask*rd;
+	}
+    
+    return p;    
+}
+
+
+// Voxel shadows. They kind of work like regular hard-edged shadows. They
+// didn't present too many problems, but it was still nice to have Reinder's
+// Minecraft shadow example as a reference. Fantastic example, if you've
+// never seen it:
+//
+// Minecraft - Reinder
+// https://www.shadertoy.com/view/4ds3WS
+//
+float voxShadow(vec3 ro, vec3 rd, float end){
+
+    float shade = 1.;
+    vec3 p = floor(ro) + .5;
+
+	vec3 dRd = 1./abs(rd);//1./max(abs(rd), vec3(.0001));
+	rd = sign(rd);
+    vec3 side = dRd*(rd*(p - ro) + .5);
+    
+    vec3 mask = vec3(0);
+    
+    float d = 1.;
+	
+	for (int i = 0; i < 16; i++) {
+		
+        d = map(p);
+        
+        if (d<0. || length(p - ro)>end) break;
+        
+        mask = step(side, side.yzx)*(1. - step(side.zxy, side));
+		side += mask*dRd;
+		p += mask*rd;                
+	}
+
+    // Shadow value. If in shadow, return a dark value.
+    return shade = step(0., d)*.7 + .3;
+    
+}
+
+///////////
+//
+// This is a trimmed down version of fb39ca4's voxel ambient occlusion code with some 
+// minor tweaks and adjustments here and there. The idea behind voxelized AO is simple. 
+// The execution, not so much. :) So damn fiddly. Thankfully, fb39ca4, IQ, and a few 
+// others have done all the hard work, so it's just a case of convincing yourself that 
+// it works and using it.
+//
+// Refer to: Voxel Ambient Occlusion - fb39ca4
+// https://www.shadertoy.com/view/ldl3DS
+//
+vec4 voxelAO(vec3 p, vec3 d1, vec3 d2) {
+   
+    // Take the four side and corner readings... at the correct positions...
+    // That's the annoying bit that I'm glad others have worked out. :)
+	vec4 side = vec4(map(p + d1), map(p + d2), map(p - d1), map(p - d2));
+	vec4 corner = vec4(map(p + d1 + d2), map(p - d1 + d2), map(p - d1 - d2), map(p + d1 - d2));
+	
+    // Quantize them. It's either occluded, or it's not, so to speak.
+    side = step(side, vec4(0));
+    corner = step(corner, vec4(0));
+    
+    // Use the side and corner values to produce a more honed in value... kind of.
+    return 1. - (side + side.yzwx + max(corner, side*side.yzwx))/3.;    
+	
+}
+
+float calcVoxAO(vec3 vp, vec3 sp, vec3 rd, vec3 mask) {
+    
+    // Obtain four AO values at the appropriate quantized positions.
+	vec4 vAO = voxelAO(vp - sign(rd)*mask, mask.zxy, mask.yzx);
+    
+    // Use the fractional voxel postion and and the proximate AO values
+    // to return the interpolated AO value for the surface position.
+    sp = fract(sp);
+    vec2 uv = sp.yz*mask.x + sp.zx*mask.y + sp.xy*mask.z;
+    return mix(mix(vAO.z, vAO.w, uv.x), mix(vAO.y, vAO.x, uv.x), uv.y);
+
+}
+///////////
+
+void mainImage( out vec4 fragColor, in vec2 fragCoord ){
+	
+	// Screen coordinates.
+	vec2 uv = (fragCoord - iResolution.xy*0.5)/iResolution.y;
+	
+	// Camera Setup.
+	vec3 camPos = vec3(0., 0.5, iTime*8.); // Camera position, doubling as the ray origin.
+	vec3 lookAt = camPos + vec3(0.0, 0.0, 0.25);  // "Look At" position.
+
+ 
+    // Light positioning. 
+ 	vec3 lightPos = camPos + vec3(0, 2.5, 8);// Put it a bit in front of the camera.
+
+	// Using the Z-value to perturb the XY-plane.
+	// Sending the camera, "look at," and two light vectors down the tunnel. The "path" function is 
+	// synchronized with the distance function. Change to "path2" to traverse the other tunnel.
+	lookAt.xy += path(lookAt.z);
+	camPos.xy += path(camPos.z);
+	lightPos.xy += path(lightPos.z);
+
+    // Using the above to produce the unit ray-direction vector.
+    float FOV = PI/2.; // FOV - Field of view.
+    vec3 forward = normalize(lookAt-camPos);
+    vec3 right = normalize(vec3(forward.z, 0., -forward.x )); 
+    vec3 up = cross(forward, right);
+
+    // rd - Ray direction.
+    vec3 rd = normalize(forward + FOV*uv.x*right + FOV*uv.y*up);
+    
+    //vec3 rd = normalize(forward + FOV*uv.x*right + FOV*uv.y*up);
+    //rd = normalize(vec3(rd.xy, rd.z - dot(rd.xy, rd.xy)*.25));    
+    
+    // Swiveling the camera about the XY-plane (from left to right) when turning corners.
+    // Naturally, it's synchronized with the path in some kind of way.
+	rd.xy = rot2( path(lookAt.z).x/24. )*rd.xy;
+
+    // Raymarch the voxel grid.
+    vec3 mask;
+	vec3 vPos = voxelTrace(camPos, rd, mask);
+	
+    // Using the voxel position to determine the distance from the camera to the hit point.
+    // I'm assuming IQ is responsible for this clean piece of logic.
+	vec3 tCube = (vPos - camPos - .5*sign(rd))/rd;
+    float t = max(max(tCube.x, tCube.y), tCube.z);
+    
+	
+    // Initialize the scene color.
+    vec3 sceneCol = vec3(0);
+	
+	// The ray has effectively hit the surface, so light it up.
+	if(t<FAR){
+	
+   	
+    	// Surface position and surface normal.
+	    vec3 sp = camPos + rd*t;
+        
+        // Voxel normal.
+        vec3 sn = -(mask*sign( rd ));
+        
+        // Sometimes, it's necessary to save a copy of the unbumped normal.
+        vec3 snNoBump = sn;
+        
+        // I try to avoid it, but it's possible to do a texture bump and a function-based
+        // bump in succession. It's also possible to roll them into one, but I wanted
+        // the separation... Can't remember why, but it's more readable anyway.
+        //
+        // Texture scale factor.
+        const float tSize0 = 1./4.;
+        // Texture-based bump mapping.
+	    sn = doBumpMap(iChannel0, sp*tSize0, sn, 0.02);
+
+        // Function based bump mapping. Comment it out to see the under layer. It's pretty
+        // comparable to regular beveled Voronoi... Close enough, anyway.
+        sn = doBumpMap(sp, sn, .15);
+        
+       
+	    // Ambient occlusion.
+	    float ao = calcVoxAO(vPos, sp, rd, mask) ;//calculateAO(sp, sn);//*.75 + .25;
+
+        
+    	// Light direction vectors.
+	    vec3 ld = lightPos-sp;
+
+        // Distance from respective lights to the surface point.
+	    float lDist = max(length(ld), 0.001);
+    	
+    	// Normalize the light direction vectors.
+	    ld /= lDist;
+	    
+	    // Light attenuation, based on the distances above.
+	    float atten = 1./(1. + lDist*.2 + lDist*0.1); // + distlpsp*distlpsp*0.025
+    	
+    	// Ambient light.
+	    float ambience = 0.25;
+    	
+    	// Diffuse lighting.
+	    float diff = max( dot(sn, ld), 0.0);
+   	
+    	// Specular lighting.
+	    float spec = pow(max( dot( reflect(-ld, sn), -rd ), 0.0 ), 32.);
+
+	    
+	    // Fresnel term. Good for giving a surface a bit of a reflective glow.
+        //float fre = pow( clamp(dot(sn, rd) + 1., .0, 1.), 1.);
+        
+ 
+        // Object texturing.
+        //
+        // Obfuscated way to tinge the floor and ceiling with a bit of brown.
+	    vec3 texCol = vec3(1, .6, .4) + step(abs(snNoBump.y), .5)*vec3(0,.4, .6);
+	    
+        // Multiplying by the texture color.
+	    texCol *= tex3D(iChannel0, sp*tSize0, sn);
+        
+        //texCol *= bumpSurf3D( sp, sn)*.25 + .75; // Darken the grout, if you wanted.
+
+        
+        // Shadows... I was having all sorts of trouble trying the move the ray off off the
+        // block. Thanks to Reinder's "Minecraft" example for showing me the ray needs to 
+        // be bumped off by the normal, not the unit direction ray. :)
+        float shading = voxShadow(sp + snNoBump*.01, ld, lDist);
+    	
+    	// Combining the above terms to produce the final color. It was based more on acheiving a
+        // certain aesthetic than science.
+        sceneCol = texCol*(diff + ambience) + vec3(.7, .9, 1.)*spec;// + vec3(.5, .8, 1)*spec2;
+        //sceneCol += texCol*vec3(.8, .95, 1)*pow(fre, 4.)*2.; // White mortar... not really.
+        
+
+
+	    // Shading.
+        sceneCol *= atten*shading*ao;
+        
+        // "fb39ca4" did such a good job with the AO, that it's worth a look on its own. :)
+        //sceneCol = vec3(ao); 
+
+	   
+	
+	}
+       
+    // Blend in a bit of logic-defying fog for atmospheric effect. :)
+    sceneCol = mix(sceneCol, vec3(.08, .16, .34), smoothstep(0., .95, t/FAR)); // exp(-.002*t*t), etc.
+
+    // Clamp and present the badly gamma corrected pixel to the screen.
+	fragColor = vec4(sqrt(clamp(sceneCol, 0., 1.)), 1.0);
+	
+}`,
+    "Mandelbrot Fract": `// ----------------CAUTION!!!--- FLASHING BRIGHT LIGHTS!!!-------------------------
+
+
+
+// Credits - fractal zoom with smooth iter count adapted from - iq (Inigo quilez) - https://iquilezles.org/articles/msetsmooth
+// Koch Snowflake symmetry from tutorial by Martijn Steinrucken aka The Art of Code/BigWings - 2020 - https://www.youtube.com/watch?v=il_Qg9AqQkE&ab_channel=TheArtofCode
+//music - Sajanka (Official) Sajanka - Sun Is Coming
+
+//Some notes - color is determined by date and not time - hour of day dependent.
+//Move the mouse on the Y axis to change the symmetry.
+
+//----------------------------------------------------------------------------------
+
+//uncomment to sample audio input from MIC instead of SoundCloud.
+//#define MIC_INPUT
+
+//comment to make it less trippy and noisy.
+#define EXTRA_DMT
+
+
+#define PI 3.14159265359
+
+
+
+#define date iDate
+#define time iTime
+#define resolution iResolution
+
+float freqs[4];
+
+
+vec2 rot(vec2 p,float a){
+    
+    float c = cos(a);
+    float s = sin(a);
+    
+    mat2 m = mat2(c,-s,s,c);
+    
+    p*=m;
+    return p  ;
+}
+
+float localTime(){
+
+float d = date.w / date.x;
+return d;
+
+}
+
+vec3 randomCol(float sc){
+
+ float d = localTime();
+	float r = sin(sc * 1. * d)*.5+.5;
+	float g = sin(sc * 2. * d)*.5+.5;
+	float b = sin(sc * 4. * d)*.5+.5;
+
+	vec3 col = vec3(r,g,b);
+	col = clamp(col,0.,1.);
+
+	return col;
+	}
+
+
+//--------------------------------------------------mandelbrot generator-----------https://iquilezles.org/articles/msetsmooth
+
+	float mandelbrot(vec2 c )
+{
+    #if 1
+    {
+        float c2 = dot(c, c);
+        // skip computation inside M1 - https://iquilezles.org/articles/mset1bulb
+        if( 256.0*c2*c2 - 96.0*c2 + 32.0*c.x - 3.0 < 0.0 ) return 0.0;
+        // skip computation inside M2 - https://iquilezles.org/articles/mset2bulb
+        if( 16.0*(c2+2.0*c.x+1.0) - 1.0 < 0.0 ) return 0.0;
+    }
+    #endif
+
+
+    const float B = 128.0;
+    float l = 0.0;
+    vec2 z  = vec2(0.0);
+    for( int i=0; i<256; i++ )
+    {
+        z = vec2( z.x*z.x - z.y*z.y, 2.0*z.x*z.y ) + c;
+        if( dot(z,z)>(B*B) ) break;
+        l += 1.0;
+    }
+
+    if( l>255.0 ) return 0.0;
+
+
+    // equivalent optimized smooth interation count
+    float sl = l - log2(log2(dot(z,z))) + 4.0;
+
+
+
+     return sl;
+ }
+
+
+vec3 mandelbrotImg(vec2 p)
+{
+
+    //uncomment to see unmaped set
+	//p = (-resolution.xy + 2.0*gl_FragCoord.xy)/resolution.y;
+    float mtime =  time;
+    mtime -= freqs[3];
+    float zoo = 0.62 + 0.38*cos(.1*mtime);
+   float coa = cos( 0.015*(1.0-zoo)*mtime );
+   float sia = sin( 0.015*(1.0-zoo)*mtime );
+   zoo = pow( zoo,6.0);
+   vec2 xy = vec2( p.x*coa-p.y*sia, p.x*sia+p.y*coa);
+   vec2 c = vec2(-.745,.186) + xy*zoo;
+
+        float l = mandelbrot(c);
+        
+        
+	vec3 col1 = 0.5 + 0.5*cos( 3.0 + l*.15 + randomCol(.1));
+    #ifdef EXTRA_DMT
+    vec3 col2 = 0.5 + 0.5*cos( 3.0 + l*.15 / randomCol(.1));
+    #else
+    vec3 col2 = 0.5 + 0.5*cos( 3.0 + l*.15 * randomCol(.1));
+    #endif
+    vec3 col = mix(col1,col2,sin(mtime)*.5+.5);
+
+
+
+
+return col;
+}
+
+//-----------------functions-----------
+
+float remap(float a1, float a2 ,float b1, float b2, float t)
+{
+	return b1+(t-a1)*(b2-b1)/(a2-a1);
+}
+
+
+vec2 remap(float a1, float a2 ,float b1, float b2, vec2 t)
+{
+	return b1+(t-a1)*(b2-b1)/(a2-a1);
+}
+
+
+vec4 remap(float a1, float a2 ,float b1, float b2, vec4 t)
+{
+	return b1+(t-a1)*(b2-b1)/(a2-a1);
+}
+
+
+
+
+
+vec2 N(float angle) {
+    return vec2(sin(angle), cos(angle));
+}
+
+void mainImage(out vec4 fragColor, in vec2 fragCoord)
+{
+//--------get soundtrack frequencies----
+
+
+    #ifdef MIC_INPUT
+	freqs[0] = texture( iChannel1, vec2( 0.01, 0.25 ) ).x;
+	freqs[1] = texture( iChannel1, vec2( 0.07, 0.25 ) ).x;
+	freqs[2] = texture( iChannel1, vec2( 0.15, 0.25 ) ).x;
+	freqs[3] = texture( iChannel1, vec2( 0.30, 0.25 ) ).x;
+    #else 
+    freqs[0] = texture( iChannel0, vec2( 0.01, 0.25 ) ).x;
+	freqs[1] = texture( iChannel0, vec2( 0.07, 0.25 ) ).x;
+	freqs[2] = texture( iChannel0, vec2( 0.15, 0.25 ) ).x;
+	freqs[3] = texture( iChannel0, vec2( 0.30, 0.25 ) ).x;
+    #endif
+    float avgFreq = (freqs[0] +freqs[1] +freqs[2] +freqs[3])/4.;
+
+//--------image part---------
+    vec2 uv = (fragCoord.xy-.5*resolution.xy)/resolution.y;
+	vec2 mouse = 1. - iMouse.xy/resolution.xy; // 0 1
+	vec2 ouv = uv;
+    //uv.y -= .05;
+    
+    uv = rot(uv,(sin(iTime*.1) / freqs[0]*.1  ) * PI  ) ;  
+	uv *= 4.0 - (avgFreq * 1.5  );
+
+    uv.x = abs(uv.x);
+    
+    vec3 col = vec3(0);
+    float d;
+
+    float angle = 0.;
+    vec2 n = N((5./6.)*3.1415);
+
+    uv.y += tan((5./6.)*3.1415)*.5;
+   	d = dot(uv-vec2(.5, 0), n);
+    uv -= max(0.,d)*n*2.;
+
+    float scale = 1.;
+
+    n = N( freqs[0]*(2./3.)*3.1415);
+    uv.x += .5;
+    for(int i=0; i<10; i++) {
+        uv *= 3.;
+        scale *= 3.;
+        uv.x -= 1.5;
+
+        uv.x = abs(uv.x);
+        uv.x -= .5;
+        d = dot(uv, n);
+        uv -= min(0.,d)*n*2.;
+    }
+
+    d = length(uv/ clamp(freqs[2],0.1,.9 )- vec2(clamp(uv.x,-1., 1.), 0));
+    col += smoothstep(10./resolution.y, .0, d/scale);
+    uv /= scale;	// normalization
+
+   
+	vec3 manCol = mandelbrotImg(uv);
+	 col += manCol;
+
+
+ 		// vignette effect
+	  col *= 1.0 - 0.5*length(uv *0.5) * freqs[1];
+
+	 
+    fragColor = vec4( col,1.0);
+}`,
+"Crystalline": `#define DTR 0.01745329
+#define rot(a) mat2(cos(a),sin(a),-sin(a),cos(a))
+
+vec2 uv;
+vec3 cp,cn,cr,ro,rd,ss,oc,cc,gl,vb;
+vec4 fc;
+float tt,cd,sd,io,oa,td;
+int es=0,ec;
+
+float bx(vec3 p,vec3 s){vec3 q=abs(p)-s;return min(max(q.x,max(q.y,q.z)),0.)+length(max(q,0.));}
+float smin(float a, float b, float k){float h=clamp(0.5+0.5*(b-a)/k,0.,1.);return mix(b,a,h)-k*h*(1.-h);}
+
+vec3 lattice(vec3 p, int iter, float an)
+{
+		for(int i = 0; i < iter; i++)
+		{
+			p.xy *= rot(an*DTR);
+			p.yz=abs(p.yz)-1.;
+			p.xz *= rot(-an*DTR);
+		}
+		return p;
+}
+
+float mp(vec3 p)
+{
+//now with mouse control
+if(iMouse.z>0.){
+    p.yz*=rot(2.0*(iMouse.y/iResolution.y-0.5));
+    p.zx*=rot(-7.0*(iMouse.x/iResolution.x-0.5));
+}
+		vec3 pp=p;
+		
+		p.xz*=rot(tt*0.1);
+		p.xy*=rot(tt*0.1);
+
+		p=lattice(p,9,45.+cos(tt*0.1)*5.);
+	
+
+		sd = bx(p,vec3(1)) - 0.01;
+	
+		sd = smin(sd, sd, 0.8);
+
+		gl += exp(-sd*0.001) * normalize(p*p) * 0.003;
+	
+		sd=abs(sd)-0.001;
+
+		if(sd<0.001)
+		{
+			oc=vec3(1);
+			io=1.2;
+			oa=0.0;
+			ss=vec3(0);
+		  vb=vec3(0.,10,2.8);
+			ec=2;	
+		}
+		return sd;
+}
+
+void tr(){vb.x=0.;cd=0.;for(float i=0.;i<256.;i++){mp(ro+rd*cd);cd+=sd;td+=sd;if(sd<0.0001||cd>128.)break;}}
+void nm(){mat3 k=mat3(cp,cp,cp)-mat3(.001);cn=normalize(mp(cp)-vec3(mp(k[0]),mp(k[1]),mp(k[2])));}
+
+void px()
+{
+  cc=vec3(0.35,0.25,0.45)+length(pow(abs(rd+vec3(0,0.5,0)),vec3(3)))*0.3+gl;
+  vec3 l=vec3(0.9,0.7,0.5);
+  if(cd>128.){oa=1.;return;}
+  float df=clamp(length(cn*l),0.,1.);
+  vec3 fr=pow(1.-df,3.)*mix(cc,vec3(0.4),0.5);
+	float sp=(1.-length(cross(cr,cn*l)))*0.2;
+	float ao=min(mp(cp+cn*0.3)-0.3,0.3)*0.4;
+  cc=mix((oc*(df+fr+ss)+fr+sp+ao+gl),oc,vb.x);
+}
+
+void render(vec2 frag, vec2 res, float time, out vec4 col)
+{
+	tt=mod(time+25., 260.);
+  uv=vec2(frag.x/res.x,frag.y/res.y);
+  uv-=0.5;uv/=vec2(res.y/res.x,1);
+	float an = (sin(tt*0.3)*0.5+0.5);
+    an = 1.-pow(1.-pow(an, 5.),10.);
+  ro=vec3(0,0,-5. - an*15.);rd=normalize(vec3(uv,1));
+  
+	for(int i=0;i<25;i++)
+  {
+		tr();cp=ro+rd*cd;
+    nm();ro=cp-cn*0.01;
+    cr=refract(rd,cn,i%2==0?1./io:io);
+    if(length(cr)==0.&&es<=0){cr=reflect(rd,cn);es=ec;}
+    if(max(es,0)%3==0&&cd<128.)rd=cr;es--;
+		if(vb.x>0.&&i%2==1)oa=pow(clamp(cd/vb.y,0.,1.),vb.z);
+		px();fc=fc+vec4(cc*oa,oa)*(1.-fc.a);	
+		if((fc.a>=1.||cd>128.))break;
+  }
+  col = fc/fc.a;
+}
+void mainImage( out vec4 fragColor, in vec2 fragCoord )
+{
+    render(fragCoord.xy,iResolution.xy,iTime,fragColor);
+} `,
     "Silk (Needs work)": `float colormap_red(float x) {
     if (x < 0.0) {
         return 54.0 / 255.0;
