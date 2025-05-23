@@ -1,6 +1,213 @@
 
 // Sample Shadertoy shaders to quickly test
 export const SHADERS = {
+    "Intergalactic offices": `// Raymarching sketch inspired by the work of Marc-Antoine Mathieu
+// Leon 2017-11-21
+// using code from IQ, Mercury, LJ, Duke, Koltes
+// Enhanced with subtle bass-responsive camera bob
+
+// tweak it
+#define donut 30.
+#define cell 4.
+#define height 2.
+#define thin .04
+#define radius 15.
+#define speed 1.
+
+#define STEPS 100.
+#define VOLUME 0.001
+#define PI 3.14159
+#define TAU (2.*PI)
+#define time iTime
+
+// raymarching toolbox
+float rng (vec2 seed) { return fract(sin(dot(seed*.1684,vec2(54.649,321.547)))*450315.); }
+mat2 rot (float a) { float c=cos(a),s=sin(a); return mat2(c,-s,s,c); }
+float sdSphere (vec3 p, float r) { return length(p)-r; }
+float sdCylinder (vec2 p, float r) { return length(p)-r; }
+float sdDisk (vec3 p, vec3 s) { return max(max(length(p.xz)-s.x, s.y), abs(p.y)-s.z); }
+float sdIso(vec3 p, float r) { return max(0.,dot(p,normalize(sign(p))))-r; }
+float sdBox( vec3 p, vec3 b ) { vec3 d = abs(p) - b; return min(max(d.x,max(d.y,d.z)),0.0) + length(max(d,0.0)); }
+float sdTorus( vec3 p, vec2 t ) { vec2 q = vec2(length(p.xz)-t.x,p.y); return length(q)-t.y; }
+float amod (inout vec2 p, float count) { float an = TAU/count; float a = atan(p.y,p.x)+an/2.; float c = floor(a/an); c = mix(c,abs(c),step(count*.5,abs(c))); a = mod(a,an)-an/2.; p.xy = vec2(cos(a),sin(a))*length(p); return c; }
+float amodIndex (vec2 p, float count) { float an = TAU/count; float a = atan(p.y,p.x)+an/2.; float c = floor(a/an); c = mix(c,abs(c),step(count*.5,abs(c))); return c; }
+float repeat (float v, float c) { return mod(v,c)-c/2.; }
+vec2 repeat (vec2 v, vec2 c) { return mod(v,c)-c/2.; }
+vec3 repeat (vec3 v, float c) { return mod(v,c)-c/2.; }
+float smoo (float a, float b, float r) { return clamp(.5+.5*(b-a)/r, 0., 1.); }
+float smin (float a, float b, float r) { float h = smoo(a,b,r); return mix(b,a,h)-r*h*(1.-h); }
+float smax (float a, float b, float r) { float h = smoo(a,b,r); return mix(a,b,h)+r*h*(1.-h); }
+vec2 displaceLoop (vec2 p, float r) { return vec2(length(p.xy)-r, atan(p.y,p.x)); }
+float map (vec3);
+float getShadow (vec3 pos, vec3 at, float k) {
+    vec3 dir = normalize(at - pos);
+    float maxt = length(at - pos);
+    float f = 01.;
+    float t = VOLUME*50.;
+    for (float i = 0.; i <= 1.; i += 1./15.) {
+        float dist = map(pos + dir * t);
+        if (dist < VOLUME) return 0.;
+        f = min(f, k * dist / t);
+        t += dist;
+        if (t >= maxt) break;
+    }
+    return f;
+}
+vec3 getNormal (vec3 p) { vec2 e = vec2(.01,0); return normalize(vec3(map(p+e.xyy)-map(p-e.xyy),map(p+e.yxy)-map(p-e.yxy),map(p+e.yyx)-map(p-e.yyx))); }
+
+void camera (inout vec3 p) {
+    p.xz *= rot(PI/8.);
+    p.yz *= rot(PI/6.);
+}
+
+float windowCross (vec3 pos, vec4 size, float salt) {
+    vec3 p = pos;
+    float sx = size.x * (.6+salt*.4);
+    float sy = size.y * (.3+salt*.7);
+    vec2 sxy = vec2(sx,sy);
+    p.xy = repeat(p.xy+sxy/2., sxy);
+    float scene = sdBox(p, size.zyw*2.);
+    scene = min(scene, sdBox(p, size.xzw*2.));
+    scene = max(scene, sdBox(pos, size.xyw));
+    return scene;
+}
+
+float window (vec3 pos, vec2 dimension, float salt) {
+    float thinn = .008;
+    float depth = .04;
+    float depthCadre = .06;
+    float padding = .08;
+    float scene = windowCross(pos, vec4(dimension,thinn,depth), salt);
+    float cadre = sdBox(pos, vec3(dimension, depthCadre));
+    cadre = max(cadre, -sdBox(pos, vec3(dimension - padding, depthCadre*2.)));
+    scene = min(scene, cadre);
+    return scene;
+}
+
+float boxes (vec3 pos, float salt) {
+    vec3 p = pos;
+    float ry = cell * .43*(.3+salt);
+    float rz = cell * .2*(.5+salt);
+    float salty = rng(vec2(floor(pos.y/ry), floor(pos.z/rz)));
+    pos.y = repeat(pos.y, ry);
+    pos.z = repeat(pos.z, rz);
+    float scene = sdBox(pos, vec3(.1+.8*salt+salty,.1+.2*salt,.1+.2*salty));
+    scene = max(scene, sdBox(p, vec3(cell*.2)));
+    return scene;
+}
+
+float map (vec3 pos) {
+    vec3 camOffset = vec3(-4,0,0.);
+
+    float scene = 1000.;
+    vec3 p = pos + camOffset;
+    float segments = PI*radius;
+    float indexX, indexY, salt;
+    vec2 seed;
+
+    // donut distortion
+    vec3 pDonut = p;
+    pDonut.x += donut;
+    pDonut.y += radius;
+    pDonut.xz = displaceLoop(pDonut.xz, donut);
+    pDonut.z *= donut;
+    pDonut.xzy = pDonut.xyz;
+    pDonut.xz *= rot(time*.05*speed);
+
+    // ground
+    p = pDonut;
+    scene = min(scene, sdCylinder(p.xz, radius-height));
+
+    // walls
+    p = pDonut;
+    float py = p.y + time * speed;
+    indexY = floor(py / (cell+thin));
+    p.y = repeat(py, cell+thin);
+    scene = min(scene, max(abs(p.y)-thin, sdCylinder(p.xz, radius)));
+    amod(p.xz, segments);
+    p.x -= radius;
+    scene = min(scene, max(abs(p.z)-thin, p.x));
+
+    // horizontal windot
+    p = pDonut;
+    p.xz *= rot(PI/segments);
+    py = p.y + time * speed;
+    indexY = floor(py / (cell+thin));
+    p.y = repeat(py, cell+thin);
+    indexX = amodIndex(p.xz, segments);
+    amod(p.xz, segments);
+    seed = vec2(indexX, indexY);
+    salt = rng(seed);
+    p.x -= radius;
+    vec2 dimension = vec2(.75,.5);
+    p.x +=  dimension.x * 1.5;
+    scene = max(scene, -sdBox(p, vec3(dimension.x, .1, dimension.y)));
+    scene = min(scene, window(p.xzy, dimension, salt));
+
+    // vertical window
+    p = pDonut;
+    py = p.y + cell/2. + time * speed;
+    indexY = floor(py / (cell+thin));
+    p.y = repeat(py, cell+thin);
+    indexX = amodIndex(p.xz, segments);
+    amod(p.xz, segments);
+    seed = vec2(indexX, indexY);
+    salt = rng(seed);
+    p.x -= radius;
+    dimension.y = 1.5;
+    p.x +=  dimension.x * 1.25;
+    scene = max(scene, -sdBox(p, vec3(dimension, .1)));
+    scene = min(scene, window(p, dimension, salt));
+
+    // elements
+    p = pDonut;
+    p.xz *= rot(PI/segments);
+    py = p.y + cell/2. + time * speed;
+    indexY = floor(py / (cell+thin));
+    p.y = repeat(py, cell+thin);
+    indexX = amodIndex(p.xz, segments);
+    amod(p.xz, segments);
+    seed = vec2(indexX, indexY);
+    salt = rng(seed);
+    p.x -= radius - height;
+    scene = min(scene, boxes(p, salt));
+
+    return scene;
+}
+
+void mainImage( out vec4 color, in vec2 coord ) {
+    vec2 uv = (coord.xy-.5*iResolution.xy)/iResolution.y;
+    
+    // Sample bass frequencies for camera bob
+    float bass = texture2D(iChannel0, vec2(0.05, 0.0)).x;
+    
+    // Create subtle vertical camera bob with bass
+    float bassBob = bass * 0.8; // Subtle multiplier for rave music
+    
+    vec3 eye = vec3(0, bassBob, -20);
+    vec3 ray = normalize(vec3(uv, 1.3));
+    camera(eye);
+    camera(ray);
+    float dither = rng(uv+fract(time));
+    vec3 pos = eye;
+    float shade = 0.;
+    for (float i = 0.; i <= 1.; i += 1./STEPS) {
+        float dist = map(pos);
+        if (dist < VOLUME) {
+            shade = 1.-i;
+            break;
+        }
+        dist *= .5 + .1 * dither;
+        pos += ray * dist;
+    }
+    vec3 light = vec3(40.,100.,-10.);
+    float shadow = getShadow(pos, light, 4.);
+    color = vec4(1);
+    color *= shade;
+    color *= shadow;
+    color = smoothstep(.0, .5, color);
+    color.rgb = sqrt(color.rgb);
+}`,
     "Pianoscope": `// CC0: Sunday morning random results with subtle audio reactivity
 //  Tinkering around on sunday morning
 
@@ -408,7 +615,7 @@ float smoothKaleidoscope(inout vec2 p, float sm, float rep) {
 
 // The path function
 vec3 offset(float z) {
-  float a = z;
+  float a = z+texture(iChannel0, vec2(0.1, 0.0)).x;;
   vec2 p = -0.075*(vec2(cos(a), sin(a*sqrt(2.0))) + vec2(cos(a*sqrt(0.75)), sin(a*sqrt(0.5))));
   return vec3(p, z);
 }
@@ -420,7 +627,7 @@ vec3 doffset(float z) {
   return 0.5*(offset(z + eps) - offset(z - eps))/eps;
 }
 
-// The second derivate of the path function
+// The second de=rivate of the path function
 //  Used to generate tilt
 vec3 ddoffset(float z) {
   float eps = 0.1;
@@ -519,7 +726,7 @@ vec4 plane(vec3 ro, vec3 rd, vec3 pp, vec3 off, float aa, float n) {
 }
 
 vec3 skyColor(vec3 ro, vec3 rd) {
-  float d = pow(max(dot(rd, vec3(0.0, 0.0, 1.0)), 0.0), 20.0);
+  float d = pow(max(dot(rd, vec3(0.0, 50.0, 1.0)), 0.0), 20.0);
   return vec3(d);
 }
 
@@ -603,7 +810,7 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
   p.x *= RESOLUTION.x/RESOLUTION.y;
   
   vec3 col = effect(p, q);
-  col *= smoothstep(0.0, 4.0, TIME);
+  col *= smoothstep(0.2, 4.0, TIME);
   col = postProcess(col, q);
  
   fragColor = vec4(col, 1.0);
@@ -666,7 +873,7 @@ float getAudioReactivity() {
     float mids = texture(iChannel0, vec2(0.3, 0.0)).x;
     
     // Smooth and scale the reactivity
-    return 0.2 + 0.8 * (bass * 0.7 + mids * 0.3);
+    return 0.8 * (bass * 0.035 + mids * 0.015);
 }
 
 void mainImage(out vec4 fragColor, in vec2 fragCoord)
@@ -838,6 +1045,131 @@ void mainImage( out vec4 fragColor, in vec2 fragCoord )
     float angle = acos(dot(normal, n)/length(normal)*length(n));
     
 	fragColor = vec4(hsv2rgb_smooth(lerp(vec3(d*0.1 + (colorangle + iTime)*0.01 + atan(uv.y/uv.x)*3.1415 , 2.0, max(1.0 - log(d),0.0)),vec3(d*0.1 + ((colorangle + iTime)+120.0)*0.01 , 2.0, max(1.0 - log(d),0.0)),cos(angle/10.0))),1.0);
+}`,
+"Muah Sound": `float getAudioReactivity() {
+    // Sample multiple frequency ranges
+    float bass = texture(iChannel0, vec2(0.05, 0.0)).x;
+    float lowMids = texture(iChannel0, vec2(0.15, 0.0)).x;
+    float mids = texture(iChannel0, vec2(0.3, 0.0)).x;
+    
+    // Create a smooth, musical response
+    float beatPulse = pow(bass * 0.7 + lowMids * 0.3, 1.5);
+    float smoothReact = mix(mids, beatPulse, 0.5);
+    
+    return smoothstep(0.0, 1.0, smoothReact);
+}
+
+#define MARCHLIMIT 70
+
+vec3 camPos = vec3(0.0, 0.0, -1.0);
+vec3 ld = vec3(0.0, 0.0, 1.0);
+vec3 up = vec3(0.0, 1.0, 0.0);
+vec3 right = vec3(1.0, 0.0, 0.0);
+vec3 lightpos = vec3(1.5, 1.5, 1.5);
+
+// Smooth HSV to RGB conversion 
+vec3 hsv2rgb_smooth( in vec3 c )
+{
+    vec3 rgb = clamp( abs(mod(c.x*6.0+vec3(0.0,4.0,2.0),6.0)-3.0)-1.0, 0.0, 1.0 );
+	rgb = rgb*rgb*(3.0-2.0*rgb); // cubic smoothing	
+	return c.z * mix( vec3(1.0), rgb, c.y);
+}
+
+vec4 range(vec3 p)
+{
+    // Get audio reactivity
+    float audioReact = getAudioReactivity();
+    
+    // Sphere with Radius
+    vec3 spherepos = vec3(0.0, 0.0, 0.0);
+    float radius = log(sin(iTime*0.1)*0.05+1.0)+0.1;
+    // Subtle audio influence on radius
+    radius += audioReact * 0.015;
+	
+    float anim = smoothstep(0., .1, cos(iTime*0.4)+1.0);
+    float anim2 = smoothstep(0., .1, -cos(iTime*0.4)+1.0);
+    
+    // Audio-reactive wave amplitude
+    float audioWave = 1.0 + audioReact * 0.2;
+    float xampl = sin(iTime*1.3)*0.4*anim * audioWave;
+    float yampl = (sin(iTime*1.3)*0.4-(anim2*0.3)) * audioWave;
+    
+    p.x += cos((max(-2.0+p.z-camPos.z,0.)))*xampl-xampl;
+    p.y += sin((max(-2.0+p.z-camPos.z,0.)))*yampl;
+    
+    p = mod(p + vec3(0.5,0.5,0.5), vec3(1.0,1.0,1.0)) - vec3(0.5,0.5,0.5);
+    spherepos = mod(spherepos + vec3(0.5,0.5,0.5), vec3(1.0,1.0,1.0)) - vec3(0.5,0.5,0.5);
+    
+    vec3 diff = p - spherepos;
+    vec3 normal = normalize(diff);
+    
+    return vec4(normal, length(diff)-radius);
+}
+
+vec3 lerp(vec3 a, vec3 b, float p)
+{
+    p = clamp(p,0.,1.);
+ 	return a*(1.0-p)+b*p;   
+}
+
+vec4 march(vec3 cam, vec3 n)
+{
+    float len = 1.0;
+    vec4 ret;
+    
+    for(int i = 0; i < MARCHLIMIT; i++)
+    {
+        ret = range(camPos + len*n)*0.5;
+		len += ret.w;
+    }
+    
+	return vec4(ret.xyz, len);
+}
+
+void mainImage( out vec4 fragColor, in vec2 fragCoord )
+{
+    float audioReact = getAudioReactivity();
+    
+    // Audio-reactive color angle offset
+    float colorangle = audioReact * 30.0; // Shift hue by up to 30 degrees with beat
+    
+	vec2 uv = (fragCoord.xy*2.0) / iResolution.xy - vec2(1, 1);
+    uv.x *= iResolution.x / iResolution.y;
+    
+    // Base rotation with subtle audio influence
+    float rotangle = iTime*0.08 + audioReact * 0.02;
+    vec2 newuv;
+    newuv.x = uv.x*cos(rotangle)-uv.y*sin(rotangle);
+    newuv.y = uv.x*sin(rotangle)+uv.y*cos(rotangle);
+    uv = newuv;
+    
+    camPos = vec3(0.5, 0.5, iTime*1.0);
+    float zoom = 0.6;
+    vec3 n = normalize(vec3(sin(uv.x*3.1415*zoom),sin(uv.y*3.1415*zoom) ,ld.z*cos(uv.x*3.1415*zoom)*cos(uv.y*3.1415*zoom)));
+    vec4 rangeret = march(camPos, n);
+    float d = log(rangeret.w / 1.0 + 1.0);
+    vec3 normal = rangeret.xyz;
+    
+    vec3 p = camPos + n*d;
+    float angle = acos(dot(normal, n)/length(normal)*length(n));
+    
+    // Original color calculation with audio enhancement
+    vec3 color1 = vec3(
+        d*0.1 + (colorangle + iTime)*0.01 + atan(uv.y/uv.x)*3.1415,
+        2.0 + audioReact * 0.3, // Saturation boost with audio
+        max(1.0 - log(d), 0.0) * (1.0 + audioReact * 0.2) // Brightness pulse
+    );
+    
+    vec3 color2 = vec3(
+        d*0.1 + ((colorangle + iTime)+120.0)*0.01,
+        2.0 + audioReact * 0.3, // Saturation boost with audio
+        max(1.0 - log(d), 0.0) * (1.0 + audioReact * 0.2) // Brightness pulse
+    );
+    
+    // Original lerp based on angle, with audio influence on the mix
+    float mixFactor = cos(angle/10.0 + audioReact * 0.5);
+    
+	fragColor = vec4(hsv2rgb_smooth(lerp(color1, color2, mixFactor)), 1.0);
 }`,
 "Firestorm": `/// 
 /// This post cloned from below post.
@@ -3640,136 +3972,6 @@ void mainImage(out vec4 c,in vec2 o) {
     fragColor = vec4(col, 1.0);
 }`,
 
-"Temporal Fractal": `
-// CC0: Appolloian with a twist II
-//  Playing around with shadows in 2D
-//  Needed a somewhat more complex distance field than boxes
-//  The appolloian fractal turned out quite nice so while
-//  similar to an earlier shader of mine I think it's
-//  distrinctive enough to share
-#define RESOLUTION  iResolution
-#define TIME        iTime
-#define MAX_MARCHES 30
-#define TOLERANCE   0.0001
-#define ROT(a)      mat2(cos(a), sin(a), -sin(a), cos(a))
-#define PI          3.141592654
-#define TAU         (2.0*PI)
-
-const mat2 rot0 = ROT(0.0);
-mat2 g_rot0 = rot0;
-mat2 g_rot1 = rot0;
-
-// License: Unknown, author: nmz (twitter: @stormoid), found: https://www.shadertoy.com/view/NdfyRM
-float sRGB(float t) { return mix(1.055*pow(t, 1./2.4) - 0.055, 12.92*t, step(t, 0.0031308)); }
-// License: Unknown, author: nmz (twitter: @stormoid), found: https://www.shadertoy.com/view/NdfyRM
-vec3 sRGB(in vec3 c) { return vec3 (sRGB(c.x), sRGB(c.y), sRGB(c.z)); }
-
-// License: WTFPL, author: sam hocevar, found: https://stackoverflow.com/a/17897228/418488
-const vec4 hsv2rgb_K = vec4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
-vec3 hsv2rgb(vec3 c) {
-  vec3 p = abs(fract(c.xxx + hsv2rgb_K.xyz) * 6.0 - hsv2rgb_K.www);
-  return c.z * mix(hsv2rgb_K.xxx, clamp(p - hsv2rgb_K.xxx, 0.0, 1.0), c.y);
-}
-
-float apolloian(vec3 p, float s, out float h) {
-  float scale = 1.0;
-  for(int i=0; i < 5; ++i) {
-    p = -1.0 + 2.0*fract(0.5*p+0.5);
-    float r2 = dot(p,p);
-    float k  = s/r2;
-    p       *= k;
-    scale   *= k;
-  }
-  
-  vec3 ap = abs(p/scale);  
-  float d = length(ap.xy);
-  d = min(d, ap.z);
-
-  float hh = 0.0;
-  if (d == ap.z){
-    hh += 0.5;
-  }
-  h = hh;
-  return d;
-}
-
-float df(vec2 p, out float h) {
-  const float fz = 1.0-0.0;
-  float z = 1.55*fz;
-  p /= z;
-  vec3 p3 = vec3(p,0.1);
-  p3.xz*=g_rot0;
-  p3.yz*=g_rot1;
-  float d = apolloian(p3, 1.0/fz, h);
-  d *= z;
-  return d;
-}
-
-float shadow(vec2 lp, vec2 ld, float mint, float maxt) {
-  const float ds = 1.0-0.4;
-  float t = mint;
-  float nd = 1E6;
-  float h;
-  const float soff = 0.05;
-  const float smul = 1.5;
-  for (int i=0; i < MAX_MARCHES; ++i) {
-    vec2 p = lp + ld*t;
-    float d = df(p, h);
-    if (d < TOLERANCE || t >= maxt) {
-      float sd = 1.0-exp(-smul*max(t/maxt-soff, 0.0));
-      return t >= maxt ? mix(sd, 1.0, smoothstep(0.0, 0.025, nd)) : sd;
-    }
-    nd = min(nd, d);
-    t += ds*d;
-  }
-  float sd = 1.0-exp(-smul*max(t/maxt-soff, 0.0));
-  return sd;
-}
-
-vec3 effect(vec2 p, vec2 q) {
-  float aa = 2.0/RESOLUTION.y;
-  float a = 0.1*TIME;
-  g_rot0 = ROT(0.5*a); 
-  g_rot1 = ROT(sqrt(0.5)*a);
-
-  vec2  lightPos  = vec2(0.0, 1.0);
-  lightPos        *= (g_rot1);
-  vec2  lightDiff = lightPos - p;
-  float lightD2   = dot(lightDiff,lightDiff);
-  float lightLen  = sqrt(lightD2);
-  vec2  lightDir  = lightDiff / lightLen;
-  vec3  lightPos3 = vec3(lightPos, 0.0);
-  vec3  p3        = vec3(p, -1.0);
-  float lightLen3 = distance(lightPos3, p3);
-  vec3  lightDir3 = normalize(lightPos3-p3);
-  vec3  n3        = vec3(0.0, 0.0, 1.0);
-  float diff      = max(dot(lightDir3, n3), 0.0);
-
-  float h;
-  float d   = df(p, h);
-  float ss  = shadow(p,lightDir, 0.005, lightLen);
-  vec3 bcol = hsv2rgb(vec3(fract(h-0.2*length(p)+0.25*TIME), 0.666, 1.0));
-
-  vec3 col = vec3(0.0);
-  col += mix(0., 1.0, diff)*0.5*mix(0.1, 1.0, ss)/(lightLen3*lightLen3);
-  col += exp(-300.0*abs(d))*sqrt(bcol);
-  col += exp(-40.0*max(lightLen-0.02, 0.0));
- 
-  return col;
-}
-
-void mainImage(out vec4 fragColor, in vec2 fragCoord) {
-  vec2 q = fragCoord/RESOLUTION.xy;
-  vec2 p = -1. + 2. * q;
-  p.x *= RESOLUTION.x/RESOLUTION.y;
-
-  vec3 col = effect(p, q);
-  col *= mix(0.0, 1.0, smoothstep(0.0, 4.0, TIME));
-  col = sRGB(col);
-  
-  fragColor = vec4(col, 1.0);
-}
-`,
 "Golden Vow": `// The MIT License
 // Copyright © 2016 Zhirnov Andrey
 // Fixed and enhanced for audio visualization
@@ -4816,80 +5018,6 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord)
     // Set alpha channel
     fragColor.a = 1.0;
 }`,
-"Lava Lamp Chris": `
-float opSmoothUnion( float d1, float d2, float k )
-{
-    float h = clamp( 0.5 + 0.5*(d2-d1)/k, 0.0, 1.0 );
-    return mix( d2, d1, h ) - k*h*(1.0-h);
-}
-
-float sdSphere( vec3 p, float s )
-{
-  return length(p)-s;
-} 
-
-float map(vec3 p)
-{
-	float d = 2.0;
-	for (int i = 0; i < 16; i++) {
-		float fi = float(i);
-		float time = iTime * (fract(fi * 412.531 + 0.513) - 0.5) * 2.0;
-		d = opSmoothUnion(
-            sdSphere(p + sin(time + fi * vec3(52.5126, 64.62744, 632.25)) * vec3(2.0, 2.0, 0.8), mix(0.5, 1.0, fract(fi * 412.531 + 0.5124))),
-			d,
-			0.4
-		);
-	}
-	return d;
-}
-
-vec3 calcNormal( in vec3 p )
-{
-    const float h = 1e-5; // or some other value
-    const vec2 k = vec2(1,-1);
-    return normalize( k.xyy*map( p + k.xyy*h ) + 
-                      k.yyx*map( p + k.yyx*h ) + 
-                      k.yxy*map( p + k.yxy*h ) + 
-                      k.xxx*map( p + k.xxx*h ) );
-}
-
-void mainImage( out vec4 fragColor, in vec2 fragCoord )
-{
-    vec2 uv = fragCoord/iResolution.xy;
-    
-    // screen size is 6m x 6m
-	vec3 rayOri = vec3((uv - 0.5) * vec2(iResolution.x/iResolution.y, 1.0) * 6.0, 3.0);
-	vec3 rayDir = vec3(0.0, 0.0, -1.0);
-	
-	float depth = 0.0;
-	vec3 p;
-	
-	for(int i = 0; i < 64; i++) {
-		p = rayOri + rayDir * depth;
-		float dist = map(p);
-        depth += dist;
-		if (dist < 1e-6) {
-			break;
-		}
-	}
-	
-    depth = min(6.0, depth);
-	vec3 n = calcNormal(p);
-    float b = max(0.0, dot(n, vec3(0.577)));
-    vec3 col = (0.5 + 0.5 * cos((b + iTime * 3.0) + uv.xyx * 2.0 + vec3(0,2,4))) * (0.85 + b * 0.35);
-    col *= exp( -depth * 0.15 );
-	
-    // maximum thickness is 2m in alpha channel
-    fragColor = vec4(col, 1.0 - (depth - 0.5) / 2.0);
-}
-
-/** SHADERDATA
-{
-	"title": "My Shader 0",
-	"description": "Lorem ipsum dolor",
-	"model": "person"
-}
-*/`,
 
 "DULL AMAP":`// Amapiano Frequency Vortex
 // A psychedelic visualization optimized for house and amapiano music

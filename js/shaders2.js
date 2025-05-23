@@ -1,4 +1,784 @@
 export const SHADERS2 = {
+    "Blueprint (needs work)": `#define SPEED .1
+#define FOV 3.
+
+#define MAX_STEPS 80
+#define EPS .001
+#define RENDER_DIST 5.
+#define AO_SAMPLES 4.
+#define AO_RANGE 100.
+
+#define PI 3.14159265359
+#define saturate(x) clamp(x, 0., 1.)
+
+// Precomputed globals
+float _house = 0.;
+float _boat = 0.;
+float _spaceship = 0.;
+float _atmosphere = 0.;
+mat3 _kifsRot = mat3(1, 0, 0, 0, 1, 0, 0, 0, 1);
+float _kifsOffset = 0.;
+
+// Rotate 2d space with given angle
+void tRotate(inout vec2 p, float angel) {
+    float s = sin(angel), c = cos(angel);
+    p *= mat2(c, -s, s, c);
+}
+
+// Divide 2d space into s chunks around the center
+void tFan(inout vec2 p, float s) {
+    float k = s / PI / 2.;
+    tRotate(p, -floor((atan(p.y, p.x)) * k + .5) / k);
+}
+
+// Rectangle distance
+float sdRect(vec2 p, vec2 r) {
+    p = abs(p) - r;
+    return min(max(p.x, p.y), 0.) + length(max(p, 0.));
+}
+
+// Box distance
+float sdBox(vec3 p, vec3 r) {
+    p = abs(p) - r;
+    return min(max(p.x, max(p.y, p.z)), 0.) + length(max(p, 0.));
+}
+
+// Sphere distance
+float sdSphere(vec3 p, float r) {
+    return length(p) - r;
+}
+
+// 3d cross distance
+float sdCross(vec3 p, vec3 r) {
+    p = abs(p) - r;
+    p.xy = p.x < p.y ? p.xy : p.yx;
+    p.yz = p.y < p.z ? p.yz : p.zy;
+    p.xy = p.x < p.y ? p.xy : p.yx;
+    return length(min(p.yz, 0.)) - max(p.y, 0.);
+}
+
+// Union
+float opU(float a, float b) {
+    return min(a, b);
+}
+
+// Intersection
+float opI(float a, float b) {
+    return max(a, b);
+}
+
+// Subtraction
+float opS(float a, float b) {
+    return max(a, -b);
+}
+
+// Smooth union
+float opSU(float a, float b, float k) {
+    float h = clamp(.5 + .5 * (b - a) / k, 0., 1.);
+    return mix(b, a, h) - k * h * (1. - h);
+}
+
+// House distance
+float sdHouse(vec3 p) {
+    p.y += .075;
+    vec3 boxDim = vec3(.2, .15, .2);
+
+    // Add the walls
+    float d = sdBox(p, boxDim);
+
+    // Add the windows
+    vec3 q = abs(p);
+    vec3 windSize = vec3(.04, .04, .06);
+    q -= windSize + vec3(.005);
+    d = opI(d, opU(sdCross(q, windSize), .11 - abs(p.y)));
+
+    // Add the roof
+    q = p;
+    q.y -= .38;
+    tFan(q.xz, 4.);
+    tRotate(q.xy, PI / 4.);
+    d = opU(d, sdBox(q, vec3(.35, .01, .35)));
+
+    // Make it hollow
+    d = opS(d, sdBox(p, boxDim - vec3(.02)));
+    return d;
+}
+
+// Boat distance
+float sdBoat(vec3 p) {
+
+    // Add the mast
+    float d = sdBox(p + vec3(0, .05, 0), vec3(.01, .2, .01));
+
+    // Add the sail
+    vec3 q = p + vec3(0, -.05, .12);
+    float a = sdSphere(q, .2);
+    a = opS(a, sdSphere(q, .195));
+    q.x = abs(q.x);
+    tRotate(q.yx, .1);
+    a = opI(a, sdBox(q - vec3(0, 0, .1), vec3(.1)));
+    d = opU(d, a);
+
+    // Add the body of the boat
+    p.x = abs(p.x);
+    p.x += .1;
+    a = sdSphere(p, .3);
+    a = opS(a, sdSphere(p, .29));
+    a = opI(a, p.y + .15);
+    d = opU(d, a);
+    return d;
+}
+
+// Spaceship distance
+float sdSpaceship(vec3 p) {
+    tFan(p.xz, 6.);
+    p.x += .3;
+
+    // Add the cap
+    float d = sdSphere(p, .4);
+    d = opS(d, p.y - .12);
+
+    // Add the body
+    d = opU(d, sdSphere(p, .39));
+
+    // Add the fins
+    d = opU(d, opI(sdSphere(p + vec3(0, .24, 0), .41), sdRect(p.zx, vec2(.005, .5))));
+    d = opS(d, sdSphere(p + vec3(0, .3, 0), .37));
+    d = opS(d, p.y + .25);
+    return d;
+}
+
+// Atmosphere distance
+float sdAtmosphere(vec3 p) {
+    float time = iTime;
+    tRotate(p.yz, time);
+    vec3 q = p;
+    tFan(q.xz, 12.);
+    float d = sdBox(q - vec3(.3, 0, 0), vec3(.01));
+    tRotate(p.yx, time);
+    q = p;
+    tFan(q.yz, 12.);
+    d = opU(d, sdBox(q - vec3(0, .23, 0), vec3(.01)));
+    tRotate(p.xz, time);
+    q = p;
+    tFan(q.yx, 12.);
+    d = opU(d, sdBox(q - vec3(0, .16, 0), vec3(.01)));
+
+    return d;
+}
+
+// Distance estimation of everything together
+float map(vec3 p) {
+    float d = _house <= 0. ? 5. : sdHouse(p) + .1 - _house * .1;
+    if (_boat > 0.) d = opU(d, sdBoat(p) + .1 - _boat * .1);
+    if (_spaceship > 0.) d = opU(d, sdSpaceship(p) + .1 - _spaceship * .1);
+    if (_atmosphere > 0.) d = opU(d, sdAtmosphere(p) + .1 - _atmosphere * .1);
+
+    float s = 1.;
+    for (int i = 0; i < 4; ++i) {
+        tFan(p.xz, 10.);
+        p = abs(p);
+        p -= _kifsOffset;
+        p *= _kifsRot;
+        s *= 2.;
+    }
+
+    return opSU(d, sdBox(p * s, vec3(s / 17.)) / s, .1);
+}
+
+// Trace the scene from ro (origin) to rd (direction, normalized)
+float trace(vec3 ro, vec3 rd, float maxDist, out float steps, out float nt) {
+    float total = 0.;
+    steps = 0.;
+    nt = 100.;
+
+    for (int i = 0; i < MAX_STEPS; ++i) {
+        ++steps;
+        float d = map(ro + rd * total);
+        nt = min(d, nt);
+        total += d;
+        if (d < EPS || maxDist < total) break;
+    }
+
+    return total;
+}
+
+// Calculate the normal vector
+vec3 getNormal(vec3 p) {
+    vec2 e = vec2(.0001, 0);
+    return normalize(vec3(
+        map(p + e.xyy) - map(p - e.xyy),
+        map(p + e.yxy) - map(p - e.yxy),
+        map(p + e.yyx) - map(p - e.yyx)
+    ));
+}
+
+// Ambient occlusion
+float calculateAO(vec3 p, vec3 n) {
+    float r = 0., w = 1., d;
+
+    for (float i = 1.; i <= AO_SAMPLES; i++) {
+        d = i / AO_SAMPLES / AO_RANGE;
+        r += w * (d - map(p + n * d));
+        w *= .5;
+    }
+
+    return 1. - saturate(r * AO_RANGE);
+}
+
+// A lovely function that goes up and down periodically between 0 and 1
+float pausingWave(float x, float a, float b) {
+    x = abs(fract(x) - .5) * 1. - .5 + a;
+    return smoothstep(0., a - b, x);
+}
+
+void mainImage(out vec4 fragColor, in vec2 fragCoord) {
+    // Transform screen coordinates
+    vec2 uv = fragCoord.xy / iResolution.xy;
+    uv = uv * 2. - 1.;
+    uv.x *= iResolution.x / iResolution.y;
+
+    // Transform mouse coordinates
+    vec2 mouse = iMouse.xy / iResolution.xy * 2. - 1.;
+    mouse.x *= iResolution.x / iResolution.y;
+    mouse *= 2.;
+
+    // FIX 1: Replace iChannel1 with fallback or audio-reactive value
+    // If you want audio reactivity, use this:
+    float smoothedFFTValue = texture2D(iChannel0, vec2(0.1, 0.0)).x;
+    // Or use this for static version:
+    // float smoothedFFTValue = 0.8;
+
+    // Set time-dependent constants
+    float speed = .25 / 10.5;
+    float time = mod(iTime, 290.);
+    time -= 10.5;
+    if (time > 167.) time -= 167.;
+    else if (time > 63.) time -= 63.;
+    time -= 5.25;
+    time *= speed;
+
+    // Determine which object to show
+    _house = pausingWave(time, .15, .125);
+    _boat = pausingWave(time - .125 / .1, .15, .125);
+    _spaceship = pausingWave(time - .25 / .1, .15, .125);
+    _atmosphere = pausingWave(time - .375 / .1, .15, .125) * step(10., iTime);
+
+    // Set up kifs rotation matrix
+    float a = -texture2D(iChannel0, vec2(.5, .25)).x + sin(iTime) * .2 + .9;
+    float s = sin(a), c = cos(a);
+    _kifsRot *= mat3(c, -s, 0, s, c, 0, 0, 0, 1);
+    _kifsRot *= mat3(1, 0, 0, 0, c, -s, 0, s, c);
+    _kifsRot *= mat3(c, 0, s, 0, 1, 0, -s, 0, c);
+
+    // Set up kifs offset
+    _kifsOffset = .07 + texture2D(iChannel0, vec2(.1, .25)).x * .06;
+
+    // Set up camera position
+    vec3 rd = normalize(vec3(uv, FOV));
+    vec3 ro = vec3(0, 0, -2);
+
+    // Light is relative to the camera
+    vec3 light = vec3(-1., .5, 0);
+
+    vec2 rot = vec2(0);
+    if (iMouse.z > 0. && iMouse.x > 0. && iMouse.y > 0.) {
+        // Rotate the scene using the mouse
+        rot = -mouse;
+    } else {
+        // Otherwise rotate constantly as time passes
+        rot = vec2(
+            iTime * SPEED * PI,
+            mix(sin(iTime * SPEED) * PI / 8., PI / 2. - 1e-5, saturate(exp(-iTime + 10.5))));
+    }
+
+    tRotate(rd.yz, rot.y);
+    tRotate(rd.xz, rot.x);
+    tRotate(light.xz, rot.x);
+    tRotate(ro.yz, rot.y);
+    tRotate(ro.xz, rot.x);
+
+    // March
+    float steps, outline, dist = trace(ro, rd, RENDER_DIST, steps, outline);
+
+    // Calculate hit point coordinates
+    vec3 p = ro + rd * dist;
+
+    // Calculate normal
+    vec3 normal = getNormal(p);
+
+    // Light direction
+    vec3 l = normalize(light - p);
+
+    // Ambient light
+    float ambient = .1;
+
+    // Diffuse light
+    float diffuse = max(0., dot(l, normal));
+
+    // Specular light
+    float specular = pow(max(0., dot(reflect(-l, normal), -rd)), 4.);
+
+    // "Ambient occlusion"
+    float ao = calculateAO(p, normal);
+
+    // Create the background grid
+    vec2 gridUv = fragCoord.xy - iResolution.xy / 2.;
+    float grid = dot(step(mod(gridUv.xyxy, vec4(20, 20, 100, 100)), vec4(1)), vec4(.1, .1, .2, .2));
+
+    // Create blue background
+    vec3 bg = vec3(0, .1, .3) * saturate(1.5 - length(uv) * .5);
+
+    // Find the edges in the geometry
+    float edgeWidth = .0015;
+    float edge = smoothstep(1., .0, dot(normal, getNormal(p - normal * edgeWidth))) * step(length(p), 1.);
+
+    // Get the outline of the shapes
+    outline = smoothstep(.005, .0, outline) * step(1., length(p));
+
+    // Diagonal strokes used for shading
+    vec2 strokes = sin(vec2(uv.x + uv.y, uv.x - uv.y) * iResolution.y * PI / 4.) * .5 - .5;
+
+    // First part of the shading: ao + marching steps
+    float highlights = (steps / float(MAX_STEPS) + sqrt(1. - ao)) * step(length(p), 1.) * .5;
+    highlights = floor(highlights * 5.) / 10.;
+
+    // Second part of the shading: ambient + diffuse + specular light
+    float fog = saturate(length(ro) - dist * dist * .25);
+    float lightValue = (ambient + diffuse + specular) * fog;
+    lightValue = floor(lightValue * 5.) / 10.;
+
+    // FIX 2: Ensure colorFactor is always valid
+    float colorFactor = clamp(0.5 + 0.5 * smoothedFFTValue, 0.3, 1.5);
+
+    // FIX 3: Simplify final color calculation to avoid potential issues
+    vec3 finalColor = mix(bg, vec3(1., .9, .7) * colorFactor,
+        max(max(max(saturate(highlights + strokes.x), saturate(lightValue + strokes.y)) * fog,
+            (edge + outline) * 2. + strokes.y), grid));
+
+    // FIX 4: Remove problematic step function at the end
+    fragColor = vec4(pow(saturate(finalColor), vec3(1. / 2.2)), 1.0);
+}`,
+"Cosmic Knot": `// Original DE from Knighty's Fragmentarium frag.
+// PostFX from jmpep.
+// Whatever is left (not much) by Syntopia.
+
+#define MaxSteps 30
+#define MinimumDistance 0.0009
+#define normalDistance     0.0002
+
+#define PI 3.141592
+#define Scale 3.0
+#define FieldOfView 0.5
+#define Jitter 0.06
+#define FudgeFactor 1.0
+
+#define Ambient 0.32184
+#define Diffuse 0.5
+#define LightDir vec3(1.0)
+#define LightColor vec3(0.6,1.0,0.158824)
+#define LightDir2 vec3(1.0,-1.0,1.0)
+#define LightColor2 vec3(1.0,0.933333,1.0)
+#define Offset vec3(0.92858,0.92858,0.32858)
+
+// Return rotation matrix for rotating around vector v by angle
+mat3  rotationMatrix3(vec3 v, float angle)
+{
+	float c = cos(radians(angle));
+	float s = sin(radians(angle));
+	
+	return mat3(c + (1.0 - c) * v.x * v.x, (1.0 - c) * v.x * v.y - s * v.z, (1.0 - c) * v.x * v.z + s * v.y,
+		(1.0 - c) * v.x * v.y + s * v.z, c + (1.0 - c) * v.y * v.y, (1.0 - c) * v.y * v.z - s * v.x,
+		(1.0 - c) * v.x * v.z - s * v.y, (1.0 - c) * v.y * v.z + s * v.x, c + (1.0 - c) * v.z * v.z
+		);
+}
+
+vec2 rotate(vec2 v, float a) {
+	return vec2(cos(a)*v.x + sin(a)*v.y, -sin(a)*v.x + cos(a)*v.y);
+}
+
+#define Type 5
+float U;
+float V ;
+float W ;
+float T =  1.0;
+
+float VRadius = 0.05048;
+float SRadius = 0.05476;
+vec3 RotVector = vec3(0.0,1.0,1.0);
+float RotAngle = 0.0;
+
+
+mat3 rot;
+vec4 nc,nd,p;
+void init() {
+     U = 0.0*cos(iTime)*0.5+0.1;
+    V =  0.2*sin(iTime*0.1)*0.5+0.2;
+     W =  1.0*cos(iTime*1.2)*0.5+0.5;
+
+	if (iMouse.z>0.0) {
+		U = iMouse.x/iResolution.x;
+		W = 1.0-U;
+		V = iMouse.y/iResolution.y;
+		T = 1.0-V;
+	}
+	float cospin=cos(PI/float(Type)), isinpin=1./sin(PI/float(Type));
+	float scospin=sqrt(2./3.-cospin*cospin), issinpin=1./sqrt(3.-4.*cospin*cospin);
+
+	nc=0.5*vec4(0,-1,sqrt(3.),0.);
+	nd=vec4(-cospin,-0.5,-0.5/sqrt(3.),scospin);
+
+	vec4 pabc,pbdc,pcda,pdba;
+	pabc=vec4(0.,0.,0.,1.);
+	pbdc=0.5*sqrt(3.)*vec4(scospin,0.,0.,cospin);
+	pcda=isinpin*vec4(0.,0.5*sqrt(3.)*scospin,0.5*scospin,1./sqrt(3.));
+	pdba=issinpin*vec4(0.,0.,2.*scospin,1./sqrt(3.));
+	
+	p=normalize(U*pabc+V*pbdc+W*pcda+T*pdba);
+
+	rot = rotationMatrix3(normalize(RotVector), RotAngle);//in reality we need a 4D rotation
+}
+
+vec4 fold(vec4 pos) {
+	for(int i=0;i<Type*(Type-2);i++){
+		pos.xy=abs(pos.xy);
+		float t=-2.*min(0.,dot(pos,nc)); pos+=t*nc;
+		t=-2.*min(0.,dot(pos,nd)); pos+=t*nd;
+	}
+	return pos;
+}
+
+float DD(float ca, float sa, float r){
+	//magic formula to convert from spherical distance to planar distance.
+	//involves transforming from 3-plane to 3-sphere, getting the distance
+	//on the sphere then going back to the 3-plane.
+	return r-(2.*r*ca-(1.-r*r)*sa)/((1.-r*r)*ca+2.*r*sa+1.+r*r);
+}
+
+float dist2Vertex(vec4 z, float r){
+	float ca=dot(z,p), sa=0.5*length(p-z)*length(p+z);//sqrt(1.-ca*ca);//
+	return DD(ca,sa,r)-VRadius;
+}
+
+float dist2Segment(vec4 z, vec4 n, float r){
+	//pmin is the orthogonal projection of z onto the plane defined by p and n
+	//then pmin is projected onto the unit sphere
+	float zn=dot(z,n),zp=dot(z,p),np=dot(n,p);
+	float alpha=zp-zn*np, beta=zn-zp*np;
+	vec4 pmin=normalize(alpha*p+min(0.,beta)*n);
+	//ca and sa are the cosine and sine of the angle between z and pmin. This is the spherical distance.
+	float ca=dot(z,pmin), sa=0.5*length(pmin-z)*length(pmin+z);//sqrt(1.-ca*ca);//
+	return DD(ca,sa,r)-SRadius;
+}
+//it is possible to compute the distance to a face just as for segments: pmin will be the orthogonal projection
+// of z onto the 3-plane defined by p and two n's (na and nb, na and nc, na and and, nb and nd... and so on).
+//that involves solving a system of 3 linear equations.
+//it's not implemented here because it is better with transparency
+
+float dist2Segments(vec4 z, float r){
+	float da=dist2Segment(z, vec4(1.,0.,0.,0.), r);
+	float db=dist2Segment(z, vec4(0.,1.,0.,0.), r);
+	float dc=dist2Segment(z, nc, r);
+	float dd=dist2Segment(z, nd, r);
+	
+	return min(min(da,db),min(dc,dd));
+}
+
+float DE(vec3 pos) {
+	float r=length(pos);
+	vec4 z4=vec4(2.*pos,1.-r*r)*1./(1.+r*r);//Inverse stereographic projection of pos: z4 lies onto the unit 3-sphere centered at 0.
+	z4.xyw=rot*z4.xyw;
+	z4=fold(z4);//fold it
+
+	return min(dist2Vertex(z4,r),dist2Segments(z4, r));
+}
+
+vec3 lightDir;
+vec3 lightDir2;
+
+
+// Two light sources. No specular 
+vec3 getLight(in vec3 color, in vec3 normal, in vec3 dir) {
+	float diffuse = max(0.0,dot(-normal, lightDir)); // Lambertian
+	
+	float diffuse2 = max(0.0,dot(-normal, lightDir2)); // Lambertian
+	
+	return
+	(diffuse*Diffuse)*(LightColor*color) +
+	(diffuse2*Diffuse)*(LightColor2*color);
+}
+
+
+
+// Finite difference normal
+vec3 getNormal(in vec3 pos) {
+	vec3 e = vec3(0.0,normalDistance,0.0);
+	
+	return normalize(vec3(
+			DE(pos+e.yxx)-DE(pos-e.yxx),
+			DE(pos+e.xyx)-DE(pos-e.xyx),
+			DE(pos+e.xxy)-DE(pos-e.xxy)
+			)
+		);
+}
+
+// Solid color 
+vec3 getColor(vec3 normal, vec3 pos) {
+	return vec3(1.0,1.0,1.0);
+}
+
+
+// Pseudo-random number
+// From: lumina.sourceforge.net/Tutorials/Noise.html
+float rand(vec2 co){
+	return fract(cos(dot(co,vec2(4.898,7.23))) * 23421.631);
+}
+
+vec4 rayMarch(in vec3 from, in vec3 dir, in vec2 fragCoord) {
+	// Add some noise to prevent banding
+	float totalDistance = Jitter*rand(fragCoord.xy+vec2(iTime));
+	vec3 dir2 = dir;
+	float distance;
+	int steps = 0;
+	vec3 pos;
+	for (int i=0; i <= MaxSteps; i++) {
+		pos = from + totalDistance * dir;
+		distance = DE(pos)*FudgeFactor;
+		totalDistance += distance;
+		if (distance < MinimumDistance) break;
+		steps = i;
+	}
+	
+	// 'AO' is based on number of steps.
+	// Try to smooth the count, to combat banding.
+	float smoothStep =   float(steps) ;
+		float ao = 1.0-smoothStep/float(MaxSteps);
+	
+	// Since our distance field is not signed,
+	// backstep when calc'ing normal
+	vec3 normal = getNormal(pos-dir*normalDistance*3.0);
+	vec3 bg = vec3(0.2);
+	if (steps == MaxSteps) {
+		return vec4(bg,1.0);
+	}
+	vec3 color = getColor(normal, pos);
+	vec3 light = getLight(color, normal, dir);
+	
+	color = mix(color*Ambient+light,bg,1.0-ao);
+	return vec4(color,1.0);
+}
+
+#define BLACK_AND_WHITE
+#define LINES_AND_FLICKER
+#define BLOTCHES
+#define GRAIN
+
+#define FREQUENCY 10.0
+
+vec2 uv;
+float rand(float c){
+	return rand(vec2(c,1.0));
+}
+
+float randomLine(float seed)
+{
+	float b = 0.01 * rand(seed);
+	float a = rand(seed+1.0);
+	float c = rand(seed+2.0) - 0.5;
+	float mu = rand(seed+3.0);
+	
+	float l = 1.0;
+	
+	if ( mu > 0.2)
+		l = pow(  abs(a * uv.x + b * uv.y + c ), 1.0/8.0 );
+	else
+		l = 2.0 - pow( abs(a * uv.x + b * uv.y + c), 1.0/8.0 );				
+	
+	return mix(0.5, 1.0, l);
+}
+
+// Generate some blotches.
+float randomBlotch(float seed)
+{
+	float x = rand(seed);
+	float y = rand(seed+1.0);
+	float s = 0.01 * rand(seed+2.0);
+	
+	vec2 p = vec2(x,y) - uv;
+	p.x *= iResolution.x / iResolution.y;
+	float a = atan(p.y,p.x);
+	float v = 1.0;
+	float ss = s*s * (sin(6.2831*a*x)*0.1 + 1.0);
+	
+	if ( dot(p,p) < ss ) v = 0.2;
+	else
+		v = pow(dot(p,p) - ss, 1.0/16.0);
+	
+	return mix(0.3 + 0.2 * (1.0 - (s / 0.02)), 1.0, v);
+}
+
+
+
+vec3 degrade(vec3 image)
+{
+		// Set frequency of global effect to 20 variations per second
+		float t = float(int(iTime * FREQUENCY));
+		
+		// Get some image movement
+		vec2 suv = uv + 0.002 * vec2( rand(t), rand(t + 23.0));
+		
+		#ifdef BLACK_AND_WHITE
+		// Pass it to B/W
+		float luma = dot( vec3(0.2126, 0.7152, 0.0722), image );
+		vec3 oldImage = luma * vec3(0.7, 0.7, 0.7);
+		#else
+		vec3 oldImage = image;
+		#endif
+		// Create a time-varyting vignetting effect
+		float vI = 16.0 * (uv.x * (1.0-uv.x) * uv.y * (1.0-uv.y));
+		vI *= mix( 0.7, 1.0, rand(t + 0.5));
+		
+		// Add additive flicker
+		vI += 1.0 + 0.4 * rand(t+8.);
+		
+		// Add a fixed vignetting (independent of the flicker)
+		vI *= pow(16.0 * uv.x * (1.0-uv.x) * uv.y * (1.0-uv.y), 0.4);
+		
+		// Add some random lines (and some multiplicative flicker. Oh well.)
+		#ifdef LINES_AND_FLICKER
+		int l = int(8.0 * rand(t+7.0));
+		
+		if ( 0 < l ) vI *= randomLine( t+6.0+17.* float(0));
+		if ( 1 < l ) vI *= randomLine( t+6.0+17.* float(1));
+		if ( 2 < l ) vI *= randomLine( t+6.0+17.* float(2));		
+		if ( 3 < l ) vI *= randomLine( t+6.0+17.* float(3));
+		if ( 4 < l ) vI *= randomLine( t+6.0+17.* float(4));
+		if ( 5 < l ) vI *= randomLine( t+6.0+17.* float(5));
+		if ( 6 < l ) vI *= randomLine( t+6.0+17.* float(6));
+		if ( 7 < l ) vI *= randomLine( t+6.0+17.* float(7));
+		
+		#endif
+		
+		// Add some random blotches.
+		#ifdef BLOTCHES
+		int s = int( max(8.0 * rand(t+18.0) -2.0, 0.0 ));
+
+		if ( 0 < s ) vI *= randomBlotch( t+6.0+19.* float(0));
+		if ( 1 < s ) vI *= randomBlotch( t+6.0+19.* float(1));
+		if ( 2 < s ) vI *= randomBlotch( t+6.0+19.* float(2));
+		if ( 3 < s ) vI *= randomBlotch( t+6.0+19.* float(3));
+		if ( 4 < s ) vI *= randomBlotch( t+6.0+19.* float(4));
+		if ( 5 < s ) vI *= randomBlotch( t+6.0+19.* float(5));
+	
+		#endif
+	
+		vec3 outv = oldImage * vI;
+		
+		// Add some grain (thanks, Jose!)
+		#ifdef GRAIN
+        outv *= (1.0+(rand(uv+t*.01)-.2)*.15);		
+        #endif
+		return outv;	
+}		
+
+
+void mainImage( out vec4 fragColor, in vec2 fragCoord )
+{
+	uv = fragCoord.xy / iResolution.xy;
+	
+	init();
+	
+	// Camera position //(eye), and camera target
+	vec3 camPos = (12.0+2.0*sin(iTime*0.6))*vec3(cos(iTime*0.3),0.0,sin(iTime*0.3));
+	vec3 target = vec3(0.0,0.0,0.0);
+	vec3 camUp  = vec3(0.0,1.0,0.0);
+	
+	
+	
+	// Calculate orthonormal camera reference system
+	vec3 camDir   = normalize(target-camPos); // direction for center ray
+	camUp = normalize(camUp-dot(camDir,camUp)*camDir); // orthogonalize
+	vec3 camRight = normalize(cross(camDir,camUp));
+	
+	lightDir= -normalize(camPos+7.5*camUp);
+	lightDir2=-normalize( camPos- 6.5*camRight);
+
+	vec2 coord =-1.0+2.0*fragCoord.xy/iResolution.xy;
+	float vignette = 0.4+(1.0-coord.x*coord.x)
+		*(1.0-coord.y*coord.y);
+	coord.x *= iResolution.x/iResolution.y;
+	
+
+	// Get direction for this pixel
+	vec3 rayDir = normalize(camDir + (coord.x*camRight + coord.y*camUp)*FieldOfView);
+	
+	vec3 col = rayMarch(camPos, rayDir, fragCoord).xyz;   
+
+    // vignetting 
+    // col *= clamp(vignette,0.0,1.0);
+	col = degrade(col);
+	fragColor = vec4(col,1.0);
+}
+`,
+"Million Eyes": `
+float udBox( vec4 p, vec4 b )
+{
+  return length(max(abs(p)-b,0.0));
+}
+
+#define gridSize 200
+vec4 c = vec4(gridSize,gridSize,gridSize,gridSize /2);
+float sdSphere( vec4 p, float s )
+{
+    
+  return abs(length(mod(p, c) - 0.5f*c)-s);
+}
+float getDistance(vec4 point){
+    	return sdSphere(point, 25.);
+}
+
+struct HitData{
+	float distance;
+    float normal;
+};
+HitData rayMarch(vec4 point, vec4 dir){
+    HitData hd;
+	float marched = 0.;
+    float epsilon = 0.1;
+    float lastDistance = 0.;
+    while(marched < 10000.){
+    	float distance = getDistance(point);
+        marched += distance;
+        point += dir*distance;
+        if(distance < epsilon){
+            return HitData(marched, 1.-distance/lastDistance);
+        }
+        lastDistance = distance;
+        
+    }return HitData(1000.,1.);
+}
+vec4 eye = vec4(0,0,0,-1);
+float layers = 24.;
+vec4 getPosition(vec2 coord, float layer){
+    return vec4(coord.x / iResolution.x * 2. - 1., (coord.y/iResolution.y * 2. - 1.) * iResolution.y / iResolution.x, layer/layers * 2. - 1.,0.);
+}
+
+float color(float d){
+    return d / 1000.;
+}
+void mainImage( out vec4 fragColor, in vec2 fragCoord )
+{
+    eye = vec4(0, 0 ,0, - 1) * 2.;
+    //spheres[0] = vec3(sin(iTime)*20.,0,20.);
+    //radii[0] = abs(sin(iTime * 1.3f + 20.)) * 10.;
+    float l = (fract(iTime/50.)*2.-1.)*layers;
+    vec4 pos = getPosition(fragCoord, l);
+    vec4 dir = normalize(pos - eye);
+    HitData hd = rayMarch(pos, dir);
+	float amount = color(hd.distance) * hd.normal;
+    amount = hd.normal;
+    fragColor = vec4(amount,amount,amount,1);
+}`,
     "Piano Optic Cables": `struct Ray {
     vec3 origin;
     vec3 direction;
@@ -645,99 +1425,129 @@ void mainImage( out vec4 fragColor, in vec2 fragCoord )
     
 	fragColor = vec4(col, 1.);
 }`,
-"Opaque Door - needs colors": `
-// The three possible variations of the 3-mirror kaleidoscope [1,2].
-// The image is composed by reflections of a base triangle, tiling the plane.
-// Here, I adopted the folding scheme [3,4] for the Euclidean plane whereas
-// in general it also works for the spherical and hyperbolic case. 
-// A similar example with good comments is also found in [5]. 
-// You may also try using the webcam in iChannel0
-// (don't forget setting Filter->mipmap and Wrap->repeat).
-// Note: lines marked by '//o' are comment-switchable (optional).
-// '//p' indicates parameters for manual tuning.
-// Shadertoy plugin: use Alt + R/L arrows to switch modes
-//
-// See also https://www.shadertoy.com/view/ssyyRG for a visualization of the folding scheme.
-//
-// [1] https://en.wikipedia.org/wiki/Kaleidoscope#Different_versions_suggested_by_Brewster
-// [2] https://en.wikipedia.org/wiki/Triangle_group
-// [3] mla, Wythoffian Tiling Generator, https://shadertoy.com/view/wlGSWc
-// [4] knighty, Tilings, https://www.shadertoy.com/view/4sf3zX
-// [5] TotallyReal, Euclidean triangle groups, https://www.shadertoy.com/view/7lV3Wy
-// [6] Artleet, The most compact hueshift, https://www.shadertoy.com/view/3tjGWm
-// [7] https://de.wikipedia.org/wiki/Datei:Kaleidoscope-abc.jpg
+"Opaque Door - colored": `// Enhanced Kaleidoscope with Vibrant Colors for Audio Visualization
+// Added dynamic color palettes and subtle audio reactivity
 
 #define C .03  // emphasize parent tile
 #define H 1.  // hold between transitions
-
 #define PI 3.14159265
 #define R iResolution
 
-// The angles are defined by divisors of PI in each row (1st row: classical kaleidoscope, [1]).
-// In the Euclidean plane their inverses must sum to one.
+// The angles are defined by divisors of PI in each row
 const mat3 D = mat3(
     3,3,3,
     2,4,4,
     2,3,6);
 
-vec3 hs(vec3 c, float s) {  // hue shift [6]
+// Enhanced hue shift with saturation control
+vec3 hs(vec3 c, float s) {
     vec3 m = vec3(cos(s), s=sin(s)*.5774, -s);
     return c*mat3(m+=(1.-m.x)/3., m.zxy, m.yzx);
 }
 
-// Iterative folding/reflection adopted from [3,4] and streamlined for the Euclidean case.
-// The fold count (nf) can be useful, e.g. to attenuate reflections as in a real kaleidoscope [7].
+// Vibrant color palette generator
+vec3 colorPalette(float t, int mode) {
+    vec3 a, b, c, d;
+    
+    if (mode == 0) {
+        // Electric rave colors
+        a = vec3(0.5, 0.5, 0.5);
+        b = vec3(0.5, 0.5, 0.5);
+        c = vec3(1.0, 1.0, 0.5);
+        d = vec3(0.8, 0.9, 0.3);
+    } else if (mode == 1) {
+        // Neon cyber colors
+        a = vec3(0.5, 0.5, 0.5);
+        b = vec3(0.5, 0.5, 0.5);
+        c = vec3(1.0, 0.7, 0.4);
+        d = vec3(0.0, 0.15, 0.20);
+    } else {
+        // Psychedelic colors
+        a = vec3(0.5, 0.5, 0.5);
+        b = vec3(0.5, 0.5, 0.5);
+        c = vec3(2.0, 1.0, 0.0);
+        d = vec3(0.5, 0.20, 0.25);
+    }
+    
+    return a + b * cos(6.28318 * (c * t + d));
+}
+
+// Audio reactivity (subtle)
+float getAudioLevel() {
+    // Sample from audio texture if available
+    return texture(iChannel0, vec2(0.1, 0.0)).x * 0.3; // Subtle multiplier for loud music
+}
+
+// Iterative folding/reflection
 vec4 fold(vec2 p, float sc, vec3 ang, out int nf) {
     vec3 c = cos(ang), s = sin(ang);
     mat3 N = mat3(1, 0, C,
                  -c.x, s.x, 0,
-                 -c.z, -(c.y+c.x*c.z)/s.x, 1);  // normals
-    sc *= s.z;  // set longest edge to unit length
+                 -c.z, -(c.y+c.x*c.z)/s.x, 1);
+    sc *= s.z;
     vec3 u, q = vec3(p,sc);
-    nf = 0;  // fold counter
+    nf = 0;
     for(int i=0; i<9999; i++) {
         for(int j=0; j<3; j++) {
             u[j] = dot(q, N[j]);
             if(u[j] < 0.) {q -= 2.*u[j]*N[j]*vec3(1,1,0); nf++;}
         }
-        if(i >= nf) break;  // base triangle is reached
+        if(i >= nf) break;
     }
-    return vec4(q.xy, u.yz);  // q.xy: cartesian coords, u.xyz: trilinear coords, note that u.x = q.x
+    return vec4(q.xy, u.yz);
 }
 
-
 void mainImage(out vec4 O, vec2 U) {
-    const float sc = 5.;  //p scale
-    float t = iTime*.2;  //p global speed
-        
-    int m = 2, mm = m;  //p reflection mode (0,1,2)
-    m = int(t)%3, mm = int(t+1.)%3;  //o cycle modes
-    //m = int(U.x*3./R.x); mm = m;  //o simultaneous view    
-        
+    const float sc = 5.;
+    float t = iTime*.2;
+    float audioLevel = getAudioLevel();
+    
+    int m = 2, mm = m;
+    m = int(t)%3, mm = int(t+1.)%3;
+    
     U = sc*(U*2. - R.xy)/R.y;
-        
+    
     int nf;    
-    float f = smoothstep(0.,1.,mod(t,1.)*(H+1.)-H);  // blending
+    float f = smoothstep(0.,1.,mod(t,1.)*(H+1.)-H);
     O = fold(U, 1., mix(PI/D[m],PI/D[mm],f), nf);
     U = O.xy;
     vec3 u = O.xzw;
-        
+    
     if(iMouse.z>0.) U -= (iMouse.xy*2.-R.xy)/R.y;
-    else U -= t*.5; //o auto-scroll
-    //U += vec2(nf)*.01;  //o reflection shift
+    else U -= t*.5;
+    
     O = texture(iChannel0,U);
-    O.rgb = hs((O.bgr-.25)*2., PI*(1.-.5*mix(float(m),float(mm),f)));  //o color modes
-    //O = vec4(1);  //o monochrome background
     
-    O *= exp(-float(nf)/sc*.4)*1.5;  //o attenuate reflections
-    //O *= .6 + .4*float(nf%2);  //o 'checkerboard'
-    //O *= .9 + .15*(dFdx(U.x)-.3*dFdy(U.x))/sc*R.y;  //o relief (cheap)
-    O *= smoothstep(-1.,1.,(min(u.x,min(u.y,u.z))-.01)*R.y/(sc*2.));  //o edges
+    // Enhanced color system
+    float colorTime = t + audioLevel * 2.0; // Subtle audio influence on color timing
+    int colorMode = int(colorTime * 0.5) % 3; // Cycle through color modes
     
-    O.a= 1.;  // who knows...
-}
-
-`,
+    // Base color transformation
+    vec3 baseColor = (O.bgr-.25)*2.;
+    
+    // Apply vibrant color palette
+    vec3 paletteColor = colorPalette(length(U) * 0.1 + colorTime, colorMode);
+    
+    // Mix original hue shift with palette
+    float hueShift = PI*(1.-.5*mix(float(m),float(mm),f)) + audioLevel * 0.5;
+    vec3 hueShifted = hs(baseColor, hueShift);
+    
+    // Blend hue-shifted colors with palette
+    O.rgb = mix(hueShifted, paletteColor, 0.6 + audioLevel * 0.2);
+    
+    // Add color intensity boost
+    O.rgb = pow(O.rgb, vec3(0.8)); // Gamma adjust for more vibrant colors
+    O.rgb *= 1.2 + audioLevel * 0.3; // Brightness boost with subtle audio response
+    
+    // Color saturation enhancement
+    float luminance = dot(O.rgb, vec3(0.299, 0.587, 0.114));
+    O.rgb = mix(vec3(luminance), O.rgb, 1.5 + audioLevel * 0.2);
+    
+    O *= exp(-float(nf)/sc*.4)*1.5;
+    O *= smoothstep(-1.,1.,(min(u.x,min(u.y,u.z))-.01)*R.y/(sc*2.));
+    
+    O.a = 1.;
+}`,
 "Bottles": `mat2 rot(float a){return mat2(cos(a),-sin(a),sin(a),cos(a));}
 
 void mainImage( out vec4 fragColor, in vec2 fragCoord )
@@ -6026,363 +6836,7 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
         fragColor = vec4(0,0,0,1);
     }
 }`,
-"Blueprint (needs work)": `#define SPEED .1
-#define FOV 3.
 
-#define MAX_STEPS 80
-#define EPS .001
-#define RENDER_DIST 5.
-#define AO_SAMPLES 4.
-#define AO_RANGE 100.
-
-#define PI 3.14159265359
-#define saturate(x) clamp(x, 0., 1.)
-
-// Precomputed globals
-float _house = 0.;
-float _boat = 0.;
-float _spaceship = 0.;
-float _atmosphere = 0.;
-mat3 _kifsRot = mat3(1, 0, 0, 0, 1, 0, 0, 0, 1);
-float _kifsOffset = 0.;
-
-// Rotate 2d space with given angle
-void tRotate(inout vec2 p, float angel) {
-    float s = sin(angel), c = cos(angel);
-    p *= mat2(c, -s, s, c);
-}
-
-// Divide 2d space into s chunks around the center
-void tFan(inout vec2 p, float s) {
-    float k = s / PI / 2.;
-    tRotate(p, -floor((atan(p.y, p.x)) * k + .5) / k);
-}
-
-// Rectangle distance
-float sdRect(vec2 p, vec2 r) {
-    p = abs(p) - r;
-    return min(max(p.x, p.y), 0.) + length(max(p, 0.));
-}
-
-// Box distance
-float sdBox(vec3 p, vec3 r) {
-    p = abs(p) - r;
-    return min(max(p.x, max(p.y, p.z)), 0.) + length(max(p, 0.));
-}
-
-// Sphere distance
-float sdSphere(vec3 p, float r) {
-    return length(p) - r;
-}
-
-// 3d cross distance
-float sdCross(vec3 p, vec3 r) {
-    p = abs(p) - r;
-    p.xy = p.x < p.y ? p.xy : p.yx;
-    p.yz = p.y < p.z ? p.yz : p.zy;
-    p.xy = p.x < p.y ? p.xy : p.yx;
-    return length(min(p.yz, 0.)) - max(p.y, 0.);
-}
-
-// Union
-float opU(float a, float b) {
-    return min(a, b);
-}
-
-// Intersection
-float opI(float a, float b) {
-    return max(a, b);
-}
-
-// Subtraction
-float opS(float a, float b) {
-    return max(a, -b);
-}
-
-// Smooth union
-float opSU(float a, float b, float k) {
-    float h = clamp(.5 + .5 * (b - a) / k, 0., 1.);
-    return mix(b, a, h) - k * h * (1. - h);
-}
-
-// House distance
-float sdHouse(vec3 p) {
-    p.y += .075;
-    vec3 boxDim = vec3(.2, .15, .2);
-
-    // Add the walls
-    float d = sdBox(p, boxDim);
-
-    // Add the windows
-    vec3 q = abs(p);
-    vec3 windSize = vec3(.04, .04, .06);
-    q -= windSize + vec3(.005);
-    d = opI(d, opU(sdCross(q, windSize), .11 - abs(p.y)));
-
-    // Add the roof
-    q = p;
-    q.y -= .38;
-    tFan(q.xz, 4.);
-    tRotate(q.xy, PI / 4.);
-    d = opU(d, sdBox(q, vec3(.35, .01, .35)));
-
-    // Make it hollow
-    d = opS(d, sdBox(p, boxDim - vec3(.02)));
-    return d;
-}
-
-// Boat distance
-float sdBoat(vec3 p) {
-
-    // Add the mast
-    float d = sdBox(p + vec3(0, .05, 0), vec3(.01, .2, .01));
-
-    // Add the sail
-    vec3 q = p + vec3(0, -.05, .12);
-    float a = sdSphere(q, .2);
-    a = opS(a, sdSphere(q, .195));
-    q.x = abs(q.x);
-    tRotate(q.yx, .1);
-    a = opI(a, sdBox(q - vec3(0, 0, .1), vec3(.1)));
-    d = opU(d, a);
-
-    // Add the body of the boat
-    p.x = abs(p.x);
-    p.x += .1;
-    a = sdSphere(p, .3);
-    a = opS(a, sdSphere(p, .29));
-    a = opI(a, p.y + .15);
-    d = opU(d, a);
-    return d;
-}
-
-// Spaceship distance
-float sdSpaceship(vec3 p) {
-    tFan(p.xz, 6.);
-    p.x += .3;
-
-    // Add the cap
-    float d = sdSphere(p, .4);
-    d = opS(d, p.y - .12);
-
-    // Add the body
-    d = opU(d, sdSphere(p, .39));
-
-    // Add the fins
-    d = opU(d, opI(sdSphere(p + vec3(0, .24, 0), .41), sdRect(p.zx, vec2(.005, .5))));
-    d = opS(d, sdSphere(p + vec3(0, .3, 0), .37));
-    d = opS(d, p.y + .25);
-    return d;
-}
-
-// Atmosphere distance
-float sdAtmosphere(vec3 p) {
-    float time = iTime;
-    tRotate(p.yz, time);
-    vec3 q = p;
-    tFan(q.xz, 12.);
-    float d = sdBox(q - vec3(.3, 0, 0), vec3(.01));
-    tRotate(p.yx, time);
-    q = p;
-    tFan(q.yz, 12.);
-    d = opU(d, sdBox(q - vec3(0, .23, 0), vec3(.01)));
-    tRotate(p.xz, time);
-    q = p;
-    tFan(q.yx, 12.);
-    d = opU(d, sdBox(q - vec3(0, .16, 0), vec3(.01)));
-
-    return d;
-}
-
-// Distance estimation of everything together
-float map(vec3 p) {
-    float d = _house <= 0. ? 5. : sdHouse(p) + .1 - _house * .1;
-    if (_boat > 0.) d = opU(d, sdBoat(p) + .1 - _boat * .1);
-    if (_spaceship > 0.) d = opU(d, sdSpaceship(p) + .1 - _spaceship * .1);
-    if (_atmosphere > 0.) d = opU(d, sdAtmosphere(p) + .1 - _atmosphere * .1);
-
-    float s = 1.;
-    for (int i = 0; i < 4; ++i) {
-        tFan(p.xz, 10.);
-        p = abs(p);
-        p -= _kifsOffset;
-        p *= _kifsRot;
-        s *= 2.;
-    }
-
-    return opSU(d, sdBox(p * s, vec3(s / 17.)) / s, .1);
-}
-
-// Trace the scene from ro (origin) to rd (direction, normalized)
-float trace(vec3 ro, vec3 rd, float maxDist, out float steps, out float nt) {
-    float total = 0.;
-    steps = 0.;
-    nt = 100.;
-
-    for (int i = 0; i < MAX_STEPS; ++i) {
-        ++steps;
-        float d = map(ro + rd * total);
-        nt = min(d, nt);
-        total += d;
-        if (d < EPS || maxDist < total) break;
-    }
-
-    return total;
-}
-
-// Calculate the normal vector
-vec3 getNormal(vec3 p) {
-    vec2 e = vec2(.0001, 0);
-    return normalize(vec3(
-        map(p + e.xyy) - map(p - e.xyy),
-        map(p + e.yxy) - map(p - e.yxy),
-        map(p + e.yyx) - map(p - e.yyx)
-    ));
-}
-
-// Ambient occlusion
-float calculateAO(vec3 p, vec3 n) {
-    float r = 0., w = 1., d;
-
-    for (float i = 1.; i <= AO_SAMPLES; i++) {
-        d = i / AO_SAMPLES / AO_RANGE;
-        r += w * (d - map(p + n * d));
-        w *= .5;
-    }
-
-    return 1. - saturate(r * AO_RANGE);
-}
-
-// A lovely function that goes up and down periodically between 0 and 1
-float pausingWave(float x, float a, float b) {
-    x = abs(fract(x) - .5) * 1. - .5 + a;
-    return smoothstep(0., a - b, x);
-}
-
-void mainImage(out vec4 fragColor, in vec2 fragCoord) {
-    // Transform screen coordinates
-    vec2 uv = fragCoord.xy / iResolution.xy;
-    uv = uv * 2. - 1.;
-    uv.x *= iResolution.x / iResolution.y;
-
-    // Transform mouse coordinates
-    vec2 mouse = iMouse.xy / iResolution.xy * 2. - 1.;
-    mouse.x *= iResolution.x / iResolution.y;
-    mouse *= 2.;
-
-    // Sample the buffer texture (iChannel1) for the smoothed FFT value.
-    float smoothedFFTValue = texture(iChannel1, uv).x;
-
-    // Set time-dependent constants
-    float speed = .25 / 10.5;
-    float time = mod(iTime, 290.);
-    time -= 10.5;
-    if (time > 167.) time -= 167.;
-    else if (time > 63.) time -= 63.;
-    time -= 5.25;
-    time *= speed;
-
-    // Determine which object to show
-    _house = pausingWave(time, .15, .125);
-    _boat = pausingWave(time - .125 / .1, .15, .125);
-    _spaceship = pausingWave(time - .25 / .1, .15, .125);
-    _atmosphere = pausingWave(time - .375 / .1, .15, .125) * step(10., iTime);
-
-    // Set up kifs rotation matrix
-    float a = -texture(iChannel0, vec2(.5, .25)).x + sin(iTime) * .2 + .9;
-    float s = sin(a), c = cos(a);
-    _kifsRot *= mat3(c, -s, 0, s, c, 0, 0, 0, 1);
-    _kifsRot *= mat3(1, 0, 0, 0, c, -s, 0, s, c);
-    _kifsRot *= mat3(c, 0, s, 0, 1, 0, -s, 0, c);
-
-    // Set up kifs offset
-    _kifsOffset = .07 + texture(iChannel0, vec2(.1, .25)).x * .06;
-
-    // Set up camera position
-    vec3 rd = normalize(vec3(uv, FOV));
-    vec3 ro = vec3(0, 0, -2);
-
-    // Light is relative to the camera
-    vec3 light = vec3(-1., .5, 0);
-
-    vec2 rot = vec2(0);
-    if (iMouse.z > 0. && iMouse.x > 0. && iMouse.y > 0.) {
-        // Rotate the scene using the mouse
-        rot = -mouse;
-    } else {
-        // Otherwise rotate constantly as time passes
-        rot = vec2(
-            iTime * SPEED * PI,
-            mix(sin(iTime * SPEED) * PI / 8., PI / 2. - 1e-5, saturate(exp(-iTime + 10.5))));
-    }
-
-    tRotate(rd.yz, rot.y);
-    tRotate(rd.xz, rot.x);
-    tRotate(light.xz, rot.x);
-    tRotate(ro.yz, rot.y);
-    tRotate(ro.xz, rot.x);
-
-    // March
-    float steps, outline, dist = trace(ro, rd, RENDER_DIST, steps, outline);
-
-    // Calculate hit point coordinates
-    vec3 p = ro + rd * dist;
-
-    // Calculate normal
-    vec3 normal = getNormal(p);
-
-    // Light direction
-    vec3 l = normalize(light - p);
-
-    // Ambient light
-    float ambient = .1;
-
-    // Diffuse light
-    float diffuse = max(0., dot(l, normal));
-
-    // Specular light
-    float specular = pow(max(0., dot(reflect(-l, normal), -rd)), 4.);
-
-    // "Ambient occlusion"
-    float ao = calculateAO(p, normal);
-
-    // Create the background grid
-    vec2 gridUv = fragCoord.xy - iResolution.xy / 2.;
-    float grid = dot(step(mod(gridUv.xyxy, vec4(20, 20, 100, 100)), vec4(1)), vec4(.1, .1, .2, .2));
-
-    // Create blue background
-    vec3 bg = vec3(0, .1, .3) * saturate(1.5 - length(uv) * .5);
-
-    // Find the edges in the geometry
-    float edgeWidth = .0015;
-    float edge = smoothstep(1., .0, dot(normal, getNormal(p - normal * edgeWidth))) * step(length(p), 1.);
-
-    // Get the outline of the shapes
-    outline = smoothstep(.005, .0, outline) * step(1., length(p));
-
-    // Diagonal strokes used for shading
-    vec2 strokes = sin(vec2(uv.x + uv.y, uv.x - uv.y) * iResolution.y * PI / 4.) * .5 - .5;
-
-    // First part of the shading: ao + marching steps
-    float highlights = (steps / float(MAX_STEPS) + sqrt(1. - ao)) * step(length(p), 1.) * .5;
-    highlights = floor(highlights * 5.) / 10.;
-
-    // Second part of the shading: ambient + diffuse + specular light
-    float fog = saturate(length(ro) - dist * dist * .25);
-    float lightValue = (ambient + diffuse + specular) * fog;
-    lightValue = floor(lightValue * 5.) / 10.;
-
-    // Use the smoothed FFT value to influence the final color.  For example:
-    float colorFactor = 0.5 + 0.5 * smoothedFFTValue;  // Remap smoothedFFTValue (which is 0-1)
-
-    fragColor.rgb = mix(bg, vec3(1., .9, .7) * colorFactor, // Apply the color factor here.
-        max(max(max(saturate(highlights + strokes.x), saturate(lightValue + strokes.y)) * fog,
-            (edge + outline) * 2. + strokes.y), grid));
-
-    // Gamma correction
-    fragColor = pow(saturate(fragColor), vec4(1. / 2.2)) * step(abs(uv.y), 1.);
-}
-`,
 "Grid Experiment": `// Textured Audio-Reactive Tiles
 // Author: GitHub Copilot for iniadewumi
 // Created: 2025-05-03
@@ -6544,6 +6998,146 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
     color = pow(color, vec3(0.4545));
     
     fragColor = vec4(color, 1.0);
-}`
+}`,
+"Knodding Donkey": `//CC0 1.0 Universal https://creativecommons.org/publicdomain/zero/1.0/
+//To the extent possible under law, Blackle Mori has waived all copyright and related or neighboring rights to this work.
+
+//antialising
+#define AA_SAMPLES 1
+
+float t = 0.;
+float ot = 0.;
+#define ro(r) mat2(cos(r),-sin(r),sin(r),cos(r))
+
+float linedist(vec2 p, vec2 a, vec2 b) {
+  float k = dot(p-a,b-a)/dot(b-a,b-a);
+  return distance(p,mix(a,b,clamp(k,0.,1.)));
+}
+
+float doodad(vec3 p, vec2 a, vec2 b, float s) {
+  s/=2.;
+  float wire = max(min(length(p.yz-a)-.04, length(p.yz-b)-.04),abs(p.x)-s-.04);
+  return min(max(linedist(p.yz,a,b)-.05,abs(abs(p.x)-s)-.02),wire);
+}
+
+vec2 poop(vec2 a, vec2 b, float d1, float d3, float side) {
+  float d2 = distance(a,b);
+  float p = (d1*d1+d2*d2-d3*d3)/d2/2.;
+  float o = side*sqrt(d1*d1-p*p);
+  return a + mat4x2(-p,-o,o,-p,p,o,-o,p)*vec4(a,b)/d2;
+}
+
+float scene(vec3 p) {
+  float dist = 1e4;
+  vec2 D = ro(ot*7.)*vec2(.15,0);
+  p.x-=0.025;
+  {
+  float side = 1.;
+  vec2 M = vec2(-.4*side,0);
+  vec2 a = poop(M,D,.4,.6,side);
+  vec2 b = poop(M,D,.4,.6,-side);
+  vec2 c = poop(M,a,.4,.5,side);
+  vec2 d = poop(b,c,.35,.4,side);
+  vec2 e = poop(b,d,.4,.6,side);
+  
+  dist = min(dist, doodad(p,D,a,.0));
+  dist = min(dist, doodad(p,M,a,.1));
+  dist = min(dist, doodad(p,D,b,.2));
+  dist = min(dist, doodad(p,M,b,.3));
+  dist = min(dist, doodad(p,b,d,.0));
+  dist = min(dist, doodad(p,M,c,.0));
+  dist = min(dist, doodad(p,c,d,.1));
+  dist = min(dist, doodad(p,b,e,.1));
+  dist = min(dist, doodad(p,c,a,.2));
+  dist = min(dist, doodad(p,d,e,.2));
+  }
+  p.x+=0.05;
+  {
+  float side = -1.;
+  vec2 M = vec2(-.4*side,0);
+  vec2 a = poop(M,D,.4,.6,side);
+  vec2 b = poop(M,D,.4,.6,-side);
+  vec2 c = poop(M,a,.4,.5,side);
+  vec2 d = poop(b,c,.35,.4,side);
+  vec2 e = poop(b,d,.4,.6,side);
+  
+  dist = min(dist, doodad(p,D,a,.0));
+  dist = min(dist, doodad(p,M,a,.1));
+  dist = min(dist, doodad(p,D,b,.2));
+  dist = min(dist, doodad(p,M,b,.3));
+  dist = min(dist, doodad(p,b,d,.0));
+  dist = min(dist, doodad(p,M,c,.0));
+  dist = min(dist, doodad(p,c,d,.1));
+  dist = min(dist, doodad(p,b,e,.1));
+  dist = min(dist, doodad(p,c,a,.2));
+  dist = min(dist, doodad(p,d,e,.2));
+  }
+  return dist;
+}
+
+vec3 norm(vec3 p) {
+  mat3 k = mat3(p,p,p)-mat3(0.001);
+  return normalize(scene(p)-vec3(scene(k[0]),scene(k[1]),scene(k[2])));
+}
+float bpm = 127.;
+
+vec3 pixel_color(vec2 uv) {
+  
+  uv += texture(iChannel0,uv*2.).x*0.0025;
+  
+  float m = 2.*60./bpm;
+  float rng = floor(m*iTime)/m;
+  float w = iTime - rng;
+  t =rng + mix(pow( w,3.),w,.8);
+  ot =t ;
+  t += fract(cos(rng)*456.)*3.;
+  
+  vec3 cam = normalize(vec3(1.8+cos(rng*45.)*.5,uv));
+  vec3 init = vec3(-3,cos(rng*445.)*.3,-.2);
+  
+  float ry = sin(cos(rng*64.)*100.)*.3;
+  cam.xz*=ro(ry);
+  init.xz*=ro(ry);
+  float rz = t*.5 + cos(rng*64.)*100.;
+  cam.xy*=ro(rz);
+  init.xy*=ro(rz);
+  
+  vec3 p = init;
+  bool hit = false;
+  bool trig = false;
+  for (int i = 0; i < 50 && !hit; i++) {
+    float dist = scene(p);
+    hit = dist*dist < 1e-6;
+    if (!trig) trig = dist<0.005;
+    p += cam*dist;
+  }
+  float v = 1.-dot(uv,uv)*.5;
+  vec3 n = norm(p);
+  vec3 r = reflect(cam,n);
+  float fact = dot(cam,r);
+  vec2 grid = abs(asin(sin(uv*40.)));
+  float g =smoothstep(1.52,1.58,max(grid.x,grid.y));
+  float f = smoothstep(.8,.85,fact) + smoothstep(.4,.45,fact)*smoothstep(.5,1.,cos(uv.y*1000.));
+  vec3 fragColor = min(vec3(1),hit ? vec3(f) : vec3(trig?1.:g))*.8;
+  fragColor.xyz += texture(iChannel1,clamp(ro(ot)*(uv*6.+vec2(4.2,2))+.5,0.,1.)).xyz;
+  fragColor*=v;
+  return fragColor*fragColor;
+}
+
+vec2 weyl_2d(int n) {
+    return fract(vec2(n*12664745, n*9560333)/exp2(24.));
+}
+
+void mainImage( out vec4 fragColor, in vec2 fragCoord )
+{
+    vec2 uv = (fragCoord-.5*iResolution.xy)/iResolution.y;
+    fragColor = vec4(0);
+    for (int i = 0; i < AA_SAMPLES; i++) {
+        vec2 uv2 = uv + weyl_2d(i)/iResolution.y*1.25;
+        fragColor += vec4(pixel_color(uv2), 1.);
+    }
+	fragColor.xyz = sqrt(fragColor.xyz/fragColor.w);
+}
+`
 }
 
