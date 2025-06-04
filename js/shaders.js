@@ -726,7 +726,7 @@ vec4 plane(vec3 ro, vec3 rd, vec3 pp, vec3 off, float aa, float n) {
 }
 
 vec3 skyColor(vec3 ro, vec3 rd) {
-  float d = pow(max(dot(rd, vec3(0.0, 50.0, 1.0)), 0.0), 20.0);
+  float d = pow(max(dot(rd, vec3(0.0, 0.0, 1.0)), 0.0), 20.0);
   return vec3(d);
 }
 

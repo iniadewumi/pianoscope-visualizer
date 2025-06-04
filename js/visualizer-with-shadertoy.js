@@ -814,7 +814,112 @@ function setupShaderProgram(vertexSource, fragmentSource) {
             }
         });
     }
+    // Add this code to your visualizer-with-shadertoy.js file
+// Place it in the "=== EVENT HANDLERS ===" section, after the existing event listeners
+
+// === KEYBOARD SHADER NAVIGATION ===
+let currentShaderIndex = 0;
+let shaderKeys = [];
+
+// Initialize shader navigation when ShaderConverter is available
+if (window.ShaderConverter && window.ShaderConverter.SAMPLE_SHADERS) {
+    shaderKeys = Object.keys(window.ShaderConverter.SAMPLE_SHADERS);
+    console.log(`Loaded ${shaderKeys.length} shaders for keyboard navigation`);
+}
+
+// Keyboard event listener for shader cycling
+document.addEventListener('keydown', (e) => {
+    // Only handle arrow keys if we have shaders available
+    if (shaderKeys.length === 0) return;
     
+    // Prevent default behavior for arrow keys to avoid page scrolling
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+        e.preventDefault();
+        
+        let newIndex = currentShaderIndex;
+        
+        if (e.key === 'ArrowLeft') {
+            // Go to previous shader (wrap around to end if at beginning)
+            newIndex = currentShaderIndex > 0 ? currentShaderIndex - 1 : shaderKeys.length - 1;
+        } else if (e.key === 'ArrowRight') {
+            // Go to next shader (wrap around to beginning if at end)
+            newIndex = currentShaderIndex < shaderKeys.length - 1 ? currentShaderIndex + 1 : 0;
+        }
+        
+        // Apply the new shader
+        if (newIndex !== currentShaderIndex) {
+            currentShaderIndex = newIndex;
+            const shaderName = shaderKeys[currentShaderIndex];
+            const shaderSource = window.ShaderConverter.SAMPLE_SHADERS[shaderName];
+            
+            if (shaderSource && window.visualizer) {
+                try {
+                    // Convert Shadertoy shader to WebGL format first
+                    const convertedShader = window.ShaderConverter.convertShaderToyToWebGL(shaderSource);
+                    const success = window.visualizer.applyShader(convertedShader);
+                    
+                    if (success) {
+                        // Update status to show current shader
+                        if (statusEl) {
+                            statusEl.textContent = `Shader: ${shaderName} (${currentShaderIndex + 1}/${shaderKeys.length})`;
+                        }
+                        
+                        // Update the shader editor textarea if it exists
+                        const shaderTextarea = document.querySelector('.shader-editor-textarea');
+                        if (shaderTextarea) {
+                            shaderTextarea.value = shaderSource;
+                        }
+                        
+                        console.log(`Applied shader: ${shaderName}`);
+                    } else {
+                        console.error(`Failed to apply converted shader: ${shaderName}`);
+                        if (statusEl) statusEl.textContent = `Error applying shader: ${shaderName}`;
+                    }
+                } catch (error) {
+                    console.error(`Error converting shader ${shaderName}:`, error);
+                    if (statusEl) statusEl.textContent = `Conversion error: ${shaderName}`;
+                }
+            }
+        }
+    }
+});
+
+// Function to set a specific shader by name (useful for debugging)
+window.setShaderByName = (shaderName) => {
+    const index = shaderKeys.indexOf(shaderName);
+    if (index !== -1) {
+        currentShaderIndex = index;
+        const shaderSource = window.ShaderConverter.SAMPLE_SHADERS[shaderName];
+        if (window.visualizer) {
+            try {
+                // Convert Shadertoy shader to WebGL format first
+                const convertedShader = window.ShaderConverter.convertShaderToyToWebGL(shaderSource);
+                const success = window.visualizer.applyShader(convertedShader);
+                if (success && statusEl) {
+                    statusEl.textContent = `Shader: ${shaderName} (${currentShaderIndex + 1}/${shaderKeys.length})`;
+                }
+                return success;
+            } catch (error) {
+                console.error(`Error converting shader ${shaderName}:`, error);
+                return false;
+            }
+        }
+    }
+    console.error(`Shader not found: ${shaderName}`);
+    return false;
+};
+
+// Function to get current shader info (useful for debugging)
+window.getCurrentShaderInfo = () => {
+    if (shaderKeys.length > 0) {
+        return {
+            name: shaderKeys[currentShaderIndex],
+            index: currentShaderIndex,
+            total: shaderKeys.length
+        };
+    }
+    return null;
+};
     // Initial setup
     gl.clearColor(0.1, 0.1, 0.1, 1.0);
     gl.clear(gl.COLOR_BUFFER_BIT);
