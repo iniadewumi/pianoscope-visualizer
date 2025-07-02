@@ -8,3 +8,12 @@
 # https://www.shadertoy.com/view/ld3fWn
 # https://www.shadertoy.com/view/wlcfR2
 # https://www.shadertoy.com/view/4tGfDW
+# https://www.shadertoy.com/view/Xl3cR4
+# https://www.shadertoy.com/view/ts33DX
+# https://www.shadertoy.com/view/DsXcWn
+# https://www.shadertoy.com/view/wtt3WX
+# https://www.shadertoy.com/view/ls2Bzy
+# https://www.shadertoy.com/view/ssfXD4
+# https://www.shadertoy.com/view/XtSBWD
+# https://www.shadertoy.com/view/NdtXW8
+# https://www.shadertoy.com/view/wlVcRw
