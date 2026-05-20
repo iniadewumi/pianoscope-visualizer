@@ -1,6 +1,126 @@
 
 // Sample Shadertoy shaders to quickly test
 export const SHADERS = {
+    "Kuko":`
+    /*
+    ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
+    
+    
+    ▓              🌟  KuKo Day 99  🌟                
+    
+    ▓  Vector fields 
+    
+    ▓  color idea from @ChunderFPV 
+    ▓  https://www.shadertoy.com/view/XfXGz4
+    
+    
+    ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
+*/
+
+#define T (iTime/3e2)
+#define H(a) (cos(radians(vec3(180, 90, 0))+(a)*1.82832)*0.6+0.6)
+
+void mainImage( out vec4 O, in vec2 I )
+{
+    vec2 uv = I/iResolution.xy;
+    vec4 delta = texture(iChannel0, uv);
+    
+    float trail = delta.z;           // Main trail data
+    float redGlow = delta.x;         // Red channel as glow
+    float greenGlow = delta.y;       // Green channel as glow
+    
+    vec3 color = vec3(0.0);
+    
+    if (trail < 0.001 && redGlow < 0.001 && greenGlow < 0.001) {
+        O = vec4(0.0);
+        return;
+    }
+    
+    float t = T;
+    
+    // Enhanced trail colors (blue/white channel)
+    if (trail > 0.001) {
+        // Calculate flow direction using spatial gradients
+        vec2 texelSize   = 1.0 / iResolution.xy;
+        float trailRight = texture(iChannel0, uv + vec2(texelSize.x, 0)).z;
+        float trailLeft  = texture(iChannel0, uv - vec2(texelSize.x, 0)).z;
+        float trailUp    = texture(iChannel0, uv + vec2(0, texelSize.y)).z;
+        float trailDown  = texture(iChannel0, uv - vec2(0, texelSize.y)).z;
+        
+        vec2 gradient = vec2(trailRight - trailLeft, trailUp - trailDown);
+        float flowAngle = atan(gradient.y, gradient.x) / 3.1416 + 0.0;
+        
+        // Create base trail color using enhanced hue function
+        float hueInput = flowAngle + t * 0.126 + trail * .1934;
+        vec3 trailColor = H(hueInput);
+        
+        // Enhance trail intensity
+        float trailIntensity = smoothstep(0.0, 1.2, trail);
+        color += trailColor * trailIntensity;
+    }
+    
+    vec3 glowColor = vec3(0.0);
+   
+    
+    if (greenGlow > 0.001) { 
+        float greenIntensity = smoothstep(0.0,1.0, greenGlow * 1.);
+        glowColor.g += greenIntensity * 0.5;
+    }
+    
+    color += (glowColor);
+    color.gb += 0.01; // Boost green and blue slightly
+    
+    vec3 finalColor = color * 0.15 + color.brg * 0.36 + color * color;
+    
+    vec2 center = uv - 0.5;
+    float dist = length(center);
+    finalColor *= (1.6 - dist * 1.3);
+    
+    // Enhance contrast and brightness
+    finalColor = max(finalColor, vec3(0.0));
+    finalColor = pow(finalColor, vec3(1.3)); // Slight gamma adjustment
+    
+    O = vec4(finalColor, 1.0);
+}`,
+    "Trippy white fractals": `
+#define PI 3.14159
+const float scale = 512.;
+
+vec3 hsv2rgb(vec3 c) {
+    vec4 K = vec4(1.0, 2.0/3.0, 1.0/3.0, 3.0);
+    vec3 p = abs(fract(c.xxx + K.xyz) * 6.0 - K.www);
+    return c.z * mix(K.xxx, clamp(p - K.xxx, 0.0, 1.0), c.y);
+}
+
+void mainImage(out vec4 fragColor, in vec2 fragCoord)
+{
+    vec2 uv = (fragCoord.yx - .5*iResolution.yx) / iResolution.x;
+    if (abs(uv.x) > .5 || abs(uv.y) > .5) return;
+
+    float time = 2.*PI*(iTime/2.5);
+    float total = 0.;
+    for (int i = 0; i < 7; i++)
+    {
+        float angle = PI*float(i)/7.;
+        float len = dot(uv, vec2(cos(angle), sin(angle)));
+        total += (cos(2.*scale*len + time)+1.)/2.;
+    }
+
+    // Average 3 low-freq bins to stabilize the reading
+    float bass = (texture(iChannel0, vec2(0.01, 0.25)).x
+                + texture(iChannel0, vec2(0.03, 0.25)).x
+                + texture(iChannel0, vec2(0.05, 0.25)).x) / 3.0;
+
+    float brightness = 1. - abs(2.*fract(.5*total) - 1.);
+
+    // Hue drifts slowly, bass peaks push it
+    float hue = fract(iTime * 0.04 + bass * 0.25);
+    // Saturation stays low at rest, spikes on bass hit
+    float sat = 0.1 + 0.7 * pow(bass, 2.0);
+
+    fragColor = vec4(hsv2rgb(vec3(hue, sat, brightness)), 1.0);
+}
+`,
     "FTL Needles": `/*
     "Fragments" by @XorDev
     
@@ -2110,7 +2230,7 @@ void mainImage( out vec4 c, in vec2 w )
 void mainImage(out vec4 fragColor, in vec2 fragCoord)
 {
     // Time and screen-space coordinates
-    float T = iTime;
+    float T = iTime*0.55;
     vec2 r = iResolution.xy;
     vec2 u = (fragCoord * 2.0 - r) / r.y;
 
