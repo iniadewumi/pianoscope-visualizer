@@ -225,7 +225,7 @@ void main() {
         shaderTextarea.className = 'shader-editor-textarea';
         shaderTextarea.placeholder = 'Paste Shadertoy shader code here...';
         // Use a consistent default shader name, handle potential missing key
-        const defaultShaderName = "Precision Plasma Flower";
+        const defaultShaderName = "Pianoscope Text";
         const defaultShader = SAMPLE_SHADERS[defaultShaderName] || Object.values(SAMPLE_SHADERS)[0] || ''; // Added fallback
         shaderTextarea.value = defaultShader;
 

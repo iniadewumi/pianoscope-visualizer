@@ -92,6 +92,40 @@ function loadTextureIntoChannels(gl, textures, url) {
 function isPowerOf2(value) {
     return (value & (value - 1)) === 0;
 }
+
+function createNoiseTexture(gl) {
+    const size = 512;
+    const data = new Uint8Array(size * size * 4);
+    for (let i = 0; i < data.length; i++) {
+        data[i] = (Math.random() * 256) | 0;
+    }
+
+    const texture = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, size, size, 0, gl.RGBA, gl.UNSIGNED_BYTE, data);
+    return texture;
+}
+
+function destroyFeedbackState(gl, state) {
+    if (!state) return;
+    gl.deleteFramebuffer(state.fbo);
+    state.textures.forEach((texture) => gl.deleteTexture(texture));
+}
+
+function clearFeedbackTextures(gl, state) {
+    gl.bindFramebuffer(gl.FRAMEBUFFER, state.fbo);
+    gl.viewport(0, 0, state.width, state.height);
+    gl.clearColor(0, 0, 0, 0);
+    state.textures.forEach((texture) => {
+        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+    });
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+}
     // === CONFIGURATION ===
     // Easy to modify settings
     const audioSmoothingFactor = 0.8; // How smooth the audio response is (0-1)
@@ -259,6 +293,10 @@ function isPowerOf2(value) {
         
         return versionHeader + '\n' + shaderSource;
     }
+
+    let usesFeedbackPass = false;
+    let noiseTexture = null;
+    let feedbackState = null;
     
     // Resize canvas to window
     function resizeCanvas() {
@@ -268,9 +306,14 @@ function isPowerOf2(value) {
         // Set appropriate height
         const canvasHeight = isPureViewMode ? window.innerHeight : window.innerHeight * 0.8;
         
-        canvas.width = window.innerWidth;
-        canvas.height = canvasHeight;
+        const dpr = window.devicePixelRatio || 1;
+        canvas.width = window.innerWidth * dpr;
+        canvas.height = canvasHeight * dpr;
         gl.viewport(0, 0, canvas.width, canvas.height);
+
+        if (usesFeedbackPass) {
+            setupFeedbackBuffers(canvas.width, canvas.height, true);
+        }
     }
     window.addEventListener('resize', resizeCanvas);
     resizeCanvas();
@@ -435,6 +478,7 @@ function setupShaderProgram(vertexSource, fragmentSource) {
     // Get all uniforms after successful program setup
 
     uniforms = getShaderUniforms();
+    configureFeedbackPass(fragmentSource);
 
     
 
@@ -472,7 +516,8 @@ function setupShaderProgram(vertexSource, fragmentSource) {
             iChannel2: gl.getUniformLocation(currentProgram, 'iChannel2'),
             iChannel3: gl.getUniformLocation(currentProgram, 'iChannel3'),
             iDate: gl.getUniformLocation(currentProgram, 'iDate'),
-            iSampleRate: gl.getUniformLocation(currentProgram, 'iSampleRate')
+            iSampleRate: gl.getUniformLocation(currentProgram, 'iSampleRate'),
+            iWriteFeedback: gl.getUniformLocation(currentProgram, 'iWriteFeedback')
         };
     }
     
@@ -564,6 +609,111 @@ function setupShaderProgram(vertexSource, fragmentSource) {
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
         gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, dummyTexture);
         extraTextures.push(texture);
+    }
+
+    function setupFeedbackBuffers(width, height, preserveOnResize) {
+        if (feedbackState && feedbackState.width === width && feedbackState.height === height) {
+            return;
+        }
+
+        destroyFeedbackState(gl, feedbackState);
+
+        const textures = [gl.createTexture(), gl.createTexture()];
+        textures.forEach((texture) => {
+            gl.bindTexture(gl.TEXTURE_2D, texture);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+        });
+
+        const fbo = gl.createFramebuffer();
+        feedbackState = { textures, fbo, readIndex: 0, width, height };
+
+        if (!preserveOnResize) {
+            clearFeedbackTextures(gl, feedbackState);
+        }
+    }
+
+    function configureFeedbackPass(fragmentSource) {
+        usesFeedbackPass = fragmentSource.includes('iWriteFeedback');
+        if (usesFeedbackPass) {
+            if (!noiseTexture) {
+                noiseTexture = createNoiseTexture(gl);
+            }
+            setupFeedbackBuffers(canvas.width, canvas.height, false);
+        } else {
+            destroyFeedbackState(gl, feedbackState);
+            feedbackState = null;
+        }
+    }
+
+    function bindTextureChannels(isVideoMode, feedbackReadTexture) {
+        if (usesFeedbackPass && noiseTexture) {
+            gl.activeTexture(gl.TEXTURE0);
+            gl.bindTexture(gl.TEXTURE_2D, noiseTexture);
+            if (uniforms.iChannel0) gl.uniform1i(uniforms.iChannel0, 0);
+
+            gl.activeTexture(gl.TEXTURE1);
+            gl.bindTexture(gl.TEXTURE_2D, feedbackReadTexture || extraTextures[0]);
+            if (uniforms.iChannel1) gl.uniform1i(uniforms.iChannel1, 1);
+
+            updateAudioTexture();
+            gl.activeTexture(gl.TEXTURE2);
+            gl.bindTexture(gl.TEXTURE_2D, audioTexture);
+            if (uniforms.iChannel2) gl.uniform1i(uniforms.iChannel2, 2);
+
+            const channel3Uniform = uniforms.iChannel3;
+            if (channel3Uniform) {
+                gl.activeTexture(gl.TEXTURE3);
+                gl.bindTexture(gl.TEXTURE_2D, extraTextures[2]);
+                gl.uniform1i(channel3Uniform, 3);
+            }
+            return;
+        }
+
+        if (isVideoMode && videoController) {
+            gl.activeTexture(gl.TEXTURE0);
+            gl.bindTexture(gl.TEXTURE_2D, videoController.getVideoTexture());
+            if (uniforms.iChannel0) gl.uniform1i(uniforms.iChannel0, 0);
+        } else {
+            updateAudioTexture();
+            gl.activeTexture(gl.TEXTURE0);
+            gl.bindTexture(gl.TEXTURE_2D, audioTexture);
+            if (uniforms.iChannel0) gl.uniform1i(uniforms.iChannel0, 0);
+        }
+
+        for (let i = 1; i < 4; i++) {
+            const channelUniform = uniforms['iChannel' + i];
+            if (channelUniform) {
+                gl.activeTexture(gl.TEXTURE0 + i);
+                gl.bindTexture(gl.TEXTURE_2D, extraTextures[i - 1]);
+                gl.uniform1i(channelUniform, i);
+            }
+        }
+    }
+
+    function setShaderUniforms(currentTime) {
+        if (uniforms.iResolution) gl.uniform2f(uniforms.iResolution, canvas.width, canvas.height);
+        if (uniforms.iTime) gl.uniform1f(uniforms.iTime, currentTime);
+        if (uniforms.iTimeDelta) gl.uniform1f(uniforms.iTimeDelta, deltaTime);
+        if (uniforms.iFrame) gl.uniform1f(uniforms.iFrame, frameCount);
+        if (uniforms.iMouse) gl.uniform4f(uniforms.iMouse, mouseX, mouseY, mouseDown, clickX);
+
+        if (uniforms.iDate) {
+            const d = new Date();
+            gl.uniform4f(uniforms.iDate,
+                d.getFullYear(),
+                d.getMonth(),
+                d.getDate(),
+                d.getHours() * 3600 + d.getMinutes() * 60 + d.getSeconds() + d.getMilliseconds() / 1000
+            );
+        }
+
+        if (uniforms.iSampleRate && audioContext) {
+            gl.uniform1f(uniforms.iSampleRate, audioContext.sampleRate);
+        }
     }
     
     // === AUDIO FUNCTIONS ===
@@ -731,59 +881,33 @@ function setupShaderProgram(vertexSource, fragmentSource) {
         
         // Set uniform values for shader if program exists
         if (!currentProgram) return;
-        
-        // Set uniform values for shader
-        if (uniforms.iResolution) gl.uniform2f(uniforms.iResolution, canvas.width, canvas.height);
-        if (uniforms.iTime) gl.uniform1f(uniforms.iTime, currentTime);
-        if (uniforms.iTimeDelta) gl.uniform1f(uniforms.iTimeDelta, deltaTime);
-        if (uniforms.iFrame) gl.uniform1i(uniforms.iFrame, frameCount);
-        
-        // Build the mouse uniform: [mouseX, mouseY, mouseDown, clickTime]
-        if (uniforms.iMouse) gl.uniform4f(uniforms.iMouse, mouseX, mouseY, mouseDown, clickX);
-        
-        // Update date uniform if exists
-        if (uniforms.iDate) {
-            const d = new Date();
-            gl.uniform4f(uniforms.iDate, 
-                d.getFullYear(), // year
-                d.getMonth(),    // month
-                d.getDate(),     // day
-                d.getHours() * 3600 + d.getMinutes() * 60 + d.getSeconds() + d.getMilliseconds() / 1000 // time in seconds
-            );
-        }
-        
-        // Set sample rate if available
-        if (uniforms.iSampleRate && audioContext) {
-            gl.uniform1f(uniforms.iSampleRate, audioContext.sampleRate);
-        }
-        
-        // Determine which texture to use for iChannel0
-        if (isVideoMode && videoController) {
-            // Use video texture for iChannel0
-            gl.activeTexture(gl.TEXTURE0);
-            gl.bindTexture(gl.TEXTURE_2D, videoController.getVideoTexture());
-            if (uniforms.iChannel0) gl.uniform1i(uniforms.iChannel0, 0);
+
+        setShaderUniforms(currentTime);
+
+        if (usesFeedbackPass && feedbackState) {
+            const readTexture = feedbackState.textures[feedbackState.readIndex];
+            const writeIndex = 1 - feedbackState.readIndex;
+            const writeTexture = feedbackState.textures[writeIndex];
+
+            gl.bindFramebuffer(gl.FRAMEBUFFER, feedbackState.fbo);
+            gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, writeTexture, 0);
+            gl.viewport(0, 0, feedbackState.width, feedbackState.height);
+            bindTextureChannels(false, readTexture);
+            if (uniforms.iWriteFeedback) gl.uniform1f(uniforms.iWriteFeedback, 1.0);
+            gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+            gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+            gl.viewport(0, 0, canvas.width, canvas.height);
+            bindTextureChannels(false, readTexture);
+            if (uniforms.iWriteFeedback) gl.uniform1f(uniforms.iWriteFeedback, 0.0);
+            gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+            feedbackState.readIndex = writeIndex;
         } else {
-            // Use audio texture for iChannel0 (original behavior)
-            updateAudioTexture();
-            gl.activeTexture(gl.TEXTURE0);
-            gl.bindTexture(gl.TEXTURE_2D, audioTexture);
-            if (uniforms.iChannel0) gl.uniform1i(uniforms.iChannel0, 0);
+            bindTextureChannels(isVideoMode);
+            if (uniforms.iWriteFeedback) gl.uniform1f(uniforms.iWriteFeedback, 0.0);
+            gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
         }
-        
-        // Set up other channels (currently unused but available for future)
-        // Fixed version using globalTextures:
-        for (let i = 1; i < 4; i++) {
-            const channelUniform = uniforms['iChannel' + i];
-            if (channelUniform) {
-                gl.activeTexture(gl.TEXTURE0 + i);
-                // Use extraTextures instead since it's already defined
-                gl.bindTexture(gl.TEXTURE_2D, extraTextures[i-1]);
-                gl.uniform1i(channelUniform, i);
-            }
-        }
-        // Draw
-        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     }
     
     // Start render loop immediately
@@ -818,7 +942,9 @@ function setupShaderProgram(vertexSource, fragmentSource) {
 // Place it in the "=== EVENT HANDLERS ===" section, after the existing event listeners
 
 // === KEYBOARD SHADER NAVIGATION ===
-let currentShaderIndex = 0;
+// -1 = built-in spiral shader (not in SAMPLE_SHADERS)
+const DEFAULT_SHADER_NAME = 'Pianoscope Text';
+let currentShaderIndex = -1;
 let shaderKeys = [];
 
 // Initialize shader navigation when ShaderConverter is available
@@ -827,60 +953,92 @@ if (window.ShaderConverter && window.ShaderConverter.SAMPLE_SHADERS) {
     console.log(`Loaded ${shaderKeys.length} shaders for keyboard navigation`);
 }
 
-// Keyboard event listener for shader cycling
-document.addEventListener('keydown', (e) => {
-    // Only handle arrow keys if we have shaders available
-    if (shaderKeys.length === 0) return;
-    
-    // Prevent default behavior for arrow keys to avoid page scrolling
-    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
-        e.preventDefault();
-        
-        let newIndex = currentShaderIndex;
-        
-        if (e.key === 'ArrowLeft') {
-            // Go to previous shader (wrap around to end if at beginning)
-            newIndex = currentShaderIndex > 0 ? currentShaderIndex - 1 : shaderKeys.length - 1;
-        } else if (e.key === 'ArrowRight') {
-            // Go to next shader (wrap around to beginning if at end)
-            newIndex = currentShaderIndex < shaderKeys.length - 1 ? currentShaderIndex + 1 : 0;
+function getDefaultShaderIndex() {
+    return shaderKeys.indexOf(DEFAULT_SHADER_NAME);
+}
+
+function applyDefaultShader() {
+    const defaultIndex = getDefaultShaderIndex();
+    if (defaultIndex !== -1) {
+        applyShaderAtIndex(defaultIndex);
+        return true;
+    }
+    if (setupShaderProgram(vertexShaderSource, fragmentShaderSource)) {
+        uniforms = getShaderUniforms();
+        currentShaderIndex = -1;
+        return true;
+    }
+    return false;
+}
+
+function applyShaderAtIndex(newIndex) {
+    if (newIndex === currentShaderIndex) return;
+
+    if (newIndex === -1) {
+        if (window.visualizer && window.visualizer.resetToDefault()) {
+            currentShaderIndex = -1;
         }
-        
-        // Apply the new shader
-        if (newIndex !== currentShaderIndex) {
-            currentShaderIndex = newIndex;
-            const shaderName = shaderKeys[currentShaderIndex];
-            const shaderSource = window.ShaderConverter.SAMPLE_SHADERS[shaderName];
-            
-            if (shaderSource && window.visualizer) {
-                try {
-                    // Convert Shadertoy shader to WebGL format first
-                    const convertedShader = window.ShaderConverter.convertShaderToyToWebGL(shaderSource);
-                    const success = window.visualizer.applyShader(convertedShader);
-                    
-                    if (success) {
-                        // Update status to show current shader
-                        if (statusEl) {
-                            statusEl.textContent = `Shader: ${shaderName} (${currentShaderIndex + 1}/${shaderKeys.length})`;
-                        }
-                        
-                        // Update the shader editor textarea if it exists
-                        const shaderTextarea = document.querySelector('.shader-editor-textarea');
-                        if (shaderTextarea) {
-                            shaderTextarea.value = shaderSource;
-                        }
-                        
-                        console.log(`Applied shader: ${shaderName}`);
-                    } else {
-                        console.error(`Failed to apply converted shader: ${shaderName}`);
-                        if (statusEl) statusEl.textContent = `Error applying shader: ${shaderName}`;
-                    }
-                } catch (error) {
-                    console.error(`Error converting shader ${shaderName}:`, error);
-                    if (statusEl) statusEl.textContent = `Conversion error: ${shaderName}`;
-                }
+        return;
+    }
+
+    const shaderName = shaderKeys[newIndex];
+    const shaderSource = window.ShaderConverter.SAMPLE_SHADERS[shaderName];
+
+    if (!shaderSource || !window.visualizer) return;
+
+    currentShaderIndex = newIndex;
+
+    try {
+        const convertedShader = window.ShaderConverter.convertShaderToyToWebGL(shaderSource);
+        const success = window.visualizer.applyShader(convertedShader);
+
+        if (success) {
+            if (statusEl) {
+                statusEl.textContent = `Shader: ${shaderName} (${currentShaderIndex + 1}/${shaderKeys.length})`;
+            }
+
+            const shaderTextarea = document.querySelector('.shader-editor-textarea');
+            if (shaderTextarea) {
+                shaderTextarea.value = shaderSource;
+            }
+
+            console.log(`Applied shader: ${shaderName}`);
+        } else {
+            console.error(`Failed to apply converted shader: ${shaderName}`);
+            if (statusEl) {
+                statusEl.textContent = `Error applying shader: ${shaderName} (${currentShaderIndex + 1}/${shaderKeys.length}) — press → to skip`;
             }
         }
+    } catch (error) {
+        console.error(`Error converting shader ${shaderName}:`, error);
+        if (statusEl) {
+            statusEl.textContent = `Conversion error: ${shaderName} (${currentShaderIndex + 1}/${shaderKeys.length}) — press → to skip`;
+        }
+    }
+}
+
+function getNextShaderIndex(direction) {
+    const last = shaderKeys.length - 1;
+
+    if (direction === 'left') {
+        if (currentShaderIndex === -1) return last;
+        if (currentShaderIndex === 0) return -1;
+        return currentShaderIndex - 1;
+    }
+
+    if (currentShaderIndex === -1) return 0;
+    if (currentShaderIndex === last) return -1;
+    return currentShaderIndex + 1;
+}
+
+// Keyboard event listener for shader cycling
+document.addEventListener('keydown', (e) => {
+    if (shaderKeys.length === 0) return;
+
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+        e.preventDefault();
+        const direction = e.key === 'ArrowLeft' ? 'left' : 'right';
+        applyShaderAtIndex(getNextShaderIndex(direction));
     }
 });
 
@@ -888,15 +1046,16 @@ document.addEventListener('keydown', (e) => {
 window.setShaderByName = (shaderName) => {
     const index = shaderKeys.indexOf(shaderName);
     if (index !== -1) {
-        currentShaderIndex = index;
         const shaderSource = window.ShaderConverter.SAMPLE_SHADERS[shaderName];
         if (window.visualizer) {
             try {
-                // Convert Shadertoy shader to WebGL format first
                 const convertedShader = window.ShaderConverter.convertShaderToyToWebGL(shaderSource);
                 const success = window.visualizer.applyShader(convertedShader);
-                if (success && statusEl) {
-                    statusEl.textContent = `Shader: ${shaderName} (${currentShaderIndex + 1}/${shaderKeys.length})`;
+                if (success) {
+                    currentShaderIndex = index;
+                    if (statusEl) {
+                        statusEl.textContent = `Shader: ${shaderName} (${currentShaderIndex + 1}/${shaderKeys.length})`;
+                    }
                 }
                 return success;
             } catch (error) {
@@ -911,14 +1070,15 @@ window.setShaderByName = (shaderName) => {
 
 // Function to get current shader info (useful for debugging)
 window.getCurrentShaderInfo = () => {
-    if (shaderKeys.length > 0) {
-        return {
-            name: shaderKeys[currentShaderIndex],
-            index: currentShaderIndex,
-            total: shaderKeys.length
-        };
+    if (shaderKeys.length === 0) return null;
+    if (currentShaderIndex === -1) {
+        return { name: 'Default', index: -1, total: shaderKeys.length };
     }
-    return null;
+    return {
+        name: shaderKeys[currentShaderIndex],
+        index: currentShaderIndex,
+        total: shaderKeys.length
+    };
 };
     // Initial setup
     gl.clearColor(0.1, 0.1, 0.1, 1.0);
@@ -964,14 +1124,15 @@ window.getCurrentShaderInfo = () => {
             },
             
             resetToDefault: () => {
-                if (setupShaderProgram(vertexShaderSource, fragmentShaderSource)) {
-                    uniforms = getShaderUniforms();
+                if (applyDefaultShader()) {
                     if (statusEl) statusEl.textContent = 'Restored default shader';
                     return true;
                 }
                 return false;
             }
         };
+
+        applyDefaultShader();
     } else {
         console.warn('ShaderConverter module not found. Shadertoy integration is disabled.');
     }
