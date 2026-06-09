@@ -942,26 +942,72 @@ function setupShaderProgram(vertexSource, fragmentSource) {
 // Place it in the "=== EVENT HANDLERS ===" section, after the existing event listeners
 
 // === KEYBOARD SHADER NAVIGATION ===
-// -1 = built-in spiral shader (not in SAMPLE_SHADERS)
+// -1 = default shader (Pianoscope Text), outside the numbered cycle
 const DEFAULT_SHADER_NAME = 'Pianoscope Text';
+// Pinned slots: shader 2, 3, 4 (0-based indices 1, 2, 3)
+const PINNED_SHADER_SLOTS = [
+    null,
+    'Sunset on river -  Raph',
+    'Ocean Waves',
+    'Sunset Train',
+];
 let currentShaderIndex = -1;
 let shaderKeys = [];
 
+function orderShaderKeys(allKeys) {
+    const ordered = [];
+    const used = new Set();
+
+    for (let i = 1; i < PINNED_SHADER_SLOTS.length; i++) {
+        const name = PINNED_SHADER_SLOTS[i];
+        if (name && allKeys.includes(name)) {
+            ordered[i] = name;
+            used.add(name);
+        }
+    }
+
+    for (const key of allKeys) {
+        if (!used.has(key)) {
+            ordered[0] = key;
+            used.add(key);
+            break;
+        }
+    }
+
+    for (const key of allKeys) {
+        if (!used.has(key)) {
+            ordered.push(key);
+            used.add(key);
+        }
+    }
+
+    return ordered.filter(Boolean);
+}
+
 // Initialize shader navigation when ShaderConverter is available
 if (window.ShaderConverter && window.ShaderConverter.SAMPLE_SHADERS) {
-    shaderKeys = Object.keys(window.ShaderConverter.SAMPLE_SHADERS);
+    shaderKeys = orderShaderKeys(Object.keys(window.ShaderConverter.SAMPLE_SHADERS));
     console.log(`Loaded ${shaderKeys.length} shaders for keyboard navigation`);
 }
 
-function getDefaultShaderIndex() {
-    return shaderKeys.indexOf(DEFAULT_SHADER_NAME);
-}
-
 function applyDefaultShader() {
-    const defaultIndex = getDefaultShaderIndex();
-    if (defaultIndex !== -1) {
-        applyShaderAtIndex(defaultIndex);
-        return true;
+    if (window.ShaderConverter && window.visualizer) {
+        const shaderSource = window.ShaderConverter.SAMPLE_SHADERS[DEFAULT_SHADER_NAME];
+        if (shaderSource) {
+            try {
+                const convertedShader = window.ShaderConverter.convertShaderToyToWebGL(shaderSource);
+                const success = window.visualizer.applyShader(convertedShader);
+                if (success) {
+                    currentShaderIndex = -1;
+                    if (statusEl) statusEl.textContent = `Shader: ${DEFAULT_SHADER_NAME} (default)`;
+                    const shaderTextarea = document.querySelector('.shader-editor-textarea');
+                    if (shaderTextarea) shaderTextarea.value = shaderSource;
+                    return true;
+                }
+            } catch (error) {
+                console.error('Error loading default shader:', error);
+            }
+        }
     }
     if (setupShaderProgram(vertexShaderSource, fragmentShaderSource)) {
         uniforms = getShaderUniforms();
@@ -1072,7 +1118,7 @@ window.setShaderByName = (shaderName) => {
 window.getCurrentShaderInfo = () => {
     if (shaderKeys.length === 0) return null;
     if (currentShaderIndex === -1) {
-        return { name: 'Default', index: -1, total: shaderKeys.length };
+        return { name: DEFAULT_SHADER_NAME, index: -1, total: shaderKeys.length };
     }
     return {
         name: shaderKeys[currentShaderIndex],
