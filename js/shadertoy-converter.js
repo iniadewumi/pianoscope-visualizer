@@ -9,9 +9,10 @@
 // Assuming they are exported correctly from shaders.js and shaders2.js
 import { SHADERS } from './shaders.js';
 import { SHADERS2 } from './shaders2.js'; // Assuming shaders2.js exists and exports SHADERS2
+import { TEST_SHADERS } from './test-shaders.js';
 
-// Combine the shader objects
-const SAMPLE_SHADERS = { ...SHADERS, ...SHADERS2 };
+// Combine the shader objects (TEST_SHADERS first for picker / keyboard cycle)
+const SAMPLE_SHADERS = { ...TEST_SHADERS, ...SHADERS, ...SHADERS2 };
 
 window.ShaderConverter = (function () {
     "use strict";

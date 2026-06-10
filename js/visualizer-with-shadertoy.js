@@ -947,9 +947,9 @@ const DEFAULT_SHADER_NAME = 'Pianoscope Text';
 // Pinned slots: shader 2, 3, 4 (0-based indices 1, 2, 3)
 const PINNED_SHADER_SLOTS = [
     null,
+    'PIANOSCOPE Adinkra Symbol Field Abstract',
     'Sunset on river -  Raph',
     'Ocean Waves',
-    'Sunset Train',
 ];
 let currentShaderIndex = -1;
 let shaderKeys = [];
