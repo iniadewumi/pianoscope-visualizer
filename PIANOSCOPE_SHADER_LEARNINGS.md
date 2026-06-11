@@ -18,6 +18,8 @@
 6. Test with mic on **and** off (fallback motion must work).
 7. Get visual approval before building the next genre shader.
 
+**If fixing a broken library shader** (e.g. `"Murakami Galaxy"` in `shaders.js`), read **Porting Shadertoy library shaders** below before guessing at line numbers.
+
 ---
 
 ## Iteration postmortem (Afrotech Fractal Settlement)
@@ -132,6 +134,10 @@ We shipped three distinct approaches, then one polish pass on the winner. **Do n
 | Opening `index.html` as `file://` | ES module import failures (browser-dependent) | `npx serve .` → `http://localhost:...` |
 | Rewriting from scratch after v3 works | Lose fill/stroke foundation, risk dot grid again | Polish pass on existing `settlementLayer` architecture |
 | Undefined palette vars in `mainImage` | Shader compile fail | Define `electric`, `deepCyan`, etc. in scope where used |
+| `uniform vec2 iResolution` in converter preamble | `vec3 p = iResolution` fails: *cannot convert from uniform 2-component…* | Preamble uses `uniform vec3 iResolution`; upload `(width, height, 1.0)` |
+| `vec3(3) - vec2(2) * diff` in smoothstep noise | `wrong operand types` on `-` | Use `vec2(3.0) - 2.0 * diff` (all `vec2`) |
+| Assuming error line = shader body line | Chasing wrong line in editor textarea | Error line = **full** compiled source (see compile pipeline below) |
+| Patching only the shader body, not the preamble | "Fixed" shader still fails | Check converter + runtime uniform uploads match |
 
 ---
 
@@ -207,6 +213,86 @@ float audioBoost(float v) {
 | Template string backticks in JS | Escape `` ` `` inside shader strings |
 | `inout` in helpers | Works, but prefer simple returns when possible |
 | Duplicate `settlementLayer` call without assignment | First layer silently skipped — always `col = settlementLayer(...)` |
+| Shadertoy `iResolution` is **`vec3`** | Converter preamble: `uniform vec3 iResolution`. `.xy` / `.x` / `.y` still work. Upload via `gl.uniform3f(loc, w, h, 1.0)` in [`visualizer-with-shadertoy.js`](js/visualizer-with-shadertoy.js) and [`kiosk-mode.js`](js/kiosk-mode.js) |
+| `vec3 p = iResolution` in ported shaders | Valid on Shadertoy; fails if preamble used `vec2`. Use `vec3(iResolution.xy, iResolution.z)` in body **or** keep vec3 uniform |
+| `vec3(iResolution, 1.0)` / `vec3(iResolution, 0.0)` | Valid when `iResolution` was `vec2`; **breaks** with vec3 preamble (`constructor: too many arguments`). Use `iResolution` or `vec3(iResolution.xy, 0.0)` — converter rewrites these automatically |
+| Hermite smoothstep `t²(3−2t)` on `vec2` | Must stay same type: `diff * diff * (vec2(3.0) - 2.0 * diff)` — not `vec3(3) - vec2(2) * diff` |
+| Shaders with `void main()` already | `convertShaderToyToWebGL` returns them **as-is** (no preamble). Examples: `"Black Hole"`, `"DULL AMAP"` |
+| `out` params in library shaders (e.g. Murakami) | Compiles on **WebGL 2**; WebGL 1 fails (`varying` only at global scope). Don't expect full library on WebGL 1 without refactors |
+
+---
+
+## Porting Shadertoy library shaders
+
+Use this when a shader in [`js/shaders.js`](js/shaders.js) / [`js/shaders2.js`](js/shaders2.js) fails to compile — **not** when authoring new PIANOSCOPE entries (those go in `test-shaders.js`).
+
+### Compile pipeline (where error line numbers come from)
+
+Final fragment source = **runtime prefix** + **converter output**:
+
+```
+createShader() prefix          #version 300 es, out fragColor, #define texture2D texture
+  + WEBGL_PREAMBLE             uniforms (iResolution, iTime, iChannel0…), compatibility #defines
+  + shader body from shaders.js
+  + WEBGL_MAIN                 void main() { mainImage(fragColor, gl_FragCoord.xy); }
+```
+
+**The GLSL error line is 1-based in this full string**, not in the textarea / `shaders.js` string alone. A ~30-line preamble offset is normal. Map errors by assembling the full source or logging `gl.getShaderInfoLog` in DevTools.
+
+Flow: `ShaderConverter.convertShaderToyToWebGL(body)` → `window.visualizer.applyShader(converted)` → `createShader()` adds another prefix.
+
+### Fast debug checklist
+
+1. **Confirm shader name** — status bar shows `Shader: …`. Keyboard cycle order is **not** file order; `Murakami Galaxy` is index 4; **next** is `Sine March` (easy to overshoot).
+2. **Read full error** — console has complete `gl.getShaderInfoLog` (status bar truncates to ~100 chars).
+3. **Classify the error:**
+   - `wrong operand types` on `-` / `+` → mixed `vec2`/`vec3`/`float` in one expression.
+   - `dimension mismatch` + `uniform … 2-component` → `vec3 x = iResolution` with vec2 uniform (fixed: vec3 uniform in preamble).
+   - `'varying' : only allowed at global scope` → WebGL 1 + `in`/`out` function params (library shaders with `out float`, `out vec3` need WebGL 2 or refactor).
+4. **Grep the body** for `iResolution` without `.x`/`.y`/`.xy` swizzle — common in golf/shadertoy one-liners (`vec3 p = iResolution`).
+5. **Re-test on WebGL 2** — project prefers `webgl2` context; most library shaders assume it.
+
+### Case study: Murakami Galaxy (fixed)
+
+| Error | Line (compiled) | Cause | Fix |
+|-------|-----------------|-------|-----|
+| `wrong operand types` on `-` | ~135 | `vec3(3) - vec2(2) * diff` in `Noise()` Hermite interp | `vec2(3.0) - 2.0 * diff` |
+| `dimension mismatch` / `2-component` | ~28–36 (varies) | Often **adjacent** shader `Sine March`: `vec3 p = iResolution` vs vec2 uniform | Preamble `uniform vec3 iResolution` + `uniform3f(w,h,1)` |
+
+Murakami itself uses only `iResolution.x`, `.xy`, `.y` — it compiles on WebGL 2 after the `Noise()` fix. The vec3-uniform change fixes the wider library (Sine March, Hyperloop, anything assigning `iResolution` to `vec3`).
+
+### When to edit `shaders.js` vs preamble
+
+| Change | Where |
+|--------|--------|
+| New PIANOSCOPE genre shader | [`js/test-shaders.js`](js/test-shaders.js) only |
+| One-off typo in a ported Shadertoy shader | [`js/shaders.js`](js/shaders.js) / `shaders2.js` |
+| `iResolution` type, `main()`, shared uniforms | [`js/shadertoy-converter.js`](js/shadertoy-converter.js) `WEBGL_PREAMBLE` |
+| Uniform upload values | [`js/visualizer-with-shadertoy.js`](js/visualizer-with-shadertoy.js) `setShaderUniforms`, [`kiosk-mode.js`](js/kiosk-mode.js) |
+| Standalone `void main()` shaders with own uniforms | Leave as-is; converter skips preamble |
+
+### Preamble `iResolution` contract (current)
+
+```glsl
+uniform vec3 iResolution;  // Shadertoy: (width, height, pixelDensity). We pass z = 1.0.
+```
+
+```js
+gl.uniform3f(uniforms.iResolution, canvas.width, canvas.height, 1.0);
+```
+
+Shaders that only need aspect ratio: `iResolution.xy` or `iResolution.x / iResolution.y` — unchanged.
+
+### Optional: verify compile in browser console
+
+After page load (WebGL 2):
+
+```js
+const src = window.ShaderConverter.convertShaderToyToWebGL(
+  window.ShaderConverter.SAMPLE_SHADERS["Murakami Galaxy"]
+);
+window.visualizer.applyShader(src);  // true = OK; else see console for full log
+```
 
 ---
 
@@ -336,11 +422,12 @@ getCurrentShaderInfo()
 | **This file** | Implementation learnings, anti-patterns, iteration history |
 | [`js/test-shaders.js`](js/test-shaders.js) | All new PIANOSCOPE shaders (`TEST_SHADERS`) |
 | [`js/shadertoy-converter.js`](js/shadertoy-converter.js) | `TEST_SHADERS` spread first in picker |
-| [`js/shaders.js`](js/shaders.js) | Reference library — read, don't edit |
-| [`js/visualizer-with-shadertoy.js`](js/visualizer-with-shadertoy.js) | Audio upload, WebGL runtime |
+| [`js/shaders.js`](js/shaders.js) | Reference library — **new PIANOSCOPE work goes in test-shaders.js**; patch here only for library shader compile fixes |
+| [`js/visualizer-with-shadertoy.js`](js/visualizer-with-shadertoy.js) | Audio upload, WebGL runtime, `uniform3f` for `iResolution` |
+| [`js/kiosk-mode.js`](js/kiosk-mode.js) | Kiosk runtime — also uploads `iResolution` as vec3 |
 
 ---
 
 ## One-paragraph summary for agents
 
-PIANOSCOPE shaders live as GLSL strings in `js/test-shaders.js`, wired first in `shadertoy-converter.js`. Sample `iChannel0` at **`y = 0.0` only**. Afrotech Fractal Settlement took three iterations plus a polish pass: thin rings failed (HUD-like), Pianoscope edge-only recursion failed (dot grid kaleidoscope), Apollonian **fill+stroke** with explicit compound ring layers succeeded, then polish added asymmetry, `audioBoost()`, fBm atmosphere, rectangular compounds, and gated walls (~90%). Build **filled architecture** with dark courtyards, not edge-only recursion or random spark grids. Steal fill/stroke from `Apollonian Gasket` and motion helpers from `Pianoscope` — never copy their audio sampling rows or edge-only `df()` rendering. Start audio gains high + use `audioBoost()` because FFT smoothing is 0.8. **Modify the winning architecture; don't restart from scratch.** Get visual sign-off on one shader before building the next genre (Mudcloth Bloom is next — opposite aesthetic, new structure).
+PIANOSCOPE shaders live as GLSL strings in `js/test-shaders.js`, wired first in `shadertoy-converter.js`. Sample `iChannel0` at **`y = 0.0` only**. Afrotech Fractal Settlement took three iterations plus a polish pass: thin rings failed (HUD-like), Pianoscope edge-only recursion failed (dot grid kaleidoscope), Apollonian **fill+stroke** with explicit compound ring layers succeeded, then polish added asymmetry, `audioBoost()`, fBm atmosphere, rectangular compounds, and gated walls (~90%). Build **filled architecture** with dark courtyards, not edge-only recursion or random spark grids. Steal fill/stroke from `Apollonian Gasket` and motion helpers from `Pianoscope` — never copy their audio sampling rows or edge-only `df()` rendering. Start audio gains high + use `audioBoost()` because FFT smoothing is 0.8. **Modify the winning architecture; don't restart from scratch.** Get visual sign-off on one shader before building the next genre (Mudcloth Bloom is next — opposite aesthetic, new structure). **Porting library Shadertoys:** preamble uses `uniform vec3 iResolution` (not vec2); error line numbers include preamble + runtime prefix; grep for `vec3 … = iResolution` and mixed-type smoothstep (`vec3`/`vec2`); Murakami needed `vec2(3.0) - 2.0 * diff` in `Noise()`; many failures that mention "2-component" are `Sine March`-style vec3 assignments — confirm shader name in the status bar.

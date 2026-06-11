@@ -5,10 +5,8 @@
  * standard WebGL shaders, and provides a modern UI for testing shaders.
  */
 
-// Ensure SHADERS and SHADERS2 are correctly imported if they exist in separate files
-// Assuming they are exported correctly from shaders.js and shaders2.js
 import { SHADERS } from './shaders.js';
-import { SHADERS2 } from './shaders2.js'; // Assuming shaders2.js exists and exports SHADERS2
+import { SHADERS2 } from './shaders2.js';
 import { TEST_SHADERS } from './test-shaders.js';
 
 // Combine the shader objects (TEST_SHADERS first for picker / keyboard cycle)
@@ -36,7 +34,7 @@ precision highp float;
     #define out varying
 #endif
 
-uniform vec2 iResolution;
+uniform vec3 iResolution;
 uniform float iTime;
 uniform float iTimeDelta;
 uniform float iFrame;
@@ -86,6 +84,11 @@ void main() {
 
         // Replace texture with texture2D which is needed for WebGL 1.0
         let convertedCode = shadertoyCode.replace(/\btexture\(/g, 'texture2D(');
+
+        // iResolution is vec3 in preamble (Shadertoy). vec3(vec2, float) ports used vec3(iResolution, z).
+        convertedCode = convertedCode
+            .replace(/vec3\s*\(\s*iResolution\s*,\s*1\.0\s*\)/g, 'iResolution')
+            .replace(/vec3\s*\(\s*iResolution\s*,\s*0\.0\s*\)/g, 'vec3(iResolution.xy, 0.0)');
 
         // Combine the shader parts
         return WEBGL_PREAMBLE + convertedCode + WEBGL_MAIN;

@@ -1,6 +1,3 @@
-// Add this code to the end of your DOMContentLoaded event listener in index.html
-// or as a separate script file
-
 document.addEventListener('DOMContentLoaded', function() {
     // Pure visualization view functionality
     const pureViewToggle = document.getElementById('pure-view-toggle');

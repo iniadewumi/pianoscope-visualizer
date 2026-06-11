@@ -56,36 +56,26 @@ function loadTextureIntoChannels(gl, textures, url) {
     image.crossOrigin = "anonymous"; // Important for CORS
     
     image.onload = function() {
-        console.log(`Image loaded successfully: ${url}`);
-        console.log(`Dimensions: ${image.width}x${image.height}`);
-        
-        // Load the same image into all texture channels
         for (let i = 0; i < textures.length; i++) {
             gl.activeTexture(gl[`TEXTURE${i}`]);
             gl.bindTexture(gl.TEXTURE_2D, textures[i]);
             gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
             
-            // Only generate mipmap if power-of-two dimensions
             if (isPowerOf2(image.width) && isPowerOf2(image.height)) {
                 gl.generateMipmap(gl.TEXTURE_2D);
                 gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
-                console.log(`Generated mipmaps for texture ${i}`);
             } else {
                 gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
                 gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
                 gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-                console.log(`Using CLAMP_TO_EDGE for non-power-of-two texture ${i}`);
             }
-            console.log(`Texture ${i} set up completely`);
         }
     };
     
-    image.onerror = function(e) {
+    image.onerror = function() {
         console.error(`Failed to load texture from ${url}`);
-        console.error(e);
     };
     
-    console.log(`Starting to load image from: ${url}`);
     image.src = url;
 }
 
@@ -695,7 +685,7 @@ function setupShaderProgram(vertexSource, fragmentSource) {
     }
 
     function setShaderUniforms(currentTime) {
-        if (uniforms.iResolution) gl.uniform2f(uniforms.iResolution, canvas.width, canvas.height);
+        if (uniforms.iResolution) gl.uniform3f(uniforms.iResolution, canvas.width, canvas.height, 1.0);
         if (uniforms.iTime) gl.uniform1f(uniforms.iTime, currentTime);
         if (uniforms.iTimeDelta) gl.uniform1f(uniforms.iTimeDelta, deltaTime);
         if (uniforms.iFrame) gl.uniform1f(uniforms.iFrame, frameCount);
@@ -938,8 +928,6 @@ function setupShaderProgram(vertexSource, fragmentSource) {
             }
         });
     }
-    // Add this code to your visualizer-with-shadertoy.js file
-// Place it in the "=== EVENT HANDLERS ===" section, after the existing event listeners
 
 // === KEYBOARD SHADER NAVIGATION ===
 // -1 = default shader (Pianoscope Text), outside the numbered cycle
@@ -990,6 +978,10 @@ if (window.ShaderConverter && window.ShaderConverter.SAMPLE_SHADERS) {
     console.log(`Loaded ${shaderKeys.length} shaders for keyboard navigation`);
 }
 
+function logAppliedShader(shaderName) {
+    console.log(`Applied shader: ${shaderName}`);
+}
+
 function applyDefaultShader() {
     if (window.ShaderConverter && window.visualizer) {
         const shaderSource = window.ShaderConverter.SAMPLE_SHADERS[DEFAULT_SHADER_NAME];
@@ -999,6 +991,7 @@ function applyDefaultShader() {
                 const success = window.visualizer.applyShader(convertedShader);
                 if (success) {
                     currentShaderIndex = -1;
+                    logAppliedShader(DEFAULT_SHADER_NAME);
                     if (statusEl) statusEl.textContent = `Shader: ${DEFAULT_SHADER_NAME} (default)`;
                     const shaderTextarea = document.querySelector('.shader-editor-textarea');
                     if (shaderTextarea) shaderTextarea.value = shaderSource;
@@ -1039,6 +1032,7 @@ function applyShaderAtIndex(newIndex) {
         const success = window.visualizer.applyShader(convertedShader);
 
         if (success) {
+            logAppliedShader(shaderName);
             if (statusEl) {
                 statusEl.textContent = `Shader: ${shaderName} (${currentShaderIndex + 1}/${shaderKeys.length})`;
             }
@@ -1048,7 +1042,6 @@ function applyShaderAtIndex(newIndex) {
                 shaderTextarea.value = shaderSource;
             }
 
-            console.log(`Applied shader: ${shaderName}`);
         } else {
             console.error(`Failed to apply converted shader: ${shaderName}`);
             if (statusEl) {
@@ -1099,6 +1092,7 @@ window.setShaderByName = (shaderName) => {
                 const success = window.visualizer.applyShader(convertedShader);
                 if (success) {
                     currentShaderIndex = index;
+                    logAppliedShader(shaderName);
                     if (statusEl) {
                         statusEl.textContent = `Shader: ${shaderName} (${currentShaderIndex + 1}/${shaderKeys.length})`;
                     }

@@ -5,11 +5,6 @@
  * and integrates with the video texture handler.
  */
 
-function debugLog(message) {
-    console.log(`[VideoController] ${message}`);
-}
-
-
 class VideoController {
 
     constructor(gl) {
@@ -48,19 +43,13 @@ class VideoController {
      * Initialize the video UI once it's available in the DOM
      */
     initializeVideoUI() {
-        debugLog("Initializing video UI");
-        
         // If DOM is already loaded, initialize immediately
         if (document.readyState !== 'loading') {
-            debugLog("DOM already loaded, setting up UI controls immediately");
             this.setupUIControls();
             return;
         }
         
-        // Otherwise wait for DOMContentLoaded
-        debugLog("Waiting for DOM to be ready");
         document.addEventListener('DOMContentLoaded', () => {
-            debugLog("DOM now loaded, setting up UI controls");
             this.setupUIControls();
         });
     }
@@ -77,18 +66,12 @@ class VideoController {
         
         // If critical elements aren't found, retry after a short delay
         if (!this.playPauseBtn || !this.seekBar) {
-            debugLog("Critical UI elements not found, retrying in 500ms");
             setTimeout(() => this.setupUIControls(), 500);
             return;
         }
         
-        // Bind UI events
         this.bindUIEvents();
-        
-        // Listen for video events from the handler
         this.setupVideoEventListeners();
-        
-        debugLog("UI controls setup complete");
     }
     
     
@@ -161,22 +144,8 @@ class VideoController {
      */
     bindUIEvents() {
         if (!this.localVideoBtn) {
-            debugLog("UI elements not ready, skipping event binding");
             return;
         }
-        
-        debugLog("Binding UI events to video controls");
-        
-        // Play/Pause button
-        this.playPauseBtn.addEventListener('click', () => {
-            debugLog("Play/Pause button clicked");
-            if (this.videoHandler.isPaused) {
-                debugLog("Attempting to play video");
-            } else {
-                debugLog("Attempting to pause video");
-            }
-            this.videoHandler.togglePlay();
-        });
         
         // Video file selection
         this.localVideoBtn.addEventListener('click', () => {
@@ -259,8 +228,6 @@ class VideoController {
             const speed = parseFloat(this.playbackSpeedSelect.value);
             this.videoHandler.setPlaybackSpeed(speed);
         });
-
-    debugLog("UI events bound successfully");
     }
     
     /**

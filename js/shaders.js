@@ -1,6 +1,2514 @@
 
 // Sample Shadertoy shaders to quickly test
 export const SHADERS = {
+    "Striped Water": `#define DRAG_MULT 0.38
+#define WATER_DEPTH 2.8
+#define CAMERA_HEIGHT 3.5
+#define ITERATIONS_RAYMARCH 12
+#define ITERATIONS_NORMAL 36
+#define NormalizedMouse (iMouse.xy / iResolution.xy)
+
+// ── Strip color lookup ────────────────────────────────────────────────────────
+// 20 strips across world X axis, 5 colors cycling, 2px black separators
+vec3 getStripColor(float worldX, float worldZ) {
+  // Use world X position to determine strip
+  // Scale so ~20 strips are visible across the view
+  float stripScale = 0.4; // tune to match strip width in view
+  float pos = worldX * stripScale;
+  float stripF = pos - floor(pos);        // 0..1 within strip
+  int   stripI = int(abs(floor(pos)));    // strip index
+
+  // 2px black line — line width in strip-fraction units
+  float lineW = 0.008;
+  if (stripF < lineW || stripF > 1.0 - lineW) {
+    return vec3(0.05); // near-black separator
+  }
+
+  int c = int(mod(float(stripI), 5.0));
+  if (c == 0) return vec3(0.176, 0.220, 0.212); // dark teal
+  if (c == 1) return vec3(0.325, 0.463, 0.298); // forest green
+  if (c == 2) return vec3(0.902, 0.380, 0.341); // coral/red
+  if (c == 3) return vec3(0.969, 0.714, 0.533); // peach
+  return             vec3(0.929, 0.659, 0.718); // light pink
+}
+
+// ── Wave functions (unchanged from afl_ext) ──────────────────────────────────
+vec2 wavedx(vec2 position, vec2 direction, float frequency, float timeshift) {
+  float x = dot(direction, position) * frequency + timeshift;
+  float wave = exp(sin(x) - 1.0);
+  float dx = wave * cos(x);
+  return vec2(wave, -dx);
+}
+
+float getwaves(vec2 position, int iterations) {
+  float wavePhaseShift = length(position) * 0.1;
+  float iter = 0.0;
+  float frequency = 1.0;
+  float timeMultiplier = 2.0;
+  float weight = 1.0;
+  float sumOfValues = 0.0;
+  float sumOfWeights = 0.0;
+  for (int i = 0; i < iterations; i++) {
+    vec2 p = vec2(sin(iter), cos(iter));
+    vec2 res = wavedx(position, p, frequency, iTime * timeMultiplier + wavePhaseShift);
+    position += p * res.y * weight * DRAG_MULT;
+    sumOfValues  += res.x * weight;
+    sumOfWeights += weight;
+    weight *= 0.8;
+    frequency    *= 1.18;
+    timeMultiplier *= 1.07;
+    iter += 1232.399963;
+  }
+  return sumOfValues / sumOfWeights;
+}
+
+float raymarchwater(vec3 camera, vec3 start, vec3 end, float depth) {
+  vec3 pos = start;
+  vec3 dir = normalize(end - start);
+  for (int i = 0; i < 64; i++) {
+    float height = getwaves(pos.xz, ITERATIONS_RAYMARCH) * depth - depth;
+    if (height + 0.01 > pos.y) {
+      return distance(pos, camera);
+    }
+    pos += dir * (pos.y - height);
+  }
+  return distance(start, camera);
+}
+
+vec3 normal(vec2 pos, float e, float depth) {
+  vec2 ex = vec2(e, 0);
+  float H = getwaves(pos.xy, ITERATIONS_NORMAL) * depth;
+  vec3 a = vec3(pos.x, H, pos.y);
+  return normalize(cross(
+    a - vec3(pos.x - e, getwaves(pos.xy - ex.xy, ITERATIONS_NORMAL) * depth, pos.y),
+    a - vec3(pos.x, getwaves(pos.xy + ex.yx, ITERATIONS_NORMAL) * depth, pos.y + e)
+  ));
+}
+
+mat3 createRotationMatrixAxisAngle(vec3 axis, float angle) {
+  float s = sin(angle), c = cos(angle), oc = 1.0 - c;
+  return mat3(
+    oc*axis.x*axis.x+c,        oc*axis.x*axis.y-axis.z*s, oc*axis.z*axis.x+axis.y*s,
+    oc*axis.x*axis.y+axis.z*s, oc*axis.y*axis.y+c,        oc*axis.y*axis.z-axis.x*s,
+    oc*axis.z*axis.x-axis.y*s, oc*axis.y*axis.z+axis.x*s, oc*axis.z*axis.z+c
+  );
+}
+
+vec3 getRay(vec2 fragCoord) {
+  vec2 uv = ((fragCoord.xy / iResolution.xy) * 2.0 - 1.0)
+            * vec2(iResolution.x / iResolution.y, 1.0);
+  vec3 proj = normalize(vec3(uv.x, uv.y, 1.5));
+  if (iResolution.x < 600.0) return proj;
+  return createRotationMatrixAxisAngle(vec3(0.0, -1.0, 0.0),
+           3.0 * ((NormalizedMouse.x + 0.5) * 2.0 - 1.0))
+       * createRotationMatrixAxisAngle(vec3(1.0, 0.0, 0.0),
+           0.5 + 1.5 * (((NormalizedMouse.y == 0.0 ? 0.27 : NormalizedMouse.y)) * 2.0 - 1.0))
+       * proj;
+}
+
+float intersectPlane(vec3 origin, vec3 direction, vec3 point, vec3 normal) {
+  return clamp(dot(point - origin, normal) / dot(direction, normal), -1.0, 9991999.0);
+}
+
+// ── Desert storm sky (ported from afl_ext desert shader) ─────────────────────
+
+vec2 hash22_s(vec2 p) {
+  float n = sin(dot(p, vec2(113.0, 1.0)));
+  return fract(vec2(2097152.0, 262144.0) * n) * 2.0 - 1.0;
+}
+float gradN2D_s(in vec2 f) {
+  const vec2 e = vec2(0.0, 1.0);
+  vec2 p = floor(f); f -= p;
+  vec2 w = f * f * (3.0 - 2.0 * f);
+  float c = mix(
+    mix(dot(hash22_s(p+e.xx), f-e.xx), dot(hash22_s(p+e.yx), f-e.yx), w.x),
+    mix(dot(hash22_s(p+e.xy), f-e.xy), dot(hash22_s(p+e.yy), f-e.yy), w.x),
+    w.y);
+  return c * 0.5 + 0.5;
+}
+float fBm_s(in vec2 p) {
+  return gradN2D_s(p)*0.57 + gradN2D_s(p*2.0)*0.28 + gradN2D_s(p*4.0)*0.15;
+}
+vec3 getSunDir() {
+  return normalize(vec3(0.4, 0.35 + sin(iTime * 0.04 + 1.0) * 0.15, 0.7));
+}
+vec3 getSky(vec3 dir) {
+  vec3 ld = getSunDir();
+  // Base: warm sandy horizon blending to blue zenith
+  vec3 sky = mix(vec3(0.80, 0.70, 0.50), vec3(0.40, 0.60, 0.90),
+                 pow(max(dir.y + 0.15, 0.0), 0.5));
+  sky *= vec3(0.84, 1.0, 1.17);
+  // Sun glow + disc
+  float sun = clamp(dot(ld, dir), 0.0, 1.0);
+  sky += vec3(1.0, 0.70, 0.40) * pow(sun, 16.0) * 0.20;
+  sky += vec3(1.0, 0.90, 0.60) * pow(sun, 64.0) * 0.35;
+  sky += vec3(1.0, 0.95, 0.80) * pow(sun, 720.0) * 1.80;
+  // Drifting clouds projected onto sky dome
+  vec3 rd2 = normalize(dir * vec3(1.0, 1.0, 1.0 + length(dir.xy)*0.15));
+  const float SC = 1e5;
+  float ct = SC * 0.15 / (rd2.y + 0.15);
+  if (ct > 0.0) {
+    vec2 uv = vec2(iTime * 0.8, 0.0) + rd2.xz * ct / SC;
+    float cloud = fBm_s(uv * 1.5);
+    float cloudMask = smoothstep(0.45, 1.0, cloud)
+                    * smoothstep(0.45, 0.55, rd2.y * 0.5 + 0.5);
+    sky = mix(sky, vec3(1.8), cloudMask * 0.45);
+  }
+  return sky;
+}
+
+// ── Main ─────────────────────────────────────────────────────────────────────
+void mainImage(out vec4 fragColor, in vec2 fragCoord) {
+  vec3 ray = getRay(fragCoord);
+
+  if (ray.y >= 0.0) {
+    fragColor = vec4(getSky(ray), 1.0);
+    return;
+  }
+
+  vec3 waterPlaneHigh = vec3(0.0,  0.0,          0.0);
+  vec3 waterPlaneLow  = vec3(0.0, -WATER_DEPTH,  0.0);
+  vec3 origin = vec3(iTime * 0.2, CAMERA_HEIGHT, 1.0);
+
+  float highPlaneHit = intersectPlane(origin, ray, waterPlaneHigh, vec3(0,1,0));
+  float lowPlaneHit  = intersectPlane(origin, ray, waterPlaneLow,  vec3(0,1,0));
+  vec3  highHitPos   = origin + ray * highPlaneHit;
+  vec3  lowHitPos    = origin + ray * lowPlaneHit;
+
+  float dist       = raymarchwater(origin, highHitPos, lowHitPos, WATER_DEPTH);
+  vec3  waterHitPos = origin + ray * dist;
+
+  // Normal + distance smoothing (unchanged)
+  vec3 N = normal(waterHitPos.xz, 0.01, WATER_DEPTH);
+  N = mix(N, vec3(0.0, 1.0, 0.0), 0.8 * min(1.0, sqrt(dist * 0.01) * 1.1));
+
+  // Fresnel
+  float fresnel = 0.04 + (1.0 - 0.04) * pow(1.0 - max(0.0, dot(-N, ray)), 5.0);
+
+  // Reflection ray
+  vec3 R = normalize(reflect(ray, N));
+  R.y = abs(R.y);
+  vec3 reflection = getSky(R);
+
+  // Strip color replaces subsurface scattering
+  vec3 stripCol = getStripColor(waterHitPos.x, waterHitPos.z);
+
+  // Blend: fresnel controls reflection vs strip color
+  vec3 C = mix(stripCol, reflection, fresnel * 0.55);
+
+  // Subtle depth darkening
+  float depthFade = clamp((waterHitPos.y + WATER_DEPTH) / WATER_DEPTH, 0.0, 1.0);
+  C *= 0.75 + 0.25 * depthFade;
+
+  fragColor = vec4(C, 1.0);
+}`,
+    "Murakami Galaxy": `mat4 rotationX( in float angle ) {
+    
+    float c = cos(angle);
+    float s = sin(angle);
+    
+	return mat4(1.0, 0,	 0,	0,
+			 	0, 	 c,	-s,	0,
+				0, 	 s,	 c,	0,
+				0, 	 0,  0,	1);
+}
+
+mat4 rotationY( in float angle ) {
+    
+    float c = cos(angle);
+    float s = sin(angle);
+    
+	return mat4( c, 0,	 s,	0,
+			 	 0,	1.0, 0,	0,
+				-s,	0,	 c,	0,
+				 0, 0,	 0,	1);
+}
+
+mat4 rotationZ( in float angle ) {
+    float c = cos(angle);
+    float s = sin(angle);
+    
+	return mat4(c, -s,	0,	0,
+			 	s,	c,	0,	0,
+				0,	0,	1,	0,
+				0,	0,	0,	1);
+}
+
+
+
+// Murakami Galaxy by Philippe Desgranges
+// Email: Philippe.desgranges@gmail.com
+// License Creative Commons Attribution-NonCommercial-ShareAlike 3.0 Unported License.
+//
+//
+// To follow up on my current obsession with Takashi Murakami (see: Infinite Murakami)
+// I wanted to give a tribute to his spherical flower patterns (put exemple here)
+// but instead of single compositions give it a infinite galaxy scale with a central flower/sun.
+// This idea ended up being quite challenging in many aspects and I learned a lot in the process of
+// bringing it to a reality, especially :
+//
+// Sphere parametrization : The first thing I did was to modify the fower pattern I did for Infinite
+// Murakami to map it onto a sphere. Of course, some pretty bad distortion around the poles due to
+// spherical texture mapping so I had to find a way to compensate for that by reparametrizing polar
+// coordinates. I wrapped my head around the problem for a couple of days (no pun intended) and ended
+// up finding a tiling scheme consising of mappin the sphere with meridian bands with variying number
+// of flowers to compensate for the horizontal stretch and some taper compensation.
+//
+// Fast Ray casting : The approach I first used was a classic SDF ray casting. My SDF was evaluating
+// 27 (3*3*3) adjacent cells (containing zero or one planet each). Empty space had to be traversed with
+// a lot of caution and it was full of hooks and crannies so it ended up being super slow, especially on
+// my laptop (6fps tops). I realized that because my geometry was qhite simple (a bunch of sphere in a grid)
+// I could just traverse the grid using a bresenham-like traching and just evaluate ray/sphere intersection
+// analytically along the way in crossed cells. It gave me 10X speedup which brough me an immense satisfaction.
+// 
+// Anti-aliasing was also a challenge and, although the preview looks decent it is much better looking
+// in fullscreen.
+//
+// I think I'll move on from the Murakami theme for my next entries. I'm done for now :D
+//
+
+//#define MSAA // WANING: on some architecture this leads to long compile times
+
+#define MAX_DST 50.0
+#define sat(a) clamp(a,0.0,1.0)
+
+const float pi = 3.1415926;
+const float halfPi = pi * 0.5;
+const float pi2 = pi * 2.0;
+
+const float quadrant = pi / 6.0;
+
+const float blackLevel = 0.3; // True black is too aggressive
+
+
+#define S(a,b,t) smoothstep(a,b,t)
+
+// Some hash function 2->1
+float N2(vec2 p)
+{	// Dave Hoskins - https://www.shadertoy.com/view/4djSRW
+    p = mod(p, vec2(500.0));
+	vec3 p3  = fract(vec3(p.xyx) * vec3(443.897, 441.423, 437.195));
+    p3 += dot(p3, p3.yzx + 19.19);
+    return fract((p3.x + p3.y) * p3.z);
+}
+
+// A 2d Noise used for the sun rays
+float Noise(vec2 uv)
+{
+    vec2 corner = floor(uv);
+	float c00 = N2(corner + vec2(0.0, 0.0));
+	float c01 = N2(corner + vec2(0.0, 1.0));
+	float c11 = N2(corner + vec2(1.0, 1.0));
+	float c10 = N2(corner + vec2(1.0, 0.0));
+    
+    vec2 diff = fract(uv);
+    
+    diff = diff * diff * (vec2(3.0) - 2.0 * diff);
+    
+    return mix(mix(c00, c10, diff.x), mix(c01, c11, diff.x), diff.y);
+}
+
+// An ellipse signed distance function by iq
+// https://iquilezles.org/articles/ellipsedist
+float sdEllipse( in vec2 z, in vec2 ab )
+{
+    vec2 p = vec2(abs(z));
+    
+    if( p.x > p.y ){ p=p.yx; ab=ab.yx; }
+	
+    float l = ab.y*ab.y - ab.x*ab.x;
+    float m = ab.x*p.x/l; float m2 = m*m;
+    float n = ab.y*p.y/l; float n2 = n*n;
+    float c = (m2 + n2 - 1.0)/3.0; float c3 = c*c*c;
+    float q = c3 + m2*n2*2.0;
+    float d = c3 + m2*n2;
+    float g = m + m*n2;
+    
+
+    float co;
+
+    if( d<0.0 )
+    {
+        float p = acos(q/c3)/3.0;
+        float s = cos(p);
+        float t = sin(p)*sqrt(3.0);
+        float rx = sqrt( -c*(s + t + 2.0) + m2 );
+        float ry = sqrt( -c*(s - t + 2.0) + m2 );
+        co = ( ry + sign(l)*rx + abs(g)/(rx*ry) - m)/2.0;
+    }
+    else
+    {
+        float h = 2.0*m*n*sqrt( d );
+        float s = sign(q+h)*pow( abs(q+h), 1.0/3.0 );
+        float u = sign(q-h)*pow( abs(q-h), 1.0/3.0 );
+        float rx = -s - u - c*4.0 + 2.0*m2;
+        float ry = (s - u)*sqrt(3.0);
+        float rm = sqrt( rx*rx + ry*ry );
+        float p = ry/sqrt(rm-rx);
+        co = (p + 2.0*g/rm - m)/2.0;
+    }
+
+    float si = sqrt( 1.0 - co*co );
+ 
+    vec2 closestPoint = vec2( ab.x*co, ab.y*si );
+	
+    return length(closestPoint - p ) * sign(p.y-closestPoint.y);
+}
+
+
+// rotates pos to align the up vector towards up
+vec2 rotUp(vec2 pos, vec2 up)
+{
+    vec2 left = vec2(-up.y, up.x);
+    return left * pos.x + up * pos.y;
+}
+
+// The mouth is the intersection of two ellipses, I traced them in photoshop to
+// compute the right radii and offsets
+float mouthDst(vec2 uv)
+{
+    return max(sdEllipse(uv - vec2(0.0, -0.17), vec2(0.10, 0.2055)),
+               sdEllipse(uv - vec2(0.0,  0.07), vec2(0.14, 0.1055)));
+}
+
+// For the eye, I use simpler circle distance maths in a scales and rotated space
+// as I don't need an accurate distance function to create an outline
+vec4 eye(vec2 uv, vec2 up, vec2 spot1, vec2 spot2, float aa)
+{
+    uv = rotUp(uv, up);
+    uv.x *= 1.5;
+    
+    float len = length(uv);
+    float len2 = length(uv + spot1);// vec2(0.010, 0.025));
+    float len3 = length(uv + spot2);// vec2(-0.005, -0.017));
+    
+    vec4 eye;
+    
+    eye.a = S(0.04 + aa, 0.04 - aa, len);
+    
+    eye.rgb = vec3(S(0.014 + aa, 0.014 - aa, len2) + S(0.02 + aa, 0.02 - aa, len3) + blackLevel);
+    
+    return eye;
+}
+
+const float cRatio = 1.0 / 255.0;
+
+// I wanted the color palette to be true to the 16 hue rainbow used
+// by Murakami but I didn't manage to reproduce the orange-yellow-green part
+// using simple maths so I defaulted to a palette. Then I realized I couldn't target
+// Webgl < 3.0 (Wich was one of my objectives) with array constructor so I decided
+// to build a function selecting the right color with a dichotomic approch in hope
+// that the compiler will make a decent job of optimizing all those branches.
+vec3 palette(float id)
+{
+	if (id < 6.0)
+    {
+        //[0 - 5]
+        if (id < 3.0)
+        {   //[0 - 2]
+            if (id < 1.0) return vec3(181.0, 23.0, 118.0) * cRatio;
+            else if (id < 2.0) return vec3(225.0, 27.0, 104.0) * cRatio;
+            else return vec3(230.0, 40.0, 24.0) * cRatio;
+        }
+        else
+        {   //[3 - 5]
+            if (id < 4.0) return vec3(240.0, 110.0, 14.0) * cRatio;
+            else if (id < 5.0) return vec3(253.0, 195.0, 2.0) * cRatio;
+            else return vec3(253.0, 241.0, 121.0) * cRatio;
+        }
+    }
+    else
+    {   //[6 - 11]
+        if (id < 9.0)
+        {   //[6 - 8]
+            if (id < 7.0) return vec3(167.0, 202.0, 56.0) * cRatio;
+            else if (id < 8.0) return  vec3(0.0, 152.0, 69.0) * cRatio;
+            else return vec3(2.0, 170.0, 179.0) * cRatio;
+        }
+        else
+        {   //[9 - 11] The darker color are at the end to be avoided by mod
+            if (id < 10.0) return vec3(25.0, 186.0, 240.0) * cRatio;
+            else if (id < 11.0) return  vec3(0.0, 98.0, 171.0) * cRatio;
+            else return vec3(40.0, 49.0, 118.0) * cRatio;
+        }
+    }
+}
+
+
+// Adapted from BigWIngs
+vec4 N24(vec2 t) {
+    float n = mod(t.x * 458.0 + t.y * 127.3, 100.0);
+	return fract(sin(n*vec4(123., 1024., 1456., 264.))*vec4(6547., 345., 8799., 1564.));
+}
+
+// Drawing a Murakami flower from a random seed (how poetic)
+vec4 flower(vec2 uv, vec4 rnd, float scale, float aaScale, float petalAngle, out vec3 col, float eyesAA)
+{
+    
+    float rdScale = 1.0;
+    
+    scale *= rdScale; // The border thickness & AA is scale-independant
+    
+    uv.xy *= rdScale;
+    
+    float aa2 = aaScale * 5.0 / iResolution.x; // increase AA over disatnce and facing ratio
+    
+    float centerDst = length(uv);
+        
+    float edge; // Mask for the outline edge
+    
+    vec4 color = vec4(1.0, 1.0, 1.0, 1.0); // Underlying color
+   
+    
+    float thick = 0.002 * scale;
+    
+    float col1Id = mod((rnd.x + rnd.y) * 345.456, 10.0);
+    col = palette(col1Id); // return the 'main' color of the petals
+ 
+    
+    if (centerDst < 0.2)
+    {
+        //Face part
+        
+        float thres = 0.2 - thick;
+        
+        // inner part of edge circle surrounding the head
+        edge =  S(thres + aa2, thres - aa2, centerDst);
+        
+        float mouth = mouthDst(uv);
+        
+        // edge of the mouth
+        edge *= S(thick - aa2, thick + aa2, abs(mouth));
+        
+        // face color
+        float faceRnd = fract(rnd.x * 45.0 + rnd.y * 23.45);
+        if (faceRnd < 0.5) 
+        {
+            // Flowers with classic yellow / red faces
+        	color.rgb = (mouth < 0.0) ? vec3(1.0, 0.0, 0.0) : vec3(1.0, 1.0, 0.0); 
+        }
+        else
+        {
+            // Flowers with white face / random color mouth
+            float colId = mod(faceRnd * 545.456, 11.0);
+            color.rgb = (mouth < 0.0) ? palette(colId) : vec3(1.0); 
+        }
+        
+        // Eyes
+        vec4 eyeImg;
+        if (uv.x > 0.0)
+        {
+           eyeImg = eye(uv - vec2(0.075, 0.095), vec2(-0.7, 1.2),
+                       vec2(0.007, 0.025), vec2(-0.004, -0.019), aa2 * eyesAA);
+        }
+        else   
+        {
+           eyeImg = eye(uv - vec2(-0.075, 0.095), vec2(0.7, 1.2),
+                       vec2(0.024, 0.010), vec2(-0.016, -0.009), aa2 * eyesAA);
+        }
+
+        color.rgb = mix(color.rgb, eyeImg.rgb, eyeImg.a);
+        
+    }
+    else
+    {
+        float rot = petalAngle;
+        float angle = fract((atan(uv.x, uv.y) + rot) / pi2);
+    
+        float section = angle * 12.0;
+        float sectionId = floor(section);
+        
+        if (rnd.z < 0.1 && rnd.w < 0.1)
+        {
+           // Rainbow flower
+           color.rgb = palette(sectionId);//mod(sectionId + (rnd.x + rnd.y) * 345.456, 12.0));
+        }
+        else if (rnd.y > 0.05)
+        {
+           
+            //Alternating flower
+            if (mod(sectionId, 2.0) == 0.0)
+            {
+                // Color 1
+                color.rgb = col;
+            }
+            else if (rnd.x > 0.75)
+            {
+                // Color 2
+                float colId = mod((rnd.w + rnd.z) * 545.456, 11.0);
+                color.rgb = palette(colId);
+            }
+            // else, Color2 is white by default
+        }
+		// else, fully white petals
+        
+        if (centerDst < 0.36)
+        {
+            //intermediate part, concentric bars
+            
+            float sectionX = fract(section);
+            float edgeDist = 0.5 - abs(sectionX - 0.5);
+            
+            edgeDist *= centerDst; // Untaper bar space so bars have constant thickness
+            
+            float aa = aaScale * 10.0 / iResolution.x;
+            float bar = thick * 1.7;
+            edge = S(bar - aa, bar + aa, edgeDist);
+
+            // outer part of edge circle surrounding the head
+            float thres = 0.2 + thick;
+            float head = S(thres - aa2, thres + aa2, centerDst);
+            edge *= head;
+        }
+        else
+        {
+            // Petal tips are actually ellipses, they could have been approximated them with
+            // circles but I didn't because I have OCD and I needed the ellipse SDF 
+            // for the mouth anyways ;)
+            
+            // Angle to the center of the quadrant
+            float quadAngle = (sectionId + 0.5) * quadrant - rot + pi; 
+
+            // Center of the ellipse
+            vec2 petalUp = vec2(-sin(quadAngle), -cos(quadAngle));
+            vec2 petalCenter = petalUp * 0.36;
+
+            // Rotation of the ellipse basis
+            vec2 petalSpace = rotUp(uv - petalCenter, petalUp);
+
+            // Signed distance function of the ellipse
+            float petalDst = sdEllipse(petalSpace, vec2(0.0944, 0.09));
+
+            //border edge and alpha mask
+            float borderIn = S(thick + aa2, thick - aa2, petalDst);
+            float borderOut = S(-thick + aa2, -thick - aa2, petalDst);
+
+            edge = (borderOut);
+            
+            color.a = borderIn;
+        }
+    }
+    
+    color.rgb = mix(vec3(blackLevel), color.rgb,edge);
+    
+    return color;
+}
+
+struct planet
+{
+    vec3 center;
+    float radius;
+};
+
+// randomizes planet position & radius for a sector
+void GetPlanet(vec3 sector, out planet res)
+{
+   	vec4 rnd = N24(vec2(sector.x + sector.z * 1.35, sector.y));
+    float rad = mix(0.0, 0.4, rnd.x * rnd.w);
+    res.radius = rad;
+    res.center = vec3(rad) + rnd.yzw * vec3(1.0 - 2.0 * rad); // the smaller the planet is, the more off center it can get without crossing border
+}
+
+
+float remap(float val, float min, float max)
+{
+    return sat((val - min) / (max - min));
+}
+
+// breaks down a band of UV coordinates on a sphere to a repetition of square-ish cells with minimal distortion
+vec2 ringUv(vec2 latLon, float angle, float centerLat)
+{
+    // latlon : latitude / longitude
+    // angle: horizontal angle covered by one rep of the pattern over the equator / angular height of the band
+    // centerLat : center latitude of the band
+    
+    
+    // Compute y coords by remapping latitude 
+    float halfAngle = angle * 0.5;
+    float y = remap(latLon.y, centerLat - halfAngle,  centerLat + halfAngle);
+    
+    float centerRatio = cos(centerLat); // stretch of the horizontal arc of the pattern at the center of the 
+   										// band relative to the equator
+    
+    float centerAngle = angle / centerRatio; // local longitudianl angle to compensate for stretching at the center of the band. 
+    
+    float nbSpots = floor(pi2 / centerAngle); // with new angle, how many pattern can we fit in the band?
+    float spotWidth = pi2 / nbSpots;          // and what angle would they cover (including spacing padding)?
+    
+    float cellX = fract(latLon.x / spotWidth); // what would be the u in the current cell then?
+                  
+                  
+    float x = (0.5 - cellX) * (spotWidth / centerAngle); // compensate for taper
+    x *= (cos(latLon.y) / centerRatio) * 0.5 + 0.5;
+    
+    vec2 uvs = vec2(x + 0.5, y);
+    return uvs;
+}
+
+
+// Computes the texture of the planet
+vec3 sphereColor(vec3 worldPos, float nDotV, float dist, float worldAngle)
+{    
+    // which planet are we talnikg about already?
+    // This is done way to much for final rendering, could be optimized out
+    planet p;
+	vec3 sector = floor(worldPos);
+    GetPlanet(sector, p);
+
+    // Scale AA accourding to disatnce and facing ratio
+   	float aaScale = 4.0 - nDotV * 3.8 + min(4.0, dist * dist * 0.025);
+    
+    // Find local position on the sphere
+    vec3 localPos = worldPos - (sector + p.center);
+    
+    // Random seed that will be used for the two flower layers
+    vec4 rnd = N24(vec2(sector.x, sector.y + sector.z * 23.4));
+    vec4 rnd2 = N24(rnd.xy * 5.0);
+    
+    // compensate for the world Z rotation so planets stay upright
+    localPos = (rotationZ(-worldAngle) * vec4(localPos, 0.0)).xyz;
+    // Planet rotation at random speed
+    localPos = (rotationY(iTime * (rnd.w - 0.5)) * vec4(localPos, 0.0)).xyz;
+   
+    
+    // Compute polar coordinates on the sphere
+    float lon = (atan(localPos.z, localPos.x)) + pi;  // 0.0 - 2 * pi
+    float lat  = (atan(length(localPos.xz), localPos.y)) - halfPi; //-halfPi <-> halfPi
+    
+    // Compute the number of flowers at the equator according to the size of the planet
+    float numAtEquator = floor(3.0 + p.radius * 15.0);
+    float angle = pi2 / numAtEquator; // an the angle they cover ath the equator
+    
+    vec3 col1;
+    vec3 col2;
+    
+    float petalAngle = rnd.w * 45.35 + iTime * 0.1;
+    
+    // Compute on layer of flower by dividing the sphere in horizontal bands of 'angle' height 
+    float eq = (floor(lat / angle + 0.5)) * angle;
+    vec2 uvs = ringUv(vec2(lon + eq * rnd.y * 45.0, lat), angle, eq);
+    vec4 flPattern1 = flower((vec2(0.5) - uvs) * 0.95, rnd, 2.0, aaScale, petalAngle, col1, 0.8);
+    
+    
+    // Compute a second layer of flowers with bands offset by half angle
+    float eq2 = (floor(lat / angle) + 0.5) * angle;
+    vec2 uvs2 = ringUv(vec2(lon + eq2 * rnd.x * 33.0, lat), angle, eq2);
+    vec4 flPattern2 = flower((vec2(0.5) - uvs2) * 0.95, rnd2, 2.0, aaScale, petalAngle, col2, 0.8);
+    
+
+    // Compute flower with planar mapping on xz to cover the poles. 
+    vec4 flPattern3 = flower(localPos.xz / p.radius, rnd2, 2.0, aaScale, petalAngle, col2, 0.8);
+    
+    float bg = (1.0 - nDotV);
+    vec3 bgCol = rnd2.y > 0.5 ? col1 : col2; // sphere background is the color of one of the layers
+    
+    vec3 col = bgCol; 
+    
+    // mix the 3 layers of flowers together
+    col = mix(col, flPattern1.rgb, flPattern1.a);
+    col = mix(col, flPattern2.rgb, flPattern2.a);
+    col = mix(col, flPattern3.rgb, flPattern3.a);
+    
+    // add some bogus colored shading
+    
+    //Front lighting
+    //col *= mix(vec3(1.0), bgCol * 0.3, (bg * bg) * 0.8);
+
+    return col;
+}
+
+
+// Analytical nomral compoutation
+// Much faster and acuurate than SDF in my situation
+vec3 calcNormal( vec3 pos )
+{
+    // computes planet in sector
+    planet p;
+    vec3 sector = floor(pos);
+    GetPlanet(sector, p);
+    
+    // return vector 
+    return normalize(pos - (sector + p.center));
+}
+
+
+// Lifted from Rye Terrell at https://gist.github.com/wwwtyro/beecc31d65d1004f5a9d
+// modified to compute coverage
+float raySphereIntersect(vec3 r0, vec3 rd, vec3 s0, float sr, out float coverage) {
+    // - r0: ray origin
+    // - rd: normalized ray direction
+    // - s0: sphere center
+    // - sr: sphere radius
+    // - Returns distance from r0 to first intersecion with sphere,
+    //   or MAX_DST if no intersection.
+    float a = dot(rd, rd);
+    vec3 s0_r0 = r0 - s0;
+    float b = 2.0 * dot(rd, s0_r0);
+    float c = dot(s0_r0, s0_r0) - (sr * sr);
+    
+    float inside = b*b - 4.0*a*c;
+    
+    if (inside < 0.0) {
+        return MAX_DST;
+    }
+    
+    float dst = (-b - sqrt((b*b) - 4.0*a*c))/(2.0*a);
+    
+    // This is a fallof around the edge used for AO
+    // chnage the magic value for a smoother border
+    coverage = S(inside, 0.0, 0.65 * sr * dst / iResolution.x);
+    
+    return dst;
+}
+
+// Computes the RGBA of a planet according to intersection result
+vec4 RenderPlanet(vec3 pos, float d, vec3 rayDir, float worldAngle, float coverage)
+{
+	vec3 n = calcNormal(pos);
+        
+    float nDotV = abs(dot(n, rayDir));
+ 
+    float fog = sat((MAX_DST - d) * 0.1);
+    
+ 
+    // compute some rim lighting to kind of blend everything together
+    vec3 burn  = sat(mix(vec3(2.0, 2.0, 1.5), vec3(1.0, 0.4, 0.2), sat((MAX_DST - d) * 0.05) + nDotV) * 0.5);
+    
+    // Compute the flowery 'texture' on the planet
+    vec3 flowers = sphereColor(pos, nDotV, d, worldAngle);
+    
+    
+    // bogus lighting from the sun
+    vec3 lightPos = pos + vec3(-15.0, -20.0, 60.0);
+    float nDotL = sat(dot(n, normalize(lightPos - pos)) * 0.5 + 0.5);
+    flowers *= nDotL * 0.8 + 0.5;
+    
+    // fades the planets at the horizon
+    vec4 col;
+    col.rgb = flowers + burn;
+    
+    
+    col.a = fog * coverage;
+    
+    // Uncomment to debug coverage AA
+    //col.rgb = mix(vec3(0,1,0), col.rgb, coverage);
+    //col.a = fog;
+    
+    return col;
+}
+
+// Blends two colors front to back
+vec4 BlendFTB(vec4 frontPremul, vec4 backRGBA)
+{
+    vec4 res;
+    
+    res.rgb = backRGBA.rgb * (backRGBA.a * (1.0 - frontPremul.a)) + frontPremul.rgb;
+    res.a = 1.0 - ((1.0 - backRGBA.a) * (1.0 - frontPremul.a));
+    
+    return res;
+}
+
+// Finds the intersection of a ray with a planet in a given sector
+// The coverage is an small alpha falllof at the edge for AA
+// thanks iq for the recommendation
+float castPlanet(vec3 cell, vec3 pos, vec3 dir, out float coverage)
+{
+	vec2 pp = cell.xy + cell.xy;
+    if (dot(pp.xy, pp.xy) < 1.5) return MAX_DST; // we leave a 'tunnel' empty along the z axis 
+                
+ 	planet p;
+    
+    GetPlanet(cell, p);            
+    if (p.radius < 0.06) return MAX_DST; // cull planets that are too small
+    
+    // ray sphere intersection from the start position
+    
+    return raySphereIntersect(pos, dir,  cell + p.center, p.radius, coverage); 
+}
+
+// Traverses the cells grid in a bresenham fashion and test ray/sphere intersection along the way
+// This appoach ended up being much faster than SDF for that 'simple' yet dense geometry
+//
+// Edit: now, this function also performs the accumulation of planet colors according to coverage
+// The colors are coputed with the RenderPlanet function, the ray is stopped when full opacity is
+// reached
+vec4 castRay(vec3 pos, vec3 dir, float maxDst, float worldAngle)
+{
+    // we assume we are traversing space facing Z
+    
+    vec3 dirZ = dir / dir.z; // direction vector that adavance a full cell along Z
+    
+    vec3 cell = floor(pos); // starting cell
+    
+    vec3 start = pos; // saves the start of the ray
+    pos -= fract(pos.z) * dirZ; // pulls back pos on the closes cell boundary behind
+   
+
+    float d = 0.0;
+    float dst;
+    
+    vec2 layers[20];
+    int num = 0;
+
+    float coverage;
+    float opacity = 1.0;
+
+    while (d < MAX_DST)
+    {
+		// Check current cell
+        dst = castPlanet(cell, start, dir, coverage);
+        if (dst < MAX_DST)
+        {
+            // Blends the hit planet behind the previous ones according to coverage
+            //ColorFTB = BlendFTB(ColorFTB, RenderPlanet(start + dst * dir, dst, dir, worldAngle, coverage));
+            layers[num++] = vec2(dst, coverage);
+            opacity *= (1.0 - coverage);
+            if (opacity < 0.01) break;
+        }
+        
+        // Advances a step
+        pos += dirZ;
+        
+        //Compute next cell on y
+        vec3 newCell = floor(pos);
+        
+        bool a = false;
+        bool b = false;
+        float cornerDst = MAX_DST;
+        
+ 		
+        if (cell.x != newCell.x) // have we crossed a cell diagonally on X ?
+        {
+            vec3 stepCell = vec3(newCell.x, cell.yz);
+
+            dst = castPlanet(stepCell, start, dir, coverage);
+        	if (dst < cornerDst) cornerDst = dst;
+            a == true;
+        }
+        
+        if (cell.y != newCell.y)  // have we crossed a cell diagonally on Y ?
+        {
+            vec3 stepCell = vec3(cell.x, newCell.y, cell.z);
+
+            dst = castPlanet(stepCell, start, dir, coverage);
+        	if (dst < cornerDst) cornerDst = dst;
+            b == true;
+        }
+        
+        if (a && b)  // have we crossed a cell diagonally on both X & Y?
+        {
+            vec3 stepCell = vec3(cell.xy, cell.z);
+
+            dst = castPlanet(stepCell, start, dir, coverage);
+        	if (dst < cornerDst) cornerDst = dst;
+        }
+        
+        if (cornerDst < MAX_DST) // We have hit a planet in a corner intersection
+        {
+            // Blends the hit planet behind the previous ones according to coverage
+            //ColorFTB = BlendFTB(ColorFTB, RenderPlanet(start + cornerDst * dir, cornerDst, dir, worldAngle, coverage));
+            //if (ColorFTB.a > 0.99) return ColorFTB;
+            
+            layers[num++] = vec2(cornerDst, coverage);
+            opacity *= (1.0 - coverage);
+            if (opacity < 0.01) break;
+        }
+        
+        
+       	// rinse / repeat
+        cell = newCell;
+        d += 1.0;
+    }
+    
+        
+    vec4 ColorFTB = vec4(0.0);
+    
+    for (int i = 0; i < num; i++)
+    {
+        vec2 layer = layers[i];
+        ColorFTB = BlendFTB(ColorFTB, RenderPlanet(start + layer.x * dir, layer.x, dir, worldAngle, layer.y));
+    }
+    
+    return ColorFTB;
+}
+
+
+vec3 render(vec3 camPos, vec3 rayDir, vec2 uv)
+{
+    vec3 col;
+    
+    // rotates the galaxy around the Z axis, 
+    // this rotation will be compensated for when computing planet color so they stay upright
+    float worldAngle = iTime * 0.1;
+    rayDir = normalize((rotationZ(worldAngle) * vec4(rayDir, 0.0)).xyz);
+   
+    float coverage;
+    
+    // cast a ray in the planet field
+    vec4 planetCol = castRay(camPos, rayDir, MAX_DST, worldAngle);
+    
+
+    // Compute the central rainbow flower and solar god rays by samplin a 2D noise in polar coordinates
+	vec3 dummyCol;
+    vec4 fl = flower(uv * 1.5, vec4(0.0, 0.0, 0.0, 0.0), 2.0, 0.5, iTime * 0.1, dummyCol, 2.0);
+   	col = fl.rgb;
+    
+    float a = atan(uv.x, uv.y);
+    float cdist = length(uv);
+    vec2 raysUvs = vec2(a * 20.0 + iTime * 0.5, cdist * 5.0 - iTime + a * 3.0);
+    vec3 rays = mix(vec3(2.0, 2.0, 1.5), vec3(1.0, 0.4, 0.2), cdist + Noise(raysUvs) * 0.3);
+ 	
+    col = mix(rays, col, fl.a);
+    
+    col = col * (1.0 - planetCol.a) + planetCol.rgb;
+  
+    return col;
+}
+
+
+void mainImage( out vec4 fragColor, in vec2 fragCoord )
+{
+    // Normalized pixel coordinates (from 0 to 1)
+    vec2 uv =(fragCoord - .5 * iResolution.xy) / iResolution.y;
+    uv *= 1.2;
+
+    // compute camera ray
+    vec3 camPos = vec3(0.5, 0.5, iTime * 0.5);
+    vec3 camDir = vec3(0.0, 0.0,  1.0);    
+    vec3 rayDir = camDir + vec3(uv * 0.13, 0.0);
+
+	//vec3 nrmDir = normalize(rayDir);
+    
+    vec3 res = render(camPos, rayDir, uv).rgb;
+	
+    #ifdef MSAA
+    if (iResolution.x < 850.0) // Added AA for the thumbnail
+    {
+        vec3 offset = vec3(0.05, 0.12, 0.0)  / iResolution.x;
+         
+        for (int i = 0; i < 4 + min(0,iFrame); i++)
+        {
+            res += render(camPos, rayDir + offset, uv).rgb;
+            offset.xy = vec2(-offset.y, offset.x);
+        }
+        res /= 5.0;
+    }
+    #endif
+
+    // Output to screen
+    fragColor = vec4(res.rgb,1.0);
+}`,
+    "Sine March": `void mainImage(out vec4 o, vec2 u) {
+    float i,a,d,s,t=.4*iTime;
+    vec3  p = iResolution;
+    u = (u+u-p.xy)/p.y;
+    for(o*=i; i++<64.;
+        d += s = .01 + abs(s) * .4,
+        o += s*d, o.r+=d/s)
+        for (p = vec3(u * d, d + t),
+            s = min(cos(p.z), 6. - length(p.xy * sin(p.y*.6))),
+            a = .8; a < 16.; a += a)
+            p += cos(t+p.yzx)*.1,
+            s += abs(dot(sin(t+.2*p.z+p * a), .6+p-p)) / a;
+    o = tanh(o / 2e4 * length(u));
+}`,
+    "Hyperloop": `/* Hyperloop by @kishimisu (2024) - https://www.shadertoy.com/view/4XVGWh
+   [442 chars -> 439 chars by Snoopeth]
+
+   Playing with a different kind of space repetition using logarithmic scaling
+
+   This work is licensed under a Creative Commons Attribution-NonCommercial-ShareAlike 4.0
+   International License (https://creativecommons.org/licenses/by-nc-sa/4.0/deed.en)
+*/
+
+// If you're getting a black image, try uncommenting this line:
+// #define tanh(x) smoothstep(0., 1., x)
+
+#define r *= mat2(cos(vec4(0,33,11,0) +//
+#define l length(P
+
+void mainImage(out vec4 O, vec2 F) {
+
+    vec3    H   = iResolution,
+            Y   ,
+            P   ;
+    float   E   = iTime,
+            R   ,
+            L   = .1, o;
+    for (   O   *= o; o++ < 50.;
+            O   += .02*(tanh(R*1e3)+2.-2.*tanh(l.xy*7.)))*(.8+cos(log(L*L)+o*.07-E+vec4(0,1,2,0)))/++R)
+            P   *= L / l=vec3(F+F-H.xy, H.y)),
+
+            P.z--,
+            P.xz r .3)),
+            P.zy r 1.)),
+            P.yx r round((atan(P.y, P.x) + E*.2) * 1.91) / 1.91 - E*.2)),
+            Y.x = pow(.67, floor(E - log(P.x)/.4) - E),
+            L += R = min(min(
+                       l.xy),
+                       l-Y    ) - Y.x*.2  ),
+                       l-Y*.67) - Y.x*.134) * .8;
+}`,
+    "Twisted Icosahedron": `// --------------------------------------------------------
+// OPTIONS
+// --------------------------------------------------------
+
+// Disable to see more colour variety
+#define SEAMLESS_LOOP
+#define COLOUR_CYCLE
+#define HIGH_QUALITY
+
+// --------------------------------------------------------
+// http://www.neilmendoza.com/glsl-rotation-about-an-arbitrary-axis/
+// --------------------------------------------------------
+
+mat3 rotationMatrix(vec3 axis, float angle)
+{
+    axis = normalize(axis);
+    float s = sin(angle);
+    float c = cos(angle);
+    float oc = 1.0 - c;
+
+    return mat3(
+        oc * axis.x * axis.x + c,           oc * axis.x * axis.y - axis.z * s,  oc * axis.z * axis.x + axis.y * s,
+        oc * axis.x * axis.y + axis.z * s,  oc * axis.y * axis.y + c,           oc * axis.y * axis.z - axis.x * s,
+        oc * axis.z * axis.x - axis.y * s,  oc * axis.y * axis.z + axis.x * s,  oc * axis.z * axis.z + c
+    );
+}
+
+
+// --------------------------------------------------------
+// HG_SDF
+// https://www.shadertoy.com/view/Xs3GRB
+// --------------------------------------------------------
+
+#define PI 3.14159265359
+#define PHI (1.618033988749895)
+
+
+float t;
+
+
+float vmax(vec3 v) {
+    return max(max(v.x, v.y), v.z);
+}
+
+float sgn(float x) {
+    return (x<0.)?-1.:1.;
+}
+
+// Rotate around a coordinate axis (i.e. in a plane perpendicular to that axis) by angle <a>.
+// Read like this: R(p.xz, a) rotates "x towards z".
+// This is fast if <a> is a compile-time constant and slower (but still practical) if not.
+void pR(inout vec2 p, float a) {
+    p = cos(a)*p + sin(a)*vec2(p.y, -p.x);
+}
+
+// Reflect space at a plane
+float pReflect(inout vec3 p, vec3 planeNormal, float offset) {
+    float t = dot(p, planeNormal)+offset;
+    if (t < 0.) {
+        p = p - (2.*t)*planeNormal;
+    }
+    return sign(t);
+}
+
+// Repeat around the origin by a fixed angle.
+// For easier use, num of repetitions is use to specify the angle.
+float pModPolar(inout vec2 p, float repetitions) {
+    float angle = 2.*PI/repetitions;
+    float a = atan(p.y, p.x) + angle/2.;
+    float r = length(p);
+    float c = floor(a/angle);
+    a = mod(a,angle) - angle/2.;
+    p = vec2(cos(a), sin(a))*r;
+    // For an odd number of repetitions, fix cell index of the cell in -x direction
+    // (cell index would be e.g. -5 and 5 in the two halves of the cell):
+    if (abs(c) >= (repetitions/2.)) c = abs(c);
+    return c;
+}
+
+
+// --------------------------------------------------------
+// IQ
+// https://www.shadertoy.com/view/ll2GD3
+// --------------------------------------------------------
+
+vec3 pal( in float t, in vec3 a, in vec3 b, in vec3 c, in vec3 d ) {
+    return a + b*cos( 6.28318*(c*t+d) );
+}
+
+vec3 spectrum(float n) {
+    return pal( n, vec3(0.5,0.5,0.5),vec3(0.5,0.5,0.5),vec3(1.0,1.0,1.0),vec3(0.0,0.33,0.67) );
+}
+
+
+// --------------------------------------------------------
+// knighty
+// https://www.shadertoy.com/view/MsKGzw
+// --------------------------------------------------------
+
+int Type=5;
+vec3 nc;
+vec3 pbc;
+vec3 pca;
+void initIcosahedron() {//setup folding planes and vertex
+    float cospin=cos(PI/float(Type)), scospin=sqrt(0.75-cospin*cospin);
+    nc=vec3(-0.5,-cospin,scospin);//3rd folding plane. The two others are xz and yz planes
+    pbc=vec3(scospin,0.,0.5);//No normalization in order to have 'barycentric' coordinates work evenly
+    pca=vec3(0.,scospin,cospin);
+    pbc=normalize(pbc); pca=normalize(pca);//for slightly better DE. In reality it's not necesary to apply normalization :)
+
+}
+
+void pModIcosahedron(inout vec3 p) {
+    p = abs(p);
+    pReflect(p, nc, 0.);
+    p.xy = abs(p.xy);
+    pReflect(p, nc, 0.);
+    p.xy = abs(p.xy);
+    pReflect(p, nc, 0.);
+}
+
+float splitPlane(float a, float b, vec3 p, vec3 plane) {
+    float split = max(sign(dot(p, plane)), 0.);
+    return mix(a, b, split);
+}
+
+float icosahedronIndex(inout vec3 p) {
+    vec3 sp, plane;
+    float x, y, z, idx;
+
+    sp = sign(p);
+    x = sp.x * .5 + .5;
+    y = sp.y * .5 + .5;
+    z = sp.z * .5 + .5;
+
+    plane = vec3(-1. - PHI, -1, PHI);
+
+    idx = x + y * 2. + z * 4.;
+    idx = splitPlane(idx, 8. + y + z * 2., p, plane * sp);
+    idx = splitPlane(idx, 12. + x + y * 2., p, plane.yzx * sp);
+    idx = splitPlane(idx, 16. + z + x * 2., p, plane.zxy * sp);
+
+    return idx;
+}
+
+vec3 icosahedronVertex(vec3 p) {
+    vec3 sp, v, v1, v2, v3, result, plane;
+    float split;
+    v = vec3(PHI, 1, 0);
+    sp = sign(p);
+    v1 = v.xyz * sp;
+    v2 = v.yzx * sp;
+    v3 = v.zxy * sp;
+
+    plane = vec3(1, PHI, -PHI - 1.);
+
+    split = max(sign(dot(p, plane.xyz * sp)), 0.);
+    result = mix(v2, v1, split);
+    plane = mix(plane.yzx * -sp, plane.zxy * sp, split);
+    split = max(sign(dot(p, plane)), 0.);
+    result = mix(result, v3, split);
+
+    return normalize(result);
+}
+
+// Nearest vertex and distance.
+// Distance is roughly to the boundry between the nearest and next
+// nearest icosahedron vertices, ensuring there is always a smooth
+// join at the edges, and normalised from 0 to 1
+vec4 icosahedronAxisDistance(vec3 p) {
+    vec3 iv = icosahedronVertex(p);
+    vec3 originalIv = iv;
+
+    vec3 pn = normalize(p);
+    pModIcosahedron(pn);
+    pModIcosahedron(iv);
+
+    float boundryDist = dot(pn, vec3(1, 0, 0));
+    float boundryMax = dot(iv, vec3(1, 0, 0));
+    boundryDist /= boundryMax;
+
+    float roundDist = length(iv - pn);
+    float roundMax = length(iv - vec3(0, 0, 1.));
+    roundDist /= roundMax;
+    roundDist = -roundDist + 1.;
+
+    float blend = 1. - boundryDist;
+    blend = pow(blend, 6.);
+
+    float dist = mix(roundDist, boundryDist, blend);
+
+    return vec4(originalIv, dist);
+}
+
+// Twists p around the nearest icosahedron vertex
+void pTwistIcosahedron(inout vec3 p, float amount) {
+    vec4 a = icosahedronAxisDistance(p);
+    vec3 axis = a.xyz;
+    float dist = a.a;
+    mat3 m = rotationMatrix(axis, dist * amount);
+    p *= m;
+}
+
+
+// --------------------------------------------------------
+// MAIN
+// --------------------------------------------------------
+
+struct Model {
+    float dist;
+    vec3 colour;
+    float id;
+};
+
+
+Model fInflatedIcosahedron(vec3 p) {
+    float d = 1000.;
+
+    // Slightly inflated icosahedron
+    float idx = icosahedronIndex(p);
+    d = min(d, dot(p, pca) - .9);
+    d = mix(d, length(p) - .9, 1.0);
+
+    // Colour each icosahedron face differently
+    #ifdef SEAMLESS_LOOP
+        if (idx == 3.) {
+            idx = 2.;
+        }
+        idx /= 10.;
+    #else
+        idx /= 20.;
+    #endif
+    #ifdef COLOUR_CYCLE
+        idx = mod(idx + t*1., 1.);
+    #endif
+    vec3 colour = spectrum(idx);
+
+    d *= .6;
+    return Model(d, colour, 1.);
+}
+
+Model model(vec3 p) {
+    float rate = PI/6.;
+
+    float a = atan(1., PHI + 1.);
+    pR(p.yz, a);
+
+    pR(p.yx, t * 2.1 + rate);
+    pR(p.yz, a);
+
+    vec3 twistCenter = vec3(.7, 0, 0);
+    pR(twistCenter.yx, t * 2.1 + rate);
+    pR(twistCenter.yz, a);
+
+    p += twistCenter;
+    pTwistIcosahedron(p, 10.5);
+    p -= twistCenter;
+
+    #ifdef SEAMLESS_LOOP
+        pR(p.yz, -a);
+        pR(p.xy, -PI/2.);
+        pModPolar(p.xy, 3.);
+        pR(p.xy, -PI/2.);
+        pR(p.yz, -a);
+    #endif
+
+    return fInflatedIcosahedron(p);
+}
+
+
+Model map(vec3 p) {
+    return model(p);
+}
+
+
+mat3 calcLookAtMatrix(in vec3 ro, in vec3 ta, in float roll) {
+    vec3 ww = normalize( ta - ro );
+    vec3 uu = normalize( cross(ww,vec3(sin(roll),cos(roll),0.0) ) );
+    vec3 vv = normalize( cross(uu,ww));
+    return mat3( uu, vv, ww );
+}
+
+const float MAX_TRACE_DISTANCE = 6.0;
+const float INTERSECTION_PRECISION = 0.001;
+#ifdef HIGH_QUALITY
+    const float FUDGE_FACTOR = .2;
+#else
+    const float FUDGE_FACTOR = .4;
+#endif
+
+void mainImage( out vec4 fragColor, in vec2 fragCoord )
+{
+    initIcosahedron();
+    t = iTime - .25;
+    t /= 2.;
+
+    vec2 p = (-iResolution.xy + 2.0*fragCoord.xy)/iResolution.y;
+
+    vec3 camPos = vec3(-1.5,1.6,0);
+    vec3 camTar = -camPos + vec3(0,.1,0);
+    float camRoll = 0.;
+
+    // camera matrix
+    mat3 camMat = calcLookAtMatrix( camPos, camTar, camRoll );  // 0.0 is the camera roll
+
+    // create view ray
+    vec3 rd = normalize( camMat * vec3(p.xy,1.0) ); // 2.0 is the lens length
+
+    vec3 color = pow(vec3(.15,0,.2), vec3(2.2));
+
+    vec3 ro = camPos;
+    float traceT = 0.0;
+    float h = INTERSECTION_PRECISION * 2.0;
+    vec3 colour;
+
+    int iter = int(20. / FUDGE_FACTOR);
+
+    for( int i=0; i < iter; i++ ){
+
+        if( traceT > MAX_TRACE_DISTANCE ) break;
+        Model m = map( ro+rd*traceT );
+        h = abs(m.dist);
+        traceT += max(INTERSECTION_PRECISION, h * FUDGE_FACTOR);
+        color += m.colour * pow(max(0., (.02 - h)) * 19.5, 10.) * 150.;
+        color += m.colour * .001 * FUDGE_FACTOR;
+    }
+
+    color = pow(color, vec3(1./1.8)) * 1.5;
+    color = pow(color, vec3(1.5));
+    color *= 3.5;
+
+    fragColor = vec4(color,1.0);
+}`,
+    "Elevator to Infinity": `/* Elevator to infinity by @kishimisu (2023)  -  https://www.shadertoy.com/view/mddfW8
+   This work is licensed under a Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International License (https://creativecommons.org/licenses/by-nc-sa/4.0/deed.en)
+   *****************************************
+
+     Move the camera with the mouse!
+
+   Alternative audio versions:
+
+   I couldn't decide which audio and camera movement was the best for this scene,
+   so I preferred to keep this shader simple and fork the other ideas I liked:
+
+   - Audio-reactive lights:                    https://www.shadertoy.com/view/DddBWM
+   - Longer camera anim + dark ambient music:  https://www.shadertoy.com/view/csdBD7
+   - Speed increase synced with music buildup: https://www.shadertoy.com/view/dddBWM
+
+
+   This is my first successful attempt at raymarching infinite buildings.
+   In my previous attempts, I was adding details using domain repetition for
+   nearly all raymarching operators and it was too hard to maintain.
+
+   In this version, I started with a simpler task, which is to generate only one
+   floor using regular raymarching, and then use domain repetition at the very
+   beginning to repeat the floor infinitely, thus creating infinite buildings.
+
+   Do you have tips to reduce flickering in the distance ?
+*/
+
+// Comment out to disable all lights except elevators
+#define LIGHTS_ON
+
+float acc = 0.; // Neon light accumulation
+float occ = 1.; // Ambient occlusion (Fake)
+
+// 2D rotation
+#define rot(a) mat2(cos(a), -sin(a), sin(a), cos(a))
+
+// Domain rep.
+#define rep(p, r) mod(p+r, r+r)-r
+
+// Domain rep. ID
+#define rid(p, r) floor((p+r)/(r+r))
+
+// Finite domain rep.
+#define lrep(p, r, l) p-r*clamp(round(p/r), -l, l)
+
+// Fast random noise 2 -> 3
+vec3 hash(vec2 p) {
+    vec2 r = fract(sin(p*mat2(137.1, 12.7, 74.7, 269.5)) * 43478.5453);
+    return vec3(r, fract(r.x*r.y*1121.67));
+}
+// Random noise 3 -> 3 - https://shadertoyunofficial.wordpress.com/2019/01/02/
+#define hash33(p) fract(sin(p*mat3(127.1,311.7,74.7,269.5,183.3,246.1,113.5,271.9,124.6))*43758.5453123)
+
+// Distance functions - https://iquilezles.org/articles/distfunctions/
+float box(vec3 p, vec3 b) {
+    vec3 q = abs(p) - b;
+    return length(max(q, 0.)) + min(max(q.x, max(q.y, q.z)), 0.);
+}
+float rect(vec2 p, vec2 b) {
+    vec2 d = abs(p) - b;
+    return length(max(d, 0.)) + min(max(d.x, d.y), 0.);
+}
+
+#define ext 2.
+float opElevatorWindows(vec3 p, float b) {
+    float e  = box(p, vec3(ext*.8, 2.7, .3));
+    float lv = length(p.xz) - .1;   p.y += 1.;
+    float lh = length(p.yz) - .1;
+    lh = max(b, lh);
+    b  = max(b, -e);
+    b  = min(b, min(lv, lh));
+    return b;
+}
+
+float building(vec3 p0, vec3 p, float L) {
+    float B = rect(p.xz, vec2(L, 10)); // Main building
+    float B2 = rect(vec2(abs(p.x)-L-ext, p.z), vec2(ext, 10)); // Elevator building
+
+    // (Optim) Skip building calculations
+    if (min(B, B2) > .2) return min(B, B2);
+
+    vec3 q = p;
+    float var = step(1., mod(rid(p.y, 3.), 6.)); // Railing variation
+    p.y = rep(p.y, 3.); // Infinite floor y-repetition
+    vec3 pb = vec3(abs(p.x), p.yz);
+
+#ifdef LIGHTS_ON
+    // Building lights
+    vec3  id = rid(vec3(q.xy, p0.z), vec3(21, 18, 48));
+    vec3  rn = hash33(id);
+    float rw = fract(rn.x*rn.z*1021.67);
+
+    q.x += 14. * (rn.x*3.-1.);
+    q.y += 12. * (floor(rn.y*3.)-1.);
+    q.xy = rep(q.xy, vec2(21, 18));
+
+    float l = box(q, vec3(mix(3., 15., rw), rn.z*1.5+.5, 7));
+    acc += .5 / (1. + pow(abs(l)*20., 1.5))
+                * smoothstep(0., .4, iTime - rw * 20.)
+                * step(p0.x, 10. + 2e2*step(20., abs(p0.z)));
+#endif
+
+    // Occlusion
+    occ = min(occ, smoothstep(3.5, 0., -rect(p.xz, vec2(L+2.,10))));
+    occ = min(occ, smoothstep(0.6, 0., -rect(pb.xz-vec2(L+ext,0), vec2(ext,10))));
+
+    // Front hole
+    q = p;
+    q.x = rep(q.x, 7.);
+    q.y -= (1. - var)*1.01;
+
+    float f = box(q + vec3(0,0,10), vec3(6.6, 2. + var, 3));
+    B = max(B, -f);
+    B = max(B, -rect(q.xz + vec2(0,10), vec2(6.6, .7)*var));
+
+    // Railing
+    q = p;
+    q.x = rep(q.x, .8);
+
+    float r  = length(p.yz + vec2(1, 9.5-var*.5)) - .2;
+    float rv = length(q.xz + vec2(0, 9.5-var*.5)) - .16;
+    r = min(r, rv);
+    r = max(r, p.y + 1.);
+
+    // Back bars
+    q = p;
+    q.x = rep(q.x, 1.75);
+
+    float b = length(q.xz + vec2(0, 7.3)) - .2;
+    r = min(r, b);
+
+    B = min(B, r);
+    B = max(B, abs(p.x) - L);
+
+    // (Optim) Skip elevator calculations
+    if (B2 > .04) return min(B, B2);
+
+    // Elevator
+    B2 = opElevatorWindows(pb - vec3(L+ext,0,-9.9), B2);
+    B2 = opElevatorWindows(vec3(pb.z+8., pb.y, pb.x-L-ext-1.9), B2);
+
+    // Side windows
+    q = vec3(pb.xy, pb.z - 1.8);
+    q.z = lrep(q.z, 2.5, 2.);
+
+    float w = box(q - vec3(L+ext*2.,1.2,0), vec3(.5, 1.6, 1.2));
+    B2 = max(B2, -w);
+
+    return min(B, B2);
+}
+
+float map(vec3 p) {
+    vec2 id = vec2(step(40., p.x), rid(p.z, 140.));
+    vec3 rn = mix(vec3(1, -.5, 0), hash(id), step(.5, id.x+id.y));
+
+    // Buildings
+    vec3 p0 = p;
+    p.x = abs(abs(p.x - 40.) - 80.);
+    p.z = rep(p.z - id.x*200., 200.);
+
+    float bL = 21.4 + id.y*3.;
+    float b1 = building(p0, p - vec3(30,0,0), bL);
+    float b2 = building(p0, vec3(p.z,p.y,-p.x), 185.);
+
+    // Elevator lights
+    float rpy = 80. + 150. * rn.x;;
+    p.y = rep(p.y - iTime * 40. * (rn.y*.5+.5), rpy);
+    p -= vec3(30.+bL+ext, rn.z*rpy*.5, ext-10.);
+
+    float l = box(p, vec3(ext*.8, 2.7, ext*.8));
+    acc += .5 / (1. + pow(abs(l)*18., 1.17));
+
+    // Fix broken distance before 20s
+    b2 = min(b2, abs(p0.x + p0.z - 30.) + 6.);
+
+    return min(b1, b2);
+}
+
+// https://iquilezles.org/articles/normalsSDF/
+vec3 normal(vec3 p) {
+    const vec2 k = vec2(1,-1)*.0001;
+    return normalize(k.xyy*map(p + k.xyy) + k.yyx*map(p + k.yyx) +
+                     k.yxy*map(p + k.yxy) + k.xxx*map(p + k.xxx));
+}
+
+void mainImage(out vec4 O, vec2 F) {
+    vec2  R = iResolution.xy,
+          u = (F+F-R)/R.y,
+          M = iMouse.xy/R * 2. - 1.;
+          M *= step(1., iMouse.z);
+
+    // Camera animation
+    float T  = 1. - pow(1. - clamp(iTime*.025, 0., 1.), 3.);
+    float ax = mix(-.8, .36, T);
+    float az = mix(-40., -140., T);
+    float rx = M.x*.45 - (cos(iTime*.1)*.5+.5)*.4;
+    rx = clamp(ax + rx - .55, min(iTime*.05 - 1.6, -.9), .1);
+
+    // Ray origin & direction
+    vec3 ro = vec3(0, iTime*10., az);
+    vec3 rd = normalize(vec3(u, 3));
+
+    rd.zy *= rot(M.y*1.3);
+    rd.zx *= rot(rx);
+    ro.zx *= rot(rx);
+
+    // Raymarching
+    vec3 p; float d, t = 0.;
+    for (int i = 0; i < 60; i++) {
+        p = ro + t * rd;
+        t += d = map(p);
+        if (d < .01 || t > 2200.) break;
+    }
+
+    // Base color
+    vec3 col = vec3(.13,.11,.26) - vec3(1,1,0)*abs(p.x-40.)*.001;
+    col *= clamp(1. + dot(normal(p), normalize(vec3(0,0,1))), .5, 1.);
+
+    // Texture
+    col *= 1. - texture(iChannel0, vec2(p.x+p.z, p.y+p.z)*.05).rgb*.7;
+
+    // Occlusion
+    col *= occ;
+
+    // Exponential fog
+    col = mix(vec3(.002,.005,.015), col, exp(-t*.0025*vec3(.8,1,1.2) - length(u)*.5));
+
+    // Light accumulation
+    col += acc * mix(vec3(1,.97,.76), vec3(1,.57,.36), t*.0006);
+
+    // Color correction
+    col = pow(col, .46*vec3(.98,.96,1));
+
+    // Vignette
+    u = F/R; u *= 1. - u.yx;
+    col *= pow(clamp(u.x * u.y * 80., 0., 1.), .2);
+
+    O = vec4(col, 1);
+}`,
+    "Zozuar Flower": `// Zozuar Flower, mla, 2023. Original by @zozuar/@yonatan.
+// Degolfed version of https://twitter.com/zozuar/status/1612919479582728232
+/*
+for(float i,g,e,R,S;i++<1e2;o.rgb+=hsv(.4-.02/R,
+(e=max(e*R*1e4,.7)),.03/exp(e))){S=1.;vec3 p=vec3
+((FC.xy/r-.5)*g,g-.3)-i/2e5;p.yz*=rotate2D(.3);
+for(p=vec3(log(R=length(p))-t,e=asin(-p.z/R)-.1/
+R,atan(p.x,p.y)*3.);S<1e2;S+=S)e+=pow(abs(dot(sin
+(p.yxz*S),cos(p*S))),.2)/S;g+=e*R*.1;}
+*/
+
+const float PI = 3.14159265;
+
+vec3 hsv(float h, float s, float v) {
+    vec3 rgb = clamp(abs(mod(h * 6.0 + vec3(0.0, 4.0, 2.0), 6.0) - 3.0) - 1.0, 0.0, 1.0);
+    rgb = rgb * rgb * (3.0 - 2.0 * rgb);
+    return v * mix(vec3(1.0), rgb, s);
+}
+
+mat2 rotate2D(float t) {
+    return mat2(cos(t), sin(t), -sin(t), cos(t));
+}
+
+void mainImage(out vec4 fragColor, vec2 fragCoord) {
+    float time = iTime;
+    fragColor = vec4(0);
+    vec2 uv = 0.5 * (2.0 * fragCoord - iResolution.xy) / iResolution.y;
+    vec3 ro = vec3(0, 0, -0.6);
+    vec3 rd = vec3(uv, 1);
+    float t = 0.0;
+
+    for (float i = 0.0; i < 1e2; i++) {
+        vec3 p = ro + t * rd - i / 2e5;
+        // Top-down default: original only applies mouse rotation when iMouse.x > 0
+        p.yz *= rotate2D(0.2);
+
+        float r = length(p);
+        float e = asin(-p.z / r) - 0.1 / r;
+        float rot = 3.0;
+        vec3 q = vec3(log(r) - time, e, rot * atan(p.x, p.y));
+        for (float scale = 1.0; scale < 1e2; scale += scale) {
+            e += pow(abs(dot(sin(q.yxz * scale), cos(q * scale))), 0.2) / scale;
+        }
+        t += e * r * 0.1;
+        if (t > 50.0) break;
+        float k = max(e * r * 1e4, 0.7);
+        k = pow(k, 0.4);
+        fragColor.rgb += hsv(0.4 - 0.02 / r, k, 0.02 / exp(k));
+    }
+
+    fragColor *= 2.0 / (1.0 + fragColor);
+    fragColor = pow(fragColor, vec4(0.4545));
+    fragColor.a = 1.0;
+}`,
+    "3D Fire Star": `// Inspired by @XorDev's "3D Fire".
+
+const float PI = radians(180.);
+
+float sdStar( in vec2 p, in float r, in int n, in float m) {
+    float an = PI/float(n);
+    float en = PI/m;  // m is between 2 and n
+    vec2  acs = vec2(cos(an),sin(an));
+    vec2  ecs = vec2(cos(en),sin(en)); // ecs=vec2(0,1) for regular polygon
+
+    float bn = mod(atan(p.x,p.y),2.0*an) - an;
+    p = length(p)*vec2(cos(bn),abs(sin(bn)));
+    p -= r*acs;
+    p += ecs*clamp( -dot(p,ecs), 0.0, r*acs.y/ecs.y);
+    return length(p); // *sign(p.x);
+}
+
+float sdStar3D(vec3 p) {
+    float d = sdStar(p.xy, 6.0, 5, 0.6);
+    return abs(d + p.z*0.5 - 0.5);
+}
+
+mat2 rot2(float a) {
+    float c = cos(a), s = sin(a);
+    return mat2(c, s, -s, c);
+}
+
+void mainImage(out vec4 o, vec2 sp) {
+    float z = 0.; // Raymarched depth
+    vec3 vp = normalize(vec3(sp*2.,0.)-iResolution.xyy);
+    o = vec4(0);
+
+    for (int i = 0; i < 50; i++) {
+        vec3 p = z * vp; // Raymarch sample point
+        p.z += 5.5 - 12.5*sin(iTime*0.3);
+
+        //p.xy *= rot2(-0.1*iTime);
+        p.yz *= rot2(PI/2.0 + 0.0*iTime);
+        p.xz /= max(p.y * (0.2 - 0.1*cos(iTime*0.3)) + 1.0, 0.3); // Expand upward
+        p.xz *= rot2(-p.y*0.05 + 0.2*iTime);
+        
+        for (float s = 0.8; s < 15.; s /= 0.6)
+            p += 0.5*cos(s*(p.yzx - vec3(iTime/.1, iTime, s)))/s;
+        
+        float d = 0.01 + sdStar3D(p.zxy)/7.; // SDF
+        o += 1.0/d * (sin(sin(iTime*0.02)*5.0 + p.y/5.5 + length(p.xz)/4.5 + vec4(9,2,1,0)) + 1.1); // RGB
+        z += d; // raymarching step
+    }
+
+    o = tanh(o / 1e3); // Tone mapping
+    o.a = 1.0;
+}`,
+    "Apollonian": `// apollonian
+float fractal(vec3 p) {
+    // weight
+    float w = 2.;
+
+    // 6 - 8 iterations is usually the sweet spot
+    for (float l, i; i++ < 4.; p *= l, w *= l )
+        // sin(p), abs(sin(p))-1., also work,
+        // but need to adjust weight(w) and scale(l=2.)
+        p  = cos(p-.5),
+        // low scale for this fractal type, so we just get snowflake-like shape
+        // adjust 2. for scaling
+        l = 2.1/dot(p,p);
+    return length(p)/w;
+}
+
+void mainImage(out vec4 o, vec2 u) {
+    float i, // iterator
+
+          // init total dist to a good random value (blue noise)
+          // to hide some of the noise flickering
+          d = .2*texelFetch(iChannel0, ivec2(u)%1024, 0).a,
+          s, // signed distance
+          n, // noise iterator
+          t = iTime;
+    // p is temporarily resolution,
+    // then raymarch position
+    vec3 p = iResolution;
+
+    // scale coords
+    u = (u-p.xy/2.)/p.y;
+    u += vec2(cos(t*.3)*.2, sin(t*.2)*.15);
+
+    // clear o, up to 100, accumulate distance, grayscale color
+    for(o*=i; i++<1e2;d += s = .001+abs(min(fractal(p), s))*.7,
+
+        // can try below for color
+         o += (1.+1.+cos(.3*p.z+vec4(6,1,3,0)))/s)
+        //o += 1./s)
+
+        // march, equivalent to p = ro + rd * d, p.z += d+t+t
+        for (p = vec3(u * d, d+t),
+             // spin by t, twist by p.z, equivalent to p.xy *= rot(.05*t+p.z*.2)
+             p.xy *= mat2(cos(.02*t+p.z*.2+vec4(0,33,11,0))),
+             // dist to our spiral'ish thing that will be distorted by noise
+             s = sin(2.+p.y+p.x),
+             // start noise at 6., until 32, grow by n*=1.41
+             n = 6.; n < 32.; n *= 1.41 )
+                 // subtract noise from s
+                 s += abs(dot(cos(p*n), vec3(.3))) / n;
+    // tanh tone mapping, divide down brightness
+    o = tanh(o*o/6e8);
+}`,
+    "Fabrice Inversion": `// @FabriceNeyret2 → 490 chars ( from 511 )
+// ty :D
+
+#define N(a) a* abs(dot( sin( .1*p.z + iTime*3. + .3*( p+cos(p.yzx) ) /a ) , vec3(2)) )
+
+void mainImage(out vec4 o, vec2 u) {
+    float i = 0., s = 0., d = 0.;
+    
+    vec3 p = vec3(iResolution.xy, 0.0),
+         D = normalize(vec3(u = ( u+u - p.xy ) / p.y, 1.2));
+    
+    for( o*=i; i++ < 1e2 && d < 1e2; )
+        p = D*d,
+        p.z -= 6e1,
+        p.xz *= mat2(cos(iTime/4.+ vec4(0,33,11,0))),
+        p *= 1e3/max(dot(p,p), 2e2), // <-- transform
+        d += s = .15 + .3* abs( tanh(sin(iTime/4.)*16.)/.1 +2e1 -abs(p.y) 
+                               - N(.1) - N(.2) - N(.6) ),
+        o += ( vec4(5,2,1,0)/s*2e1 +1e2/length(u) ) / d;
+       
+    o *= mix( vec4(.3,2,6,0), vec4(3,1.3,.3,0),
+              smoothstep(.57, -.7, u.y));
+             
+    o = sqrt(1.-exp(-o*o/1e6));
+    o.a = 1.0;
+}`,
+    "Apollonian Path": `#define T (iTime*1.5 + 5. + 1.5*sin(iTime*.5))
+#define P(z) (vec3(cos((z) * .07) * 16., \
+                   0, (z)))
+#define R(a) mat2(cos(a+vec4(0,33,11,0)))
+#define N normalize
+
+#define HUE_BASS         0.50
+#define HUE_MID          0.40
+#define PALE_CRUSH       0.42
+#define CHROMA_BOOST     0.65
+#define PUNCH_LO         0.03
+#define PUNCH_HI         0.14
+
+float fft(float x) {
+    return texture(iChannel0, vec2(clamp(x, 0.0, 1.0), 0.0)).x;
+}
+
+float getBass() { return (fft(0.01) + fft(0.03) + fft(0.05) + fft(0.07)) * 0.25; }
+float getMid()  { return (fft(0.15) + fft(0.25) + fft(0.35) + fft(0.45)) * 0.25; }
+float getHigh() { return (fft(0.55) + fft(0.70) + fft(0.85) + fft(0.95)) * 0.25; }
+
+float audioPresence() {
+    float s = fft(0.005) + fft(0.05) + fft(0.15) + fft(0.30) + fft(0.60);
+    return smoothstep(0.001, 0.008, s);
+}
+
+float fallbackBass() { return 0.35 + 0.25 * sin(iTime * 1.1); }
+float fallbackMid()  { return 0.28 + 0.18 * sin(iTime * 0.65 + 1.0); }
+float fallbackHigh() { return 0.18 + 0.12 * sin(iTime * 2.6 + 2.0); }
+
+float audioBoost(float v) {
+    return clamp(pow(v, 0.55) * 2.0, 0.0, 1.0);
+}
+
+float apollonian(vec3 p) {
+    float i, s, w = 1.;
+    vec3 b = vec3(.5, 1., 1.5);
+    p.y -= 2.;
+    p.yz = p.zy;
+    p /= 16.;
+    for(; i++ < 6.;) {
+        p = mod(p + b, 2. * b) - b;
+        s =2. / dot(p, p);
+        p *= s;
+        w *= s;
+    }
+    return length(p) / w * 6.;
+}
+
+float map(vec3 p) {
+    return max(2. - length((p - P(p.z)).xy), apollonian(p));
+}
+
+void mainImage(out vec4 o, in vec2 u) {
+    float s, d, i, a;
+    vec3 r = iResolution;
+    u = (u - r.xy / 2.) / r.y;
+
+    float presence = audioPresence();
+    float micBass = getBass();
+    float micMid  = getMid();
+    float micHigh = getHigh();
+    float bass = audioBoost(mix(fallbackBass(), micBass, presence));
+    float mid  = audioBoost(mix(fallbackMid(),  micMid,  presence));
+    float high = audioBoost(mix(fallbackHigh(), micHigh, presence));
+    float punch = smoothstep(PUNCH_LO, PUNCH_HI, mix(fallbackBass(), micBass, presence));
+
+    vec4 marchHue = vec4(6., 4., 2., 0.)
+        + vec4(-1.8, -0.5, 1.4, 0.) * bass * HUE_BASS
+        + vec4(0.6, -1.2, -1.6, 0.) * mid  * HUE_MID
+        + vec4(-0.3, 0.5, -0.4, 0.) * high * 0.25;
+
+    vec3 p = P(T * 2.),
+         Z = N(P(T * 2. + 7.) - p),
+         X = N(vec3(Z.z, 0., -Z)),
+         D = N(vec3(R(sin(iTime * .15) * .3) * u, 1.) * mat3(-X, cross(X, Z), Z));
+
+    for (o = vec4(0.); i++ < 128.;)
+        p += D * s,
+        d += s = map(p) * .8,
+        o += (1. + cos(.05 * i + .5 * p.z + marchHue)) / max(s, .0003);
+
+    o = tanh(o / d / 7e4 * exp(vec4(3., 2., 1., 0.) * d / 4e1));
+
+    vec3 col = o.rgb;
+    float lum = dot(col, vec3(0.299, 0.587, 0.114));
+    float pale = smoothstep(0.48, 0.82, lum);
+    float detail = smoothstep(0.08, 0.35, lum) * (1.0 - smoothstep(0.72, 0.95, lum));
+    float energy = bass + punch * 0.85 + mid * 0.45;
+
+    col = mix(col, col * (1.0 - punch * PALE_CRUSH), pale);
+    col = mix(vec3(lum), col, 1.0 + detail * energy * CHROMA_BOOST);
+    col = mix(col, col * vec3(0.88, 1.10, 1.14), mid * detail * 0.35);
+    col = mix(col, col * vec3(1.08, 0.90, 0.82), high * detail * 0.22);
+    o = vec4(clamp(col, 0.0, 1.0), 1.0);
+}`,
+"PIANOSCOPE Adrinka 2":`
+/*
+PIANOSCOPE Shader
+Name: Adinkra Symbol Field Abstract — v3
+Mode: adinkra_symbol_field_abstract
+Inspired by: Mandala (polar fold + iterative mod2 scale) + Adinkra stamp geometry
+Cultural caution: Procedural circles, arcs, crosses — not exact sacred Adinkra symbols
+
+CHANGES v3 (reactivity restoration):
+v2 fixed the jitter by pulling audio out of geometry, but the intensity
+gains replacing it were too timid, and audioBoost's pow(0.75) was
+COMPRESSING dynamics — lifting quiet signal toward loud, so hits and
+breakdowns looked similar. v3 fixes the dynamics, not the geometry:
+
+- PUNCH signal: an expander (smoothstep gate on raw bass) that sits near
+  zero between hits and slams to 1 on kick/log-drum transients. This is
+  the opposite curve of audioBoost and is what makes hits READ.
+- Punch drives: global exposure flash (pre-shoulder, so it can't clip
+  flat), reveal radius expansion, and mark swell (gain doubled).
+- High shimmer gain raised 0.6 -> 1.0, plus highs now brighten fill.
+- Mid palette swing raised.
+- Optional BASS_ZOOM camera pump (radial, pre-fold, ~3.5%): the one
+  audio->geometry path, kept tiny and gated by punch so it reads as a
+  camera kick, not lattice popping. Set to 0.0 to disable if it
+  flutters on your projector.
+
+All gains exposed as defines at the top — tune at the venue.
+
+Audio: Bass punch = flash + reveal + swell + zoom kick; Mid = warmth/smoke;
+       High = edge shimmer + fill sparkle
+Projection: Dark violet field, gold/rust marks, breathes with the mix
+*/
+
+#define PI  3.141592654
+#define TAU (2.0 * PI)
+
+// ---- reactivity tuning ----
+#define BASS_FILL_GAIN   0.10   // mark swell on bass level
+#define PUNCH_SWELL      0.06   // extra swell on transients
+#define BASS_FLASH       0.55   // global exposure pump on transients
+#define BASS_ZOOM        0.035  // camera kick on transients; 0.0 disables
+#define REVEAL_PUMP      0.30   // central reveal radius expansion on hits
+#define MID_HUE_SWING    0.22   // palette warmth travel with mids
+#define HIGH_SHIMMER     1.00   // edge glow on highs
+#define PUNCH_LO         0.22   // expander threshold (raw bass)
+#define PUNCH_HI         0.70   // expander full-on point
+// ---------------------------
+
+#define SECTOR_COUNT     12.0
+
+vec2 centeredUV(vec2 fragCoord) {
+    return (fragCoord - 0.5 * iResolution.xy) / iResolution.y;
+}
+
+// ---------- audio ----------
+
+float fft(float x) {
+    return texture(iChannel0, vec2(clamp(x, 0.0, 1.0), 0.0)).x;
+}
+
+float bandAvg(float lo, float hi) {
+    float s = 0.0;
+    for (int i = 0; i < 8; i++) {
+        s += fft(mix(lo, hi, (float(i) + 0.5) / 8.0));
+    }
+    return s * 0.125;
+}
+
+float getBass() { return bandAvg(0.001, 0.010); }
+float getMid()  { return bandAvg(0.020, 0.090); }
+float getHigh() { return bandAvg(0.200, 0.450); }
+
+float audioPresence() {
+    float s = fft(0.005) + fft(0.05) + fft(0.15) + fft(0.30) + fft(0.60);
+    return smoothstep(0.006, 0.025, s);
+}
+
+float fallbackBass() { return 0.35 + 0.25 * sin(iTime * 1.1); }
+float fallbackMid()  { return 0.28 + 0.18 * sin(iTime * 0.65 + 1.0); }
+float fallbackHigh() { return 0.18 + 0.12 * sin(iTime * 2.6 + 2.0); }
+
+// LEVEL: compressed, smooth — for ambient modulation (palette, smoke)
+float audioBoost(float v) {
+    return clamp(pow(v, 0.75) * 1.35, 0.0, 1.0);
+}
+
+// PUNCH: expanded, gate-like — near zero between hits, 1.0 on transients.
+// This is the signal that makes the kick visible.
+float punchShape(float raw) {
+    return smoothstep(PUNCH_LO, PUNCH_HI, raw);
+}
+
+// ---------- helpers ----------
+
+void rot(inout vec2 p, float a) {
+    float c = cos(a);
+    float s = sin(a);
+    p = vec2(c * p.x + s * p.y, -s * p.x + c * p.y);
+}
+
+vec2 mod2(inout vec2 p, vec2 size) {
+    vec2 c = floor((p + size * 0.5) / size);
+    p = mod(p + size * 0.5, size) - size * 0.5;
+    return c;
+}
+
+vec2 modMirror2(inout vec2 p, vec2 size) {
+    vec2 halfsize = size * 0.5;
+    vec2 c = floor((p + halfsize) / size);
+    p = mod(p + halfsize, size) - halfsize;
+    p *= mod(c, vec2(2.0)) * 2.0 - vec2(1.0);
+    return c;
+}
+
+vec2 toSmith(vec2 p) {
+    float d = (1.0 - p.x) * (1.0 - p.x) + p.y * p.y;
+    float x = (1.0 + p.x) * (1.0 - p.x) - p.y * p.y;
+    float y = 2.0 * p.y;
+    return vec2(x, y) / d;
+}
+
+vec2 fromSmith(vec2 p) {
+    float d = (p.x + 1.0) * (p.x + 1.0) + p.y * p.y;
+    float x = (p.x + 1.0) * (p.x - 1.0) + p.y * p.y;
+    float y = 2.0 * p.y;
+    return vec2(x, y) / d;
+}
+
+vec2 toRect(vec2 p)  { return vec2(p.x * cos(p.y), p.x * sin(p.y)); }
+vec2 toPolar(vec2 p) { return vec2(length(p), atan(p.y, p.x)); }
+
+float circle(vec2 p, float r) { return length(p) - r; }
+
+float hash21(vec2 p) {
+    p = fract(p * vec2(123.34, 456.21));
+    p += dot(p, p + 45.32);
+    return fract(p.x * p.y);
+}
+
+float noise(vec2 p) {
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+    float a = hash21(i);
+    float b = hash21(i + vec2(1.0, 0.0));
+    float c = hash21(i + vec2(0.0, 1.0));
+    float d = hash21(i + vec2(1.0, 1.0));
+    vec2 u = f * f * (3.0 - 2.0 * f);
+    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+
+float fbm(vec2 p) {
+    float v = 0.0;
+    float a = 0.5;
+    for (int i = 0; i < 4; i++) {
+        v += a * noise(p);
+        p = p * 2.03 + vec2(1.7, 9.2);
+        a *= 0.5;
+    }
+    return v;
+}
+
+// ---------- palette ----------
+
+vec3 adinkraPalette(float t, float layer) {
+    vec3 midnightViolet = vec3(0.13, 0.06, 0.25);
+    vec3 deepBlack      = vec3(0.015, 0.010, 0.018);
+    vec3 rustOrange     = vec3(0.70, 0.27, 0.10);
+    vec3 mutedGold      = vec3(0.83, 0.57, 0.18);
+    vec3 cream          = vec3(0.92, 0.80, 0.56);
+
+    vec3 c = mix(deepBlack, midnightViolet, smoothstep(0.0, 0.35, t));
+    c = mix(c, rustOrange, smoothstep(0.25, 0.65, t + layer * 0.12));
+    c = mix(c, mutedGold,  smoothstep(0.45, 0.85, t + layer * 0.08));
+    c = mix(c, cream,      smoothstep(0.75, 1.00, t) * 0.35);
+    return c;
+}
+
+// ---------- geometry ----------
+
+float abstractMark(vec2 p, float phase) {
+    float d = 10000.0;
+
+    float ring = abs(circle(p, 0.36)) - 0.035;
+    d = min(d, ring);
+
+    float hub = circle(p, 0.11);
+    d = min(d, hub);
+
+    for (int i = 0; i < 3; i++) {
+        float ang = float(i) * TAU / 3.0 + phase;
+        vec2 c = vec2(cos(ang), sin(ang)) * 0.24;
+        float arc = abs(length(p - c) - 0.075) - 0.022;
+        d = min(d, arc);
+    }
+
+    float cross = max(abs(p.x), abs(p.y)) - 0.018;
+    cross = max(cross, circle(p, 0.16));
+    d = min(d, cross);
+
+    float diamond = abs(p.x) + abs(p.y) - 0.30;
+    diamond = max(diamond, -circle(p, 0.28));
+    d = min(d, abs(diamond) - 0.015);
+
+    return d;
+}
+
+// recursion still time-only; bass/punch inflate the field (continuous)
+float adinkra_df(float localTime, vec2 p, float bass, float punch) {
+    vec2 pp = toPolar(p);
+    float a = TAU / SECTOR_COUNT;
+    float np = pp.y / a;
+    pp.y = mod(pp.y, a);
+    if (mod(np, 2.0) > 1.0) {
+        pp.y = a - pp.y;
+    }
+    pp.y += localTime * 0.025;
+    p = toRect(pp);
+    p = abs(p);
+    p -= vec2(0.48);
+
+    float d = 10000.0;
+    float scalePulse = 0.5 + 0.5 * sin(localTime * 0.35);
+    float swell = bass * BASS_FILL_GAIN + punch * PUNCH_SWELL;
+
+    for (int i = 0; i < 4; i++) {
+        float fi = float(i);
+        mod2(p, vec2(1.0));
+        float wobble = -0.12 * cos(localTime * 0.25 + fi);
+        float mark = abstractMark(p, localTime * 0.15 + fi * 0.7) + wobble - swell;
+        d = min(d, mark);
+
+        float grow = 1.42 + 0.06 * scalePulse;
+        p *= grow;
+        rot(p, 0.55 + fi * 0.12);
+    }
+
+    return d;
+}
+
+vec2 fieldDistort(float localTime, vec2 uv) {
+    float lt = 0.08 * localTime;
+    vec2 suv = toSmith(uv);
+    suv += 0.65 * vec2(cos(lt), sin(sqrt(2.0) * lt));
+    uv = fromSmith(suv);
+    modMirror2(uv, vec2(1.8 + 0.25 * sin(lt * 0.7)));
+    return uv;
+}
+
+// ---------- shading ----------
+
+vec3 shadeField(float d, float layerMix, float mid, float high, float reveal) {
+    float fill = smoothstep(0.018, -0.012, d);
+    float edge = smoothstep(0.006, 0.0, abs(d));
+    float band = 0.5 + 0.5 * sin(d * 80.0);
+    vec3 base = adinkraPalette(band * 0.5 + layerMix * 0.35 + mid * MID_HUE_SWING, layerMix);
+    vec3 col = mix(vec3(0.015, 0.010, 0.018), base,
+                   fill * (0.50 + reveal * 0.45 + high * 0.10));
+    col += vec3(0.92, 0.80, 0.56) * edge * (0.22 + high * HIGH_SHIMMER);
+    col += vec3(0.83, 0.57, 0.18) * edge * edge * high * 0.50;
+    return col;
+}
+
+vec3 adinkra_post(vec3 col, float localTime, float r, float punch) {
+    col = max(col, 0.0);
+
+    col = pow(col, vec3(0.62, 0.75, 1.05));
+
+    float luma = dot(col, vec3(0.299, 0.587, 0.114));
+    col = max(mix(vec3(luma), col, 1.20), 0.0);
+
+    float pulse = sqrt(max(1.0 - 0.65 * sin(localTime * 0.4 + r * 6.0), 0.0));
+    col *= mix(0.85, 1.0, pulse);
+    col *= 0.55 * sqrt(max(1.05 - r * r, 0.0));
+
+    // exposure flash on transients, BEFORE the shoulder:
+    // the shoulder soaks the peak, so the flash brightens without clipping flat
+    col *= 1.0 + punch * BASS_FLASH;
+
+    col = 0.85 * col / (col + 0.25);
+
+    return clamp(col, 0.0, 1.0);
+}
+
+vec3 sampleField(float localTime, vec2 p, float bass, float mid, float high, float punch) {
+    // camera kick: tiny radial zoom on transients. The only audio->geometry
+    // path; reads as a camera pump. Set BASS_ZOOM 0.0 to disable.
+    p /= 1.0 + punch * BASS_ZOOM;
+
+    vec2 uv = p * 6.5;
+    rot(uv, localTime * 0.04);
+
+    vec2 nuv = fieldDistort(localTime, uv);
+
+    vec2 ndx = dFdx(nuv), ndy = dFdy(nuv);
+    vec2 udx = dFdx(uv),  udy = dFdy(uv);
+    float stretch = (length(ndx) + length(ndy)) /
+                    max(length(udx) + length(udy), 1e-6);
+    float warpGlow = 1.0 - smoothstep(0.0, 1.2, stretch);
+
+    float d = adinkra_df(localTime, nuv, bass, punch);
+    float r = length(p);
+
+    // reveal radius expands outward on hits — the bloom travels
+    float reveal = smoothstep(0.50 + punch * REVEAL_PUMP, 0.06, r)
+                 * (0.35 + bass * 0.40 + punch * 0.40);
+    vec3 col = shadeField(d, r * 0.8 + bass * 0.2, mid, high, reveal);
+
+    float smoke = fbm(p * 2.2 + vec2(localTime * 0.03, -localTime * 0.02));
+    col = mix(col, adinkraPalette(smoke, 0.2),
+              smoke * (0.05 + mid * 0.06) * (1.0 - reveal * 0.5));
+
+    col += vec3(0.13, 0.06, 0.25) * warpGlow * 0.12;
+    col += vec3(0.92, 0.80, 0.56) * warpGlow * warpGlow * high * 0.10;
+
+    col = adinkra_post(col, localTime, r, punch);
+    return clamp(col, 0.0, 1.0);
+}
+
+void mainImage(out vec4 fragColor, in vec2 fragCoord) {
+    vec2 uv = centeredUV(fragCoord);
+    float localTime = iTime + 20.0;
+
+    float presence = audioPresence();
+    float rawBass = mix(fallbackBass(), getBass(), presence);
+    float bass = audioBoost(rawBass);
+    float mid  = audioBoost(mix(fallbackMid(),  getMid(),  presence));
+    float high = audioBoost(mix(fallbackHigh(), getHigh(), presence));
+    float punch = punchShape(rawBass);
+
+    vec3 col = sampleField(localTime, uv, bass, mid, high, punch);
+
+    float r = length(uv);
+    col = mix(col, vec3(0.015, 0.010, 0.018), smoothstep(0.95, 1.25, r));
+
+    fragColor = vec4(col, 1.0);
+}
+`,
+  "PIANOSCOPE Adinkra Symbol Field Abstract": `
+/*
+PIANOSCOPE Shader
+Name: Adinkra Symbol Field Abstract
+Mode: adinkra_symbol_field_abstract
+Inspired by: Mandala (polar fold + iterative mod2 scale) + Adinkra stamp geometry
+Cultural caution: Procedural circles, arcs, crosses — not exact sacred Adinkra symbols
+Audio: Bass = recursion bloom / central reveal; Mid = field rotation; High = edge shimmer
+Projection: Dark violet field, gold/rust marks, slow organic drift, no strobe
+*/
+
+#define PI  3.141592654
+#define TAU (2.0 * PI)
+#define BASS_RECUR_GAIN  0.28
+#define MID_ROT_GAIN     0.50
+#define HIGH_SHIMMER     0.60
+#define SECTOR_COUNT     12.0
+
+vec2 centeredUV(vec2 fragCoord) {
+    return (fragCoord - 0.5 * iResolution.xy) / iResolution.y;
+}
+
+float fft(float x) {
+    return texture(iChannel0, vec2(clamp(x, 0.0, 1.0), 0.0)).x;
+}
+
+float getBass() {
+    return (fft(0.01) + fft(0.03) + fft(0.05) + fft(0.07)) * 0.25;
+}
+
+float getMid() {
+    return (fft(0.15) + fft(0.25) + fft(0.35) + fft(0.45)) * 0.25;
+}
+
+float getHigh() {
+    return (fft(0.55) + fft(0.70) + fft(0.85) + fft(0.95)) * 0.25;
+}
+
+float fallbackBass() { return 0.35 + 0.25 * sin(iTime * 1.1); }
+float fallbackMid()  { return 0.28 + 0.18 * sin(iTime * 0.65 + 1.0); }
+float fallbackHigh() { return 0.18 + 0.12 * sin(iTime * 2.6 + 2.0); }
+
+float safeAudio(float value, float fallback) {
+    return max(value, fallback * 0.35);
+}
+
+float audioBoost(float v) {
+    return clamp(pow(v, 0.75) * 1.35, 0.0, 1.0);
+}
+
+void rot(inout vec2 p, float a) {
+    float c = cos(a);
+    float s = sin(a);
+    p = vec2(c * p.x + s * p.y, -s * p.x + c * p.y);
+}
+
+vec2 mod2(inout vec2 p, vec2 size) {
+    vec2 c = floor((p + size * 0.5) / size);
+    p = mod(p + size * 0.5, size) - size * 0.5;
+    return c;
+}
+
+vec2 modMirror2(inout vec2 p, vec2 size) {
+    vec2 halfsize = size * 0.5;
+    vec2 c = floor((p + halfsize) / size);
+    p = mod(p + halfsize, size) - halfsize;
+    p *= mod(c, vec2(2.0)) * 2.0 - vec2(1.0);
+    return c;
+}
+
+vec2 toSmith(vec2 p) {
+    float d = (1.0 - p.x) * (1.0 - p.x) + p.y * p.y;
+    float x = (1.0 + p.x) * (1.0 - p.x) - p.y * p.y;
+    float y = 2.0 * p.y;
+    return vec2(x, y) / d;
+}
+
+vec2 fromSmith(vec2 p) {
+    float d = (p.x + 1.0) * (p.x + 1.0) + p.y * p.y;
+    float x = (p.x + 1.0) * (p.x - 1.0) + p.y * p.y;
+    float y = 2.0 * p.y;
+    return vec2(x, y) / d;
+}
+
+vec2 toRect(vec2 p) {
+    return vec2(p.x * cos(p.y), p.x * sin(p.y));
+}
+
+vec2 toPolar(vec2 p) {
+    return vec2(length(p), atan(p.y, p.x));
+}
+
+float circle(vec2 p, float r) {
+    return length(p) - r;
+}
+
+float hash21(vec2 p) {
+    p = fract(p * vec2(123.34, 456.21));
+    p += dot(p, p + 45.32);
+    return fract(p.x * p.y);
+}
+
+float noise(vec2 p) {
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+    float a = hash21(i);
+    float b = hash21(i + vec2(1.0, 0.0));
+    float c = hash21(i + vec2(0.0, 1.0));
+    float d = hash21(i + vec2(1.0, 1.0));
+    vec2 u = f * f * (3.0 - 2.0 * f);
+    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+
+float fbm(vec2 p) {
+    float v = 0.0;
+    float a = 0.5;
+    for (int i = 0; i < 4; i++) {
+        v += a * noise(p);
+        p = p * 2.03 + vec2(1.7, 9.2);
+        a *= 0.5;
+    }
+    return v;
+}
+
+vec3 adinkraPalette(float t, float layer) {
+    vec3 midnightViolet = vec3(0.13, 0.06, 0.25);
+    vec3 deepBlack      = vec3(0.015, 0.010, 0.018);
+    vec3 rustOrange     = vec3(0.70, 0.27, 0.10);
+    vec3 mutedGold      = vec3(0.83, 0.57, 0.18);
+    vec3 cream          = vec3(0.92, 0.80, 0.56);
+
+    vec3 c = mix(deepBlack, midnightViolet, smoothstep(0.0, 0.35, t));
+    c = mix(c, rustOrange, smoothstep(0.25, 0.65, t + layer * 0.12));
+    c = mix(c, mutedGold, smoothstep(0.45, 0.85, t + layer * 0.08));
+    c = mix(c, cream, smoothstep(0.75, 1.0, t) * 0.35);
+    return c;
+}
+
+// Abstract stamp mark: ring, arcs, cross — not a specific Adinkra symbol
+float abstractMark(vec2 p, float phase) {
+    float d = 10000.0;
+
+    float ring = abs(circle(p, 0.36)) - 0.035;
+    d = min(d, ring);
+
+    float hub = circle(p, 0.11);
+    d = min(d, hub);
+
+    for (int i = 0; i < 3; i++) {
+        float ang = float(i) * TAU / 3.0 + phase;
+        vec2 c = vec2(cos(ang), sin(ang)) * 0.24;
+        float arc = abs(length(p - c) - 0.075) - 0.022;
+        d = min(d, arc);
+    }
+
+    float cross = max(abs(p.x), abs(p.y)) - 0.018;
+    cross = max(cross, circle(p, 0.16));
+    d = min(d, cross);
+
+    float diamond = abs(p.x) + abs(p.y) - 0.30;
+    diamond = max(diamond, -circle(p, 0.28));
+    d = min(d, abs(diamond) - 0.015);
+
+    return d;
+}
+
+float adinkra_df(float localTime, vec2 p, float bass, float mid) {
+    vec2 pp = toPolar(p);
+    float a = TAU / SECTOR_COUNT;
+    float np = pp.y / a;
+    pp.y = mod(pp.y, a);
+    if (mod(np, 2.0) > 1.0) {
+        pp.y = a - pp.y;
+    }
+    pp.y += localTime * 0.025 + mid * MID_ROT_GAIN * 0.04;
+    p = toRect(pp);
+    p = abs(p);
+    p -= vec2(0.48);
+
+    float d = 10000.0;
+    float scalePulse = 0.5 + 0.5 * sin(localTime * 0.35);
+
+    for (int i = 0; i < 4; i++) {
+        float fi = float(i);
+        mod2(p, vec2(1.0));
+        float wobble = -0.12 * cos(localTime * 0.25 + fi);
+        float mark = abstractMark(p, localTime * 0.15 + fi * 0.7) + wobble;
+        d = min(d, mark);
+
+        float grow = 1.42 + bass * BASS_RECUR_GAIN + 0.06 * scalePulse;
+        p *= grow;
+        rot(p, 0.55 + mid * MID_ROT_GAIN * 0.08 + fi * 0.12);
+    }
+
+    return d;
+}
+
+vec2 fieldDistort(float localTime, vec2 uv, float mid) {
+    float lt = 0.08 * localTime + mid * MID_ROT_GAIN * 0.05;
+    vec2 suv = toSmith(uv);
+    suv += 0.65 * vec2(cos(lt), sin(sqrt(2.0) * lt));
+    uv = fromSmith(suv);
+    modMirror2(uv, vec2(1.8 + 0.25 * sin(lt * 0.7)));
+    return uv;
+}
+
+vec3 shadeField(float d, float layerMix, float high, float reveal) {
+    float fill = smoothstep(0.018, -0.012, d);
+    float edge = smoothstep(0.006, 0.0, abs(d));
+    float band = 0.5 + 0.5 * sin(d * 80.0);
+    vec3 base = adinkraPalette(band * 0.5 + layerMix * 0.35, layerMix);
+    vec3 col = mix(vec3(0.015, 0.010, 0.018), base, fill * (0.55 + reveal * 0.45));
+    col += vec3(0.92, 0.80, 0.56) * edge * (0.25 + high * HIGH_SHIMMER);
+    col += vec3(0.83, 0.57, 0.18) * edge * edge * high * 0.35;
+    return col;
+}
+
+vec3 adinkra_post(vec3 col, vec2 uv, float localTime, float r) {
+    col = clamp(col, 0.0, 1.0);
+    col = pow(col, mix(vec3(0.55, 0.72, 1.15), vec3(0.48), r));
+    col = col * 0.62 + 0.38 * col * col * (3.0 - 2.0 * col);
+    col = mix(col, vec3(dot(col, vec3(0.33))), -0.25);
+    float pulse = sqrt(max(1.0 - 0.65 * sin(localTime * 0.4 + r * 6.0), 0.0));
+    col *= mix(0.85, 1.0, pulse);
+    col *= 0.55 * sqrt(max(1.05 - r * r, 0.0));
+    return clamp(col, 0.0, 1.0);
+}
+
+vec3 sampleField(float localTime, vec2 p, float bass, float mid, float high) {
+    vec2 uv = p * 6.5;
+    rot(uv, localTime * 0.04 + mid * MID_ROT_GAIN * 0.12);
+
+    vec2 nuv = fieldDistort(localTime, uv, mid);
+    vec2 nuv2 = fieldDistort(localTime, uv + vec2(0.0008), mid);
+    float warpGlow = 1.0 - smoothstep(0.0, 0.003, length(nuv - nuv2));
+
+    float d = adinkra_df(localTime, nuv, bass, mid);
+    float r = length(p);
+
+    float reveal = smoothstep(0.55, 0.08, r) * (0.45 + bass * 0.55);
+    vec3 col = shadeField(d, r * 0.8 + bass * 0.2, high, reveal);
+
+    float smoke = fbm(p * 2.2 + vec2(localTime * 0.03, -localTime * 0.02));
+    col = mix(col, adinkraPalette(smoke, 0.2), smoke * 0.08 * (1.0 - reveal * 0.5));
+
+    col += vec3(0.13, 0.06, 0.25) * warpGlow * 0.12;
+    col += vec3(0.92, 0.80, 0.56) * warpGlow * warpGlow * high * 0.08;
+
+    col = adinkra_post(col, nuv, localTime, r);
+    return clamp(col, 0.0, 1.0);
+}
+
+void mainImage(out vec4 fragColor, in vec2 fragCoord) {
+    vec2 uv = centeredUV(fragCoord);
+    float localTime = iTime + 20.0;
+
+    float bass = audioBoost(safeAudio(getBass(), fallbackBass()));
+    float mid  = audioBoost(safeAudio(getMid(), fallbackMid()));
+    float high = audioBoost(safeAudio(getHigh(), fallbackHigh()));
+
+    vec3 col = sampleField(localTime, uv, bass, mid, high);
+
+    float r = length(uv);
+    col = mix(col, vec3(0.015, 0.010, 0.018), smoothstep(0.95, 1.25, r));
+    col = sqrt(max(col, 0.0));
+    col = min(col, vec3(0.82));
+
+    fragColor = vec4(col, 1.0);
+}
+`,
         "Sunflower Fields": `
 // Sunflower Fields
 // By Bitless, Ircss, & Noztol
@@ -3742,6 +6250,30 @@ mainVR(fragColor, fragCoord, from, dir);
 
 uniform float iWriteFeedback;
 
+float fwHash11(float p)
+{
+    p = fract(p * 0.1031);
+    p *= p + 33.33;
+    return fract(p * p);
+}
+
+float fwHash21(vec2 p)
+{
+    p = fract(p * vec2(123.34, 456.21));
+    p += dot(p, p + 45.32);
+    return fract(p.x * p.y);
+}
+
+vec2 fwHash22(vec2 p)
+{
+    return vec2(fwHash21(p), fwHash21(p + 17.0));
+}
+
+vec3 fireworkHue(float hue)
+{
+    return 0.55 + 0.45 * cos(6.28318 * (hue + vec3(0.0, 0.33, 0.67)));
+}
+
 vec3 laplacian(vec2 uv, vec2 px, sampler2D ch)
 {
     vec3 c = texture(ch, uv).rgb;
@@ -3764,7 +6296,7 @@ float subparticle(vec2 xy, vec2 uv, float t, float r, int i)
     float s  = NUM_SUBPARTICLES / 360.0;
     float a  = round((degrees(atan(p.y, p.x) + 3.141592)) * s) / s;
     vec2 del = vec2(cos(radians(a)), sin(radians(a)));
-    float delay = texture(iChannel0, vec2(fract(a / 24.0 + float(i) * 1.618), 1.0) + 0.5).a * 0.5 + 0.5;
+    float delay = fwHash11(a / 24.0 + float(i) * 1.618) * 0.5 + 0.5;
     float sub_r = SUBPARTICLE_RADIUS * (1.0 + t);
     float fade  = (length((xy + del * (r * 0.9) * delay) - uv) < sub_r) ? 4.0 : 0.0;
     return fade;
@@ -3772,10 +6304,12 @@ float subparticle(vec2 xy, vec2 uv, float t, float r, int i)
 
 vec3 particle(vec2 uv, float aspect, vec2 jitter, int i)
 {
-    ivec2 txtPos = ivec2(i & 63, i >> 6);
-    vec2 xy = texture(iChannel0, vec2(txtPos) / 64.0 + 0.4).rg * vec2(aspect, 0.5) + vec2(0.0, 0.5);
-    vec2 del = texture(iChannel0, vec2(txtPos) / 64.0 + 0.5).ba * vec2(0.4, 0.05) + vec2(-0.2, 0.1);
-    vec3 color = texture(iChannel0, vec2(txtPos.x, txtPos.y + 3) / 64.0 + 0.5).rgb * 0.75 + 0.25;
+    vec2 seed = vec2(float(i & 63), float(i >> 6)) + 0.1;
+    vec2 posData = fwHash22(seed);
+    vec2 velData = fwHash22(seed + 3.7);
+    vec2 xy = posData * vec2(aspect, 0.5) + vec2(0.0, 0.5);
+    vec2 del = velData * vec2(0.4, 0.05) + vec2(-0.2, 0.1);
+    vec3 color = fireworkHue(fract(float(i) * 0.127 + posData.x * 0.37 + 0.11));
     color *= color;
     color *= bool(USE_TEMPORAL_ACCUMULATION) ? 2.0 : 1.0;
 
@@ -3797,7 +6331,7 @@ void mainImage(out vec4 O, in vec2 I)
     float as = iResolution.x / iResolution.y;
     vec2 px  = 1.0 / iResolution.xy;
 
-    vec3 rnd = texture(iChannel0, mod(I, 64.0) / 64.0).rgb;
+    vec3 rnd = vec3(fwHash22(mod(I, 64.0)), fwHash11(dot(I, vec2(12.9898, 78.233))));
     vec2 jitter = (fract(rnd.rg + 1.61803 * mod(floor(iFrame), 64.0)) - 0.5) * 0.0025;
 
     vec3 colSky = sky(uv);
@@ -4950,6 +7484,143 @@ void mainImage( out vec4 fragColor, in vec2 fragCoord )
 	vec2 xy = fragCoord.xy / iResolution.xy;
 	col *= vec3(.4, .4, .3) + 0.5*pow(100.0*xy.x*xy.y*(1.0-xy.x)*(1.0-xy.y), .4 );	
     fragColor = vec4( col, 1.0 );
+}`,
+
+    "Neon Pianoscope Text": `// pianoscope logo — heart-style glow + horizontal neon gradient
+// https://www.shadertoy.com/view/7l3GDS
+
+#define PS_FONT 20.0
+#define PS_SPACING 0.045
+#define PS_Y 0.52
+#define PS_LETTERS 10.0
+#define PS_CARET0 6.0
+#define PS_RADIUS (0.00075 * PS_FONT)
+#define PS_CORE_A (0.00030 * PS_FONT)
+#define PS_CORE_B (0.00010 * PS_FONT)
+#define PS_BLOOM 2.4
+#define PS_POWER 1.3
+
+vec2 coord;
+vec2 caret;
+float textDist;
+
+#define A_ vec2(0.0, 0.0)
+#define B_ vec2(1.0, 0.0)
+#define C_ vec2(2.0, 0.0)
+#define E_ vec2(1.0, 1.0)
+#define G_ vec2(0.0, 2.0)
+#define H_ vec2(1.0, 2.0)
+#define I_ vec2(2.0, 2.0)
+#define J_ vec2(0.0, 3.0)
+#define K_ vec2(1.0, 3.0)
+#define L_ vec2(2.0, 3.0)
+#define M_ vec2(0.0, 4.0)
+#define N_ vec2(1.0, 4.0)
+#define O_ vec2(2.0, 4.0)
+#define S_ vec2(0.0, 6.0)
+#define T_ vec2(1.0, 6.0)
+#define U_ vec2(2.0, 6.0)
+
+float getGlow(float dist, float radius, float intensity) {
+    return pow(radius / max(dist, 1e-4), intensity);
+}
+
+float minimum_distance(vec2 v, vec2 w, vec2 p) {
+    float l2 = dot(v - w, v - w);
+    if (l2 == 0.0) return distance(p, v);
+    float t = clamp(dot(p - v, w - v) / l2, 0.0, 1.0);
+    return distance(p, v + t * (w - v));
+}
+
+vec2 grid(vec2 letterspace) {
+    return vec2((letterspace.x / 2.0) * 0.65, 1.0 - ((letterspace.y / 2.0) * 0.95));
+}
+
+void addSeg(vec2 from, vec2 to, vec2 p) {
+    vec2 pp = p * PS_FONT;
+    textDist = min(textDist, minimum_distance(grid(from), grid(to), pp));
+}
+
+#define SEG(f, t, p) addSeg(f, t, p)
+#define A(p) SEG(G_, I_, p); SEG(I_, O_, p); SEG(O_, M_, p); SEG(M_, J_, p); SEG(J_, L_, p); caret.x += 1.0;
+#define B(p) SEG(A_, M_, p); SEG(M_, O_, p); SEG(O_, I_, p); SEG(I_, G_, p); caret.x += 1.0;
+#define C(p) SEG(I_, G_, p); SEG(G_, M_, p); SEG(M_, O_, p); caret.x += 1.0;
+#define D(p) SEG(C_, O_, p); SEG(O_, M_, p); SEG(M_, G_, p); SEG(G_, I_, p); caret.x += 1.0;
+#define E(p) SEG(O_, M_, p); SEG(M_, G_, p); SEG(G_, I_, p); SEG(I_, L_, p); SEG(L_, J_, p); caret.x += 1.0;
+#define F(p) SEG(C_, B_, p); SEG(B_, N_, p); SEG(G_, I_, p); caret.x += 1.0;
+#define G(p) SEG(O_, M_, p); SEG(M_, G_, p); SEG(G_, I_, p); SEG(I_, U_, p); SEG(U_, S_, p); caret.x += 1.0;
+#define H(p) SEG(A_, M_, p); SEG(G_, I_, p); SEG(I_, O_, p); caret.x += 1.0;
+#define I(p) SEG(E_, E_, p); SEG(H_, N_, p); caret.x += 1.0;
+#define J(p) SEG(E_, E_, p); SEG(H_, T_, p); SEG(T_, S_, p); caret.x += 1.0;
+#define K(p) SEG(A_, M_, p); SEG(M_, I_, p); SEG(K_, O_, p); caret.x += 1.0;
+#define L(p) SEG(B_, N_, p); caret.x += 1.0;
+#define M(p) SEG(M_, G_, p); SEG(G_, I_, p); SEG(H_, N_, p); SEG(I_, O_, p); caret.x += 1.0;
+#define N(p) SEG(M_, G_, p); SEG(G_, I_, p); SEG(I_, O_, p); caret.x += 1.0;
+#define O(p) SEG(G_, I_, p); SEG(I_, O_, p); SEG(O_, M_, p); SEG(M_, G_, p); caret.x += 1.0;
+#define P(p) SEG(S_, G_, p); SEG(G_, I_, p); SEG(I_, O_, p); SEG(O_, M_, p); caret.x += 1.0;
+#define Q(p) SEG(U_, I_, p); SEG(I_, G_, p); SEG(G_, M_, p); SEG(M_, O_, p); caret.x += 1.0;
+#define R(p) SEG(M_, G_, p); SEG(G_, I_, p); caret.x += 1.0;
+#define S(p) SEG(I_, G_, p); SEG(G_, J_, p); SEG(J_, L_, p); SEG(L_, O_, p); SEG(O_, M_, p); caret.x += 1.0;
+#define T(p) SEG(B_, N_, p); SEG(N_, O_, p); SEG(G_, I_, p); caret.x += 1.0;
+#define U(p) SEG(G_, M_, p); SEG(M_, O_, p); SEG(O_, I_, p); caret.x += 1.0;
+#define V(p) SEG(G_, J_, p); SEG(J_, N_, p); SEG(N_, L_, p); SEG(L_, I_, p); caret.x += 1.0;
+#define W(p) SEG(G_, M_, p); SEG(M_, O_, p); SEG(N_, H_, p); SEG(O_, I_, p); caret.x += 1.0;
+#define X(p) SEG(G_, O_, p); SEG(I_, M_, p); caret.x += 1.0;
+#define Y(p) SEG(G_, M_, p); SEG(M_, O_, p); SEG(I_, U_, p); SEG(U_, S_, p); caret.x += 1.0;
+#define Z(p) SEG(G_, I_, p); SEG(I_, M_, p); SEG(M_, O_, p); caret.x += 1.0;
+
+float psAspect() { return iResolution.x / iResolution.y; }
+
+float psMidCaret() { return PS_CARET0 + (PS_LETTERS - 1.0) * 0.5; }
+
+vec2 textPos() {
+    vec2 uv = coord.xy / iResolution.xy;
+    float aspect = psAspect();
+    vec2 p;
+    p.x = (uv.x - 0.5) * aspect + (psMidCaret() - caret.x) * PS_SPACING * aspect;
+    p.y = uv.y - PS_Y;
+    return p;
+}
+
+float wordT(vec2 uv) {
+    float halfW = (PS_LETTERS - 1.0) * PS_SPACING * 0.5;
+    return smoothstep(0.5 - halfW, 0.5 + halfW, uv.x);
+}
+
+vec3 gradTint(float t) {
+    vec3 pink = vec3(1.0, 0.12, 0.48);
+    vec3 cyan = vec3(0.18, 0.62, 1.0);
+    vec3 purp = vec3(0.72, 0.22, 0.95);
+    vec3 c = mix(pink, cyan, smoothstep(0.0, 0.48, t));
+    return mix(c, purp, smoothstep(0.52, 1.0, t));
+}
+
+vec3 neonLit(float dist, vec3 tint) {
+    vec3 col = vec3(0.0);
+    col += getGlow(dist, PS_RADIUS * PS_BLOOM, PS_POWER * 0.9) * tint * 0.22;
+    col += getGlow(dist, PS_RADIUS, PS_POWER) * tint * 0.65;
+    col += vec3(1.0) * smoothstep(PS_CORE_A, PS_CORE_B, dist) * 8.0;
+    return col;
+}
+
+float drawLogo() {
+    caret = PS_CARET0;
+    textDist = 1e4;
+    P(textPos()); I(textPos()); A(textPos()); N(textPos()); O(textPos());
+    S(textPos()); C(textPos()); O(textPos()); P(textPos()); E(textPos());
+    return textDist;
+}
+
+void mainImage(out vec4 fragColor, in vec2 fragCoord) {
+    coord = fragCoord;
+    vec2 uv = fragCoord.xy / iResolution.xy;
+    float dist = drawLogo();
+    vec3 col = neonLit(dist, gradTint(wordT(uv)));
+
+    col = 1.0 - exp(-col);
+    col = pow(col, vec3(0.4545));
+
+    fragColor = vec4(col, 1.0);
 }`,
     "Wave Zoom": `const int numWaves = 8;
 const float numFreqs = 10.0;
@@ -6462,7 +9133,7 @@ void mainImage(out vec4 o, vec2 u) {
     float smoothBeat = fract(t * 1.5);
     smoothBeat = smoothstep(0.0, 1.0, smoothBeat);
     
-    vec3  q = vec3(iResolution, 1.0),
+    vec3  q = iResolution,
           p = P(t),
           Z = normalize(P(t+1.) - p),
           X = normalize(vec3(Z.z,0,-Z.x)),

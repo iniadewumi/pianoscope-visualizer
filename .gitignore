@@ -1,2 +1,10 @@
 .vscode
 misc/*
+
+# OS / tooling
+.DS_Store
+node_modules/
+package-lock.json
+
+# Local shader compile scratch (agent / dev)
+compile-*.html

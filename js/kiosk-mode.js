@@ -279,7 +279,7 @@ const kioskHtmlContent = `<!DOCTYPE html>
                 
                 // Set common uniforms if they exist
                 const iResolution = gl.getUniformLocation(currentProgram, 'iResolution');
-                if (iResolution) gl.uniform2f(iResolution, canvas.width, canvas.height);
+                if (iResolution) gl.uniform3f(iResolution, canvas.width, canvas.height, 1.0);
                 
                 const iTime = gl.getUniformLocation(currentProgram, 'iTime');
                 if (iTime) gl.uniform1f(iTime, currentTime);

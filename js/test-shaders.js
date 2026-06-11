@@ -1,4 +1,127 @@
 export const TEST_SHADERS = {
+  "Neon Heart": `// gelami crease fix: https://www.shadertoy.com/view/7l3GDS
+
+#define POINT_COUNT 8
+
+vec2 points[POINT_COUNT];
+const float speed = -0.5;
+const float len = 0.25;
+const float scale = 0.012;
+float intensity = 1.3;
+float radius = 0.015;
+
+float sdBezier(vec2 pos, vec2 A, vec2 B, vec2 C) {
+    vec2 a = B - A;
+    vec2 b = A - 2.0 * B + C;
+    vec2 c = a * 2.0;
+    vec2 d = A - pos;
+
+    float kk = 1.0 / dot(b, b);
+    float kx = kk * dot(a, b);
+    float ky = kk * (2.0 * dot(a, a) + dot(d, b)) / 3.0;
+    float kz = kk * dot(d, a);
+
+    float res = 0.0;
+
+    float p = ky - kx * kx;
+    float p3 = p * p * p;
+    float q = kx * (2.0 * kx * kx - 3.0 * ky) + kz;
+    float h = q * q + 4.0 * p3;
+
+    if (h >= 0.0) {
+        h = sqrt(h);
+        vec2 x = (vec2(h, -h) - q) / 2.0;
+        vec2 uv = sign(x) * pow(abs(x), vec2(1.0 / 3.0));
+        float t = uv.x + uv.y - kx;
+        t = clamp(t, 0.0, 1.0);
+
+        vec2 qos = d + (c + b * t) * t;
+        res = length(qos);
+    } else {
+        float z = sqrt(-p);
+        float v = acos(q / (p * z * 2.0)) / 3.0;
+        float m = cos(v);
+        float n = sin(v) * 1.732050808;
+        vec3 t = vec3(m + m, -n - m, n - m) * z - kx;
+        t = clamp(t, 0.0, 1.0);
+
+        vec2 qos = d + (c + b * t.x) * t.x;
+        float dis = dot(qos, qos);
+
+        res = dis;
+
+        qos = d + (c + b * t.y) * t.y;
+        dis = dot(qos, qos);
+        res = min(res, dis);
+
+        qos = d + (c + b * t.z) * t.z;
+        dis = dot(qos, qos);
+        res = min(res, dis);
+
+        res = sqrt(res);
+    }
+
+    return res;
+}
+
+vec2 getHeartPosition(float t) {
+    return vec2(16.0 * sin(t) * sin(t) * sin(t),
+                -(13.0 * cos(t) - 5.0 * cos(2.0 * t)
+                - 2.0 * cos(3.0 * t) - cos(4.0 * t)));
+}
+
+float getGlow(float dist, float rad, float powInt) {
+    return pow(rad / dist, powInt);
+}
+
+float getSegment(float t, vec2 pos, float offset) {
+    for (int i = 0; i < POINT_COUNT; i++) {
+        points[i] = getHeartPosition(offset + float(i) * len + fract(speed * t) * 6.28);
+    }
+
+    vec2 c = (points[0] + points[1]) / 2.0;
+    vec2 c_prev;
+    float dist = 10000.0;
+
+    for (int i = 0; i < POINT_COUNT - 1; i++) {
+        c_prev = c;
+        c = (points[i] + points[i + 1]) / 2.0;
+        dist = min(dist, sdBezier(pos, scale * c_prev, scale * points[i], scale * c));
+    }
+    return max(0.0, dist);
+}
+
+void mainImage(out vec4 fragColor, in vec2 fragCoord) {
+    vec2 uv = fragCoord / iResolution.xy;
+    float widthHeightRatio = iResolution.x / iResolution.y;
+    vec2 centre = vec2(0.5, 0.5);
+    vec2 pos = centre - uv;
+    pos.y /= widthHeightRatio;
+
+    pos.y += 0.03;
+
+    float t = iTime;
+
+    float dist = getSegment(t, pos, 0.0);
+    float glow = getGlow(dist, radius, intensity);
+
+    vec3 col = vec3(0.0);
+
+    col += 10.0 * vec3(smoothstep(0.006, 0.003, dist));
+    col += glow * vec3(1.0, 0.05, 0.3);
+
+    dist = getSegment(t, pos, 3.4);
+    glow = getGlow(dist, radius, intensity);
+
+    col += 10.0 * vec3(smoothstep(0.006, 0.003, dist));
+    col += glow * vec3(0.1, 0.4, 1.0);
+
+    col = 1.0 - exp(-col);
+    col = pow(col, vec3(0.4545));
+
+    fragColor = vec4(col, 1.0);
+}
+`,
   "Sound Reactive Waves": `
 #define PI 3.14159265
 #define S smoothstep
@@ -247,276 +370,5 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
 
     fragColor = vec4(col, 1.0);
 }
-`,
-
-  "PIANOSCOPE Adinkra Symbol Field Abstract": `
-/*
-PIANOSCOPE Shader
-Name: Adinkra Symbol Field Abstract
-Mode: adinkra_symbol_field_abstract
-Inspired by: Mandala (polar fold + iterative mod2 scale) + Adinkra stamp geometry
-Cultural caution: Procedural circles, arcs, crosses — not exact sacred Adinkra symbols
-Audio: Bass = recursion bloom / central reveal; Mid = field rotation; High = edge shimmer
-Projection: Dark violet field, gold/rust marks, slow organic drift, no strobe
-*/
-
-#define PI  3.141592654
-#define TAU (2.0 * PI)
-#define BASS_RECUR_GAIN  0.28
-#define MID_ROT_GAIN     0.50
-#define HIGH_SHIMMER     0.60
-#define SECTOR_COUNT     12.0
-
-vec2 centeredUV(vec2 fragCoord) {
-    return (fragCoord - 0.5 * iResolution.xy) / iResolution.y;
-}
-
-float fft(float x) {
-    return texture(iChannel0, vec2(clamp(x, 0.0, 1.0), 0.0)).x;
-}
-
-float getBass() {
-    return (fft(0.01) + fft(0.03) + fft(0.05) + fft(0.07)) * 0.25;
-}
-
-float getMid() {
-    return (fft(0.15) + fft(0.25) + fft(0.35) + fft(0.45)) * 0.25;
-}
-
-float getHigh() {
-    return (fft(0.55) + fft(0.70) + fft(0.85) + fft(0.95)) * 0.25;
-}
-
-float fallbackBass() { return 0.35 + 0.25 * sin(iTime * 1.1); }
-float fallbackMid()  { return 0.28 + 0.18 * sin(iTime * 0.65 + 1.0); }
-float fallbackHigh() { return 0.18 + 0.12 * sin(iTime * 2.6 + 2.0); }
-
-float safeAudio(float value, float fallback) {
-    return max(value, fallback * 0.35);
-}
-
-float audioBoost(float v) {
-    return clamp(pow(v, 0.75) * 1.35, 0.0, 1.0);
-}
-
-void rot(inout vec2 p, float a) {
-    float c = cos(a);
-    float s = sin(a);
-    p = vec2(c * p.x + s * p.y, -s * p.x + c * p.y);
-}
-
-vec2 mod2(inout vec2 p, vec2 size) {
-    vec2 c = floor((p + size * 0.5) / size);
-    p = mod(p + size * 0.5, size) - size * 0.5;
-    return c;
-}
-
-vec2 modMirror2(inout vec2 p, vec2 size) {
-    vec2 halfsize = size * 0.5;
-    vec2 c = floor((p + halfsize) / size);
-    p = mod(p + halfsize, size) - halfsize;
-    p *= mod(c, vec2(2.0)) * 2.0 - vec2(1.0);
-    return c;
-}
-
-vec2 toSmith(vec2 p) {
-    float d = (1.0 - p.x) * (1.0 - p.x) + p.y * p.y;
-    float x = (1.0 + p.x) * (1.0 - p.x) - p.y * p.y;
-    float y = 2.0 * p.y;
-    return vec2(x, y) / d;
-}
-
-vec2 fromSmith(vec2 p) {
-    float d = (p.x + 1.0) * (p.x + 1.0) + p.y * p.y;
-    float x = (p.x + 1.0) * (p.x - 1.0) + p.y * p.y;
-    float y = 2.0 * p.y;
-    return vec2(x, y) / d;
-}
-
-vec2 toRect(vec2 p) {
-    return vec2(p.x * cos(p.y), p.x * sin(p.y));
-}
-
-vec2 toPolar(vec2 p) {
-    return vec2(length(p), atan(p.y, p.x));
-}
-
-float circle(vec2 p, float r) {
-    return length(p) - r;
-}
-
-float hash21(vec2 p) {
-    p = fract(p * vec2(123.34, 456.21));
-    p += dot(p, p + 45.32);
-    return fract(p.x * p.y);
-}
-
-float noise(vec2 p) {
-    vec2 i = floor(p);
-    vec2 f = fract(p);
-    float a = hash21(i);
-    float b = hash21(i + vec2(1.0, 0.0));
-    float c = hash21(i + vec2(0.0, 1.0));
-    float d = hash21(i + vec2(1.0, 1.0));
-    vec2 u = f * f * (3.0 - 2.0 * f);
-    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
-}
-
-float fbm(vec2 p) {
-    float v = 0.0;
-    float a = 0.5;
-    for (int i = 0; i < 4; i++) {
-        v += a * noise(p);
-        p = p * 2.03 + vec2(1.7, 9.2);
-        a *= 0.5;
-    }
-    return v;
-}
-
-vec3 adinkraPalette(float t, float layer) {
-    vec3 midnightViolet = vec3(0.13, 0.06, 0.25);
-    vec3 deepBlack      = vec3(0.015, 0.010, 0.018);
-    vec3 rustOrange     = vec3(0.70, 0.27, 0.10);
-    vec3 mutedGold      = vec3(0.83, 0.57, 0.18);
-    vec3 cream          = vec3(0.92, 0.80, 0.56);
-
-    vec3 c = mix(deepBlack, midnightViolet, smoothstep(0.0, 0.35, t));
-    c = mix(c, rustOrange, smoothstep(0.25, 0.65, t + layer * 0.12));
-    c = mix(c, mutedGold, smoothstep(0.45, 0.85, t + layer * 0.08));
-    c = mix(c, cream, smoothstep(0.75, 1.0, t) * 0.35);
-    return c;
-}
-
-// Abstract stamp mark: ring, arcs, cross — not a specific Adinkra symbol
-float abstractMark(vec2 p, float phase) {
-    float d = 10000.0;
-
-    float ring = abs(circle(p, 0.36)) - 0.035;
-    d = min(d, ring);
-
-    float hub = circle(p, 0.11);
-    d = min(d, hub);
-
-    for (int i = 0; i < 3; i++) {
-        float ang = float(i) * TAU / 3.0 + phase;
-        vec2 c = vec2(cos(ang), sin(ang)) * 0.24;
-        float arc = abs(length(p - c) - 0.075) - 0.022;
-        d = min(d, arc);
-    }
-
-    float cross = max(abs(p.x), abs(p.y)) - 0.018;
-    cross = max(cross, circle(p, 0.16));
-    d = min(d, cross);
-
-    float diamond = abs(p.x) + abs(p.y) - 0.30;
-    diamond = max(diamond, -circle(p, 0.28));
-    d = min(d, abs(diamond) - 0.015);
-
-    return d;
-}
-
-float adinkra_df(float localTime, vec2 p, float bass, float mid) {
-    vec2 pp = toPolar(p);
-    float a = TAU / SECTOR_COUNT;
-    float np = pp.y / a;
-    pp.y = mod(pp.y, a);
-    if (mod(np, 2.0) > 1.0) {
-        pp.y = a - pp.y;
-    }
-    pp.y += localTime * 0.025 + mid * MID_ROT_GAIN * 0.04;
-    p = toRect(pp);
-    p = abs(p);
-    p -= vec2(0.48);
-
-    float d = 10000.0;
-    float scalePulse = 0.5 + 0.5 * sin(localTime * 0.35);
-
-    for (int i = 0; i < 4; i++) {
-        float fi = float(i);
-        mod2(p, vec2(1.0));
-        float wobble = -0.12 * cos(localTime * 0.25 + fi);
-        float mark = abstractMark(p, localTime * 0.15 + fi * 0.7) + wobble;
-        d = min(d, mark);
-
-        float grow = 1.42 + bass * BASS_RECUR_GAIN + 0.06 * scalePulse;
-        p *= grow;
-        rot(p, 0.55 + mid * MID_ROT_GAIN * 0.08 + fi * 0.12);
-    }
-
-    return d;
-}
-
-vec2 fieldDistort(float localTime, vec2 uv, float mid) {
-    float lt = 0.08 * localTime + mid * MID_ROT_GAIN * 0.05;
-    vec2 suv = toSmith(uv);
-    suv += 0.65 * vec2(cos(lt), sin(sqrt(2.0) * lt));
-    uv = fromSmith(suv);
-    modMirror2(uv, vec2(1.8 + 0.25 * sin(lt * 0.7)));
-    return uv;
-}
-
-vec3 shadeField(float d, float layerMix, float high, float reveal) {
-    float fill = smoothstep(0.018, -0.012, d);
-    float edge = smoothstep(0.006, 0.0, abs(d));
-    float band = 0.5 + 0.5 * sin(d * 80.0);
-    vec3 base = adinkraPalette(band * 0.5 + layerMix * 0.35, layerMix);
-    vec3 col = mix(vec3(0.015, 0.010, 0.018), base, fill * (0.55 + reveal * 0.45));
-    col += vec3(0.92, 0.80, 0.56) * edge * (0.25 + high * HIGH_SHIMMER);
-    col += vec3(0.83, 0.57, 0.18) * edge * edge * high * 0.35;
-    return col;
-}
-
-vec3 adinkra_post(vec3 col, vec2 uv, float localTime, float r) {
-    col = clamp(col, 0.0, 1.0);
-    col = pow(col, mix(vec3(0.55, 0.72, 1.15), vec3(0.48), r));
-    col = col * 0.62 + 0.38 * col * col * (3.0 - 2.0 * col);
-    col = mix(col, vec3(dot(col, vec3(0.33))), -0.25);
-    float pulse = sqrt(max(1.0 - 0.65 * sin(localTime * 0.4 + r * 6.0), 0.0));
-    col *= mix(0.85, 1.0, pulse);
-    col *= 0.55 * sqrt(max(1.05 - r * r, 0.0));
-    return clamp(col, 0.0, 1.0);
-}
-
-vec3 sampleField(float localTime, vec2 p, float bass, float mid, float high) {
-    vec2 uv = p * 6.5;
-    rot(uv, localTime * 0.04 + mid * MID_ROT_GAIN * 0.12);
-
-    vec2 nuv = fieldDistort(localTime, uv, mid);
-    vec2 nuv2 = fieldDistort(localTime, uv + vec2(0.0008), mid);
-    float warpGlow = 1.0 - smoothstep(0.0, 0.003, length(nuv - nuv2));
-
-    float d = adinkra_df(localTime, nuv, bass, mid);
-    float r = length(p);
-
-    float reveal = smoothstep(0.55, 0.08, r) * (0.45 + bass * 0.55);
-    vec3 col = shadeField(d, r * 0.8 + bass * 0.2, high, reveal);
-
-    float smoke = fbm(p * 2.2 + vec2(localTime * 0.03, -localTime * 0.02));
-    col = mix(col, adinkraPalette(smoke, 0.2), smoke * 0.08 * (1.0 - reveal * 0.5));
-
-    col += vec3(0.13, 0.06, 0.25) * warpGlow * 0.12;
-    col += vec3(0.92, 0.80, 0.56) * warpGlow * warpGlow * high * 0.08;
-
-    col = adinkra_post(col, nuv, localTime, r);
-    return clamp(col, 0.0, 1.0);
-}
-
-void mainImage(out vec4 fragColor, in vec2 fragCoord) {
-    vec2 uv = centeredUV(fragCoord);
-    float localTime = iTime + 20.0;
-
-    float bass = audioBoost(safeAudio(getBass(), fallbackBass()));
-    float mid  = audioBoost(safeAudio(getMid(), fallbackMid()));
-    float high = audioBoost(safeAudio(getHigh(), fallbackHigh()));
-
-    vec3 col = sampleField(localTime, uv, bass, mid, high);
-
-    float r = length(uv);
-    col = mix(col, vec3(0.015, 0.010, 0.018), smoothstep(0.95, 1.25, r));
-    col = sqrt(max(col, 0.0));
-    col = min(col, vec3(0.82));
-
-    fragColor = vec4(col, 1.0);
-}
-`,
+`
 };
