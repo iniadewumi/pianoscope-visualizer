@@ -3567,23 +3567,34 @@ void mainImage( out vec4 O, vec2 U )
     vec2 R = iResolution.xy;
     U = ( U+U - R ) / R.y;
     O -= O;
-    
-    float t = 3.*iTime, K = 1.5, S = 2.;
-    float edge = 11. / R.y;   // particle radius in px (was 3)
-    float gridStep = 0.038;     // tighter spacing (was 0.05)
-    
-    for (float j = -1.; j < 1.; j += gridStep)
-        for (float i = -1.; i < 1.; i += gridStep) {
-            vec2 P = vec2(i,j);
-            float k = K * max(1.-length(P),0.);          // displ amplitude
+
+    // Nothing to draw outside the displaced unit disk.
+    if (length(U) > 2.5) return;
+
+    float t = 3. * iTime;
+    float K = 1.5;
+    float S = 2.;
+    float edge = 5. / R.y;
+    const float gridStep = 0.05;
+    const int GRID_N = 40;
+
+    for (int jj = 0; jj < GRID_N; jj++)
+    for (int ii = 0; ii < GRID_N; ii++) {
+        vec2 P = vec2(-1.0) + vec2(float(ii), float(jj)) * gridStep;
+        float lenP = length(P);
+        if (lenP < 1.0) {
+            float k = K * (1.0 - lenP);
             vec2 d = U - P;
-            if (k > 0. && dot(d, d) < k * k) {
-                P += k * vec2( fbm3(vec3(S*P, t)), fbm3(vec3(S*P+15., t)) ) / S;
-                P = smoothstep( edge, 0., abs(U-P) );
-                O += P.x*P.y; 
+            if (dot(d, d) < k * k) {
+                P += k * vec2(
+                    fbm3(vec3(S * P, t)),
+                    fbm3(vec3(S * P + 15., t))
+                ) / S;
+                float blob = smoothstep(edge, 0., length(U - P));
+                O += vec4(blob);
             }
         }
-    
+    }
 }`,
     "Smaller Waterfall": `// CC0: Smaller Waterfall
 //  Trying to minimize the previous waterfall shader a bit.
@@ -7129,7 +7140,7 @@ float getVisibility(vec3 p0, vec3 p1, float k)
 
 #define zoom   0.800
 #define tile   0.850
-#define speed  0.010 
+#define speed  0.010
 
 #define brightness 0.0015
 #define darkmatter 0.300
@@ -7139,11 +7150,13 @@ float getVisibility(vec3 p0, vec3 p1, float k)
 vec3 stars(vec2 uv)
 {
 	vec3 dir=vec3(uv*zoom,1.);
-	float time=iTime*speed+.25;
+	const float skyTimeScale = 0.1;
+	float skyTime = iTime * skyTimeScale;
+	float time = skyTime * 0.1 + .25;
 
 	// timed rotation (replaces mouse)
-	float a1 = .5 + sin(iTime * 0.2) * 1.0;
-	float a2 = .8 + cos(iTime * 0.17) * 1.0;
+	float a1 = .5 + sin(skyTime * 0.2) * 1.0;
+	float a2 = .8 + cos(skyTime * 0.17) * 1.0;
 	mat2 rot1=mat2(cos(a1),sin(a1),-sin(a1),cos(a1));
 	mat2 rot2=mat2(cos(a2),sin(a2),-sin(a2),cos(a2));
 	dir.xz*=rot1;
@@ -7188,7 +7201,7 @@ vec4 render(vec2 obj, vec3 p, vec3 rd, vec2 uv)
     const vec3 background_color = vec3(0.0, 0.01, 0.02);
     vec3 background = background_color;
     
-    vec2 pos = uv - vec2(0.0, 0.2) - vec2(0.0, 0.2) * sin(iTime * 0.5) * 0.1;
+    vec2 pos = uv - vec2(0.0, 0.2) - vec2(0.0, 0.2) * sin(iTime * 0.05) * 0.1;
     background += pow(clamp01(1.0 - length(pos * 1.5)), 1.9) * background * 20.0;
     background += pow(clamp01(1.0 - length(pos * 6.5)), 3.9) * background * 90.0;
     
@@ -7604,7 +7617,7 @@ vec3 neonLit(float dist, vec3 tint) {
 }
 
 float drawLogo() {
-    caret = PS_CARET0;
+    caret = vec2(PS_CARET0, 0.0);
     textDist = 1e4;
     P(textPos()); I(textPos()); A(textPos()); N(textPos()); O(textPos());
     S(textPos()); C(textPos()); O(textPos()); P(textPos()); E(textPos());
@@ -9070,35 +9083,6 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord)
     fragColor = vec4(hsv2rgb(vec3(hue, sat, brightness)), 1.0);
 }
 `,
-    "FTL Needles": `/*
-    "Fragments" by @XorDev
-    
-    https://x.com/XorDev/status/1963618494861258842
-*/
-void mainImage( out vec4 O, vec2 I)
-{
-    //Iterator, raymarch depth, turbulence frequency and time
-    float i,z,f,t=iTime;
-    //Raymarch sample point
-    vec3 p;
-    //Clear fragColor and raymarch 30 steps
-    for(O*=i;i++<3e1;
-        //Distance field to cylinder + gyroid
-        z+=f=.003+abs(length(p.xy)-5.+dot(cos(p),sin(p).yzx))/8.,
-        //Color in waves and attenuate light
-        O+=(1.+sin(i*.3+z+t+vec4(6,1,2,0)))/f)
-        //Compute sample point and iterate through turbulence waves
-        //https://mini.gmshaders.com/p/turbulence
-        for(p=z*normalize(vec3(I+I,0)-iResolution.xyy),p.z-=t,f=1.;f++<6.;
-            //Blocky, stretched waves
-            p+=sin(round(p.yxz*6.)/3.*f)/f);
-    //Tanh tonemapping
-    //https://mini.gmshaders.com/p/func-tanh
-    O=tanh(O/1e3);
-}
-    
-//http://shadertoy.com/view/3cScWy
-`,
     "Colorful Nebula": `// just cruising through some colorful noise 😎
 #define P(z) vec3(cos(vec2(.15,.2)*(z))*5.,z)  
 #define R(a) mat2(cos(a+vec4(0,33,11,0)))
@@ -10548,147 +10532,55 @@ void mainImage( out vec4 O, in vec2 U )
 
     O = vec4(1.0 - burn, 0, 0, 1.0);
 }`,
-"Needs Work - Big Bang": `void mainImage(out vec4 o, vec2 F) {
-    vec2 R = iResolution.xy; 
-    o-=o;
-    
-    // Audio reactivity with dampening
-    float bass = texture(iChannel0, vec2(0.05, 0.0)).x;  
-    float mids = texture(iChannel0, vec2(0.3, 0.0)).x;   
-    float high = texture(iChannel0, vec2(0.7, 0.0)).x;   
-    
-    // Apply smoothing to audio values (very important for stability)
-    bass = mix(bass, 0.5, 0.8);  // Heavily dampen towards neutral value
-    mids = mix(mids, 0.5, 0.7);  // Less sensitive to rapid changes
-    high = mix(high, 0.5, 0.6);  // Slightly more responsive for highs
-    
-    // Reduce overall movement speed by 2x
-    float baseSpeed = 0.05;  // Was effectively 0.1 (t * 0.1)
-    
-    for(float d, t = iTime * baseSpeed, i = 0.; i > -1.; i -= .06) {
-        // Greatly reduced audio impact on speed
-        float speedMod = 1.0 + bass * 0.1;  // Was 0.5, now only 10% variation
-        d = fract(i - 3.*t * speedMod);
-        
-        // Minimal scaling adjustment from mids
-        float scale = 28.0 + mids * 2.0;  // Was 10.0, reduced to 2.0
-        vec4 c = vec4((F - R *.5) / R.y * d, i, 0) * scale;
-        
-        for (int j=0; j++ < 27;) {
-            // Keep some parameters static, reduce audio influence on others
-            float param1 = 7.0 - 0.2 * sin(t);  // Removed bass influence
-            float param2 = 6.3 + high * 0.5;    // Was 1.5, reduced to 0.5
-            float param3 = 0.7;                 // Removed mids influence completely
-            float param4 = 1.0 - cos(t/0.8) + high * 0.2;  // Was 0.5, reduced to 0.2
-            
-            c.xzyw = abs(c / dot(c,c) - vec4(param1, param2, param3, param4)/7.0);
-        }
-        
-        // Much gentler color intensity modulation
-        float intensity = 1.0 + bass * 0.5 + mids * 0.3;  // Was 2.0 & 1.0
-        o -= c * c.yzww * d--*d / vec4(3, 5, 1, 1) * intensity;
+"Black Hole": `void mainImage(out vec4 O, in vec2 fragCoord) {
+    float bass = texture(iChannel0, vec2(0.05, 0.0)).x;
+    float lowMid = texture(iChannel0, vec2(0.15, 0.0)).x;
+    float mid = texture(iChannel0, vec2(0.3, 0.0)).x;
+    float high = texture(iChannel0, vec2(0.7, 0.0)).x;
+
+    float beatThreshold = 0.15;
+    float beatPulse = smoothstep(beatThreshold, beatThreshold + 0.1, bass) * 0.3;
+    float audioIntensity = bass * 0.6 + lowMid * 0.25 + mid * 0.1 + high * 0.05;
+    float timeFactor = 0.2;
+    float beatPulseFactor = 1.0 + beatPulse;
+    float baseHoleSize = 0.7;
+    float holeSize = baseHoleSize * (1.0 - audioIntensity * 0.35);
+    float densityFactor = 1.0 + audioIntensity * 0.9;
+    float distortion = 0.1;
+    float iterationCount = 9.0;
+
+    float i;
+    vec2 r = iResolution.xy,
+        p = (fragCoord + fragCoord - r) / r.y / 0.7,
+        d = vec2(-1.0, 1.0),
+        q = 5.0 * p - d,
+        c = p * mat2(1.0, 1.0, d / (distortion + 5.0 / dot(q, q)));
+
+    vec2 v = c * mat2(cos(log(length(c)) + iTime * timeFactor + vec4(0.0, 33.0, 11.0, 0.0))) * 5.0;
+
+    O = vec4(0.0);
+    i = 0.0;
+
+    for (int j = 0; j < 15; j++) {
+        if (float(j) >= iterationCount) break;
+
+        float audioMod = 1.0 + bass * 0.2 * sin(i * 0.7);
+        O += (1.0 + sin(v.xyyx)) * audioMod;
+        v += 0.7 * sin(v.yx * i + iTime) / (i + 0.1) + 0.5;
+        i += 1.0;
     }
-    
-    // Retain subtle color variation
-    o.r += high * 0.1;  // Was 0.2
-    o.g += mids * 0.05; // Was 0.1
-    o.b += bass * 0.15; // Was 0.3
+
+    i = length(sin(v / 0.3) * 0.2 + c * vec2(1.0, 2.0)) - 1.0;
+
+    float ringSize = holeSize;
+    float ringWidth = 0.03 * beatPulseFactor;
+    float ringEffect = ringWidth + abs(length(p) - ringSize);
+    float glowIntensity = 3.5 * beatPulseFactor * densityFactor;
+    float glowEffect = 0.5 + glowIntensity * exp(0.3 * c.y - dot(c, c));
+    vec4 colorModifier = vec4(0.6, -0.4, -1.0, 0.0);
+
+    O = 1.0 - exp(-exp(c.x * colorModifier) / O / (1.0 + i * i * densityFactor) / glowEffect / ringEffect * beatPulseFactor);
 }`,
-"Black Hole": `
-    precision highp float;
-
-    uniform vec2 iResolution;
-    uniform float iTime;
-    uniform sampler2D iChannel0;
-
-    void main() {
-        // Sample audio with minimal processing
-        float bass = texture2D(iChannel0, vec2(0.05, 0.0)).x;
-        float lowMid = texture2D(iChannel0, vec2(0.15, 0.0)).x;
-        float mid = texture2D(iChannel0, vec2(0.3, 0.0)).x;
-        float high = texture2D(iChannel0, vec2(0.7, 0.0)).x;
-        
-        // Beat detection - compare current bass to a threshold
-        // This creates more defined pulses instead of continuous response
-        float beatThreshold = 0.15;
-        float beatPulse = smoothstep(beatThreshold, beatThreshold + 0.1, bass) * 0.3;
-        
-        // Overall audio intensity (weighted toward bass)
-        float audioIntensity = bass * 0.6 + lowMid * 0.25 + mid * 0.1 + high * 0.05;
-        
-        // Keep original time speed
-        float timeFactor = 0.2; // Original speed from XorDev's shader
-        
-        // Small pulse effect for beats
-        float beatPulseFactor = 1.0 + beatPulse;
-        
-        // Black hole size/density responds to audio intensity
-        // Inverse relationship - higher sound = smaller hole
-        float baseHoleSize = 0.7; // Base size
-        float holeSize = baseHoleSize * (1.0 - audioIntensity * 0.35);
-        
-        // Density factor - increases with audio intensity
-        float densityFactor = 1.0 + audioIntensity * 0.9;
-        
-        // Audio-reactive parameters that respect the original algorithm
-        float distortion = 0.1;  // Keep original distortion
-        float iterationBase = 9.0; // Original iteration count
-        float iterationCount = iterationBase; // Keep consistent iterations
-        
-        // Begin with the same coordinate setup as the original
-        float i;
-        vec2 r = iResolution.xy,
-            p = (gl_FragCoord.xy + gl_FragCoord.xy - r) / r.y / 0.7,
-            d = vec2(-1, 1), 
-            q = 5.0 * p - d,
-            c = p * mat2(1, 1, d / (distortion + 5.0 / dot(q, q)));
-            
-        // Create the spiral effect using log-polar coordinates - maintaining original speed
-        vec2 v = c * mat2(cos(log(length(c)) + iTime * timeFactor + vec4(0, 33, 11, 0))) * 5.0;
-    
-        // Initialize output color
-        vec4 O = vec4(0.0);
-        i = 0.0;
-        
-        // Create the iterative pattern
-        for(int j = 0; j < 15; j++) {
-            // Break based on audio-reactive iteration count
-            if(float(j) >= iterationCount) break;
-            
-            // Add audio-reactive variation to the sine pattern
-            float audioMod = 1.0 + bass * 0.2 * sin(i * 0.7); // Subtle per-iteration audio effect
-            O += (1.0 + sin(v.xyyx)) * audioMod;
-            
-            // Update v with the original formula plus subtle audio influence
-            v += 0.7 * sin(v.yx * i + iTime) / (i + 0.1) + 0.5; // Added 0.1 to prevent division by zero
-            
-            i += 1.0; // Increment our float counter
-        }
-        
-        // Calculate i using the original formula
-        i = length(sin(v / 0.3) * 0.2 + c * vec2(1, 2)) - 1.0;
-        
-        // Apply pulse effect to the visual elements
-        // Ring size changes with the hole size to create expansion/contraction
-        float ringSize = holeSize;
-        
-        // Ring width pulses with beats 
-        float ringWidth = 0.03 * beatPulseFactor;
-        float ringEffect = ringWidth + abs(length(p) - ringSize);
-        
-        // Glow intensity increases with audio intensity and pulses with beats
-        float glowIntensity = 3.5 * beatPulseFactor * densityFactor;
-        float glowEffect = 0.5 + glowIntensity * exp(0.3 * c.y - dot(c, c));
-        
-        // Apply subtle color shift with mid frequency
-        vec4 colorModifier = vec4(0.6, -0.4, -1.0, 0.0);
-        
-        // Final color calculation - density increases with audio intensity
-        O = 1.0 - exp(-exp(c.x * colorModifier) / O / (1.0 + i * i * densityFactor) / glowEffect / ringEffect * beatPulseFactor);
-        
-        // Output
-        gl_FragColor = O;
-    }`,
 "Procedural Circuitry": `// This content is under the MIT License.
 
 #define time iTime*.01
@@ -13217,407 +13109,8 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
                     starGlow * orangeRed;
     fragColor.a = 1.0;
 }`,
-"Test": `// Misty Lake. Created by Reinder Nijhoff 2013
-// Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International License.
-// @reindernijhoff
-//
-// https://www.shadertoy.com/view/MsB3WR
-//
 
-#define BUMPFACTOR 0.1
-#define EPSILON 0.1
-#define BUMPDISTANCE 60.
 
-#define time (iTime+285.)
-
-// Noise functions by inigo quilez 
-
-float noise( const in vec2 x ) {
-    vec2 p = floor(x);
-    vec2 f = fract(x);
-	f = f*f*(3.0-2.0*f);
-	
-	vec2 uv = (p.xy) + f.xy;
-	return textureLod( iChannel0, (uv+ 0.5)/256.0, 0.0 ).x;
-}
-
-float noise( const in vec3 x ) {
-    vec3 p = floor(x);
-    vec3 f = fract(x);
-	f = f*f*(3.0-2.0*f);
-	
-	vec2 uv = (p.xy+vec2(37.0,17.0)*p.z) + f.xy;
-	vec2 rg = textureLod( iChannel0, (uv+ 0.5)/256.0, 0.0 ).yx;
-	return mix( rg.x, rg.y, f.z );
-}
-
-mat2 rot(const in float a) {
-	return mat2(cos(a),sin(a),-sin(a),cos(a));	
-}
-
-const mat2 m2 = mat2( 0.60, -0.80, 0.80, 0.60 );
-
-const mat3 m3 = mat3( 0.00,  0.80,  0.60,
-                     -0.80,  0.36, -0.48,
-                     -0.60, -0.48,  0.64 );
-
-float fbm( in vec3 p ) {
-    float f = 0.0;
-    f += 0.5000*noise( p ); p = m3*p*2.02;
-    f += 0.2500*noise( p ); p = m3*p*2.03;
-    f += 0.1250*noise( p ); p = m3*p*2.01;
-    f += 0.0625*noise( p );
-    return f/0.9375;
-}
-
-float hash( in float n ) {
-    return fract(sin(n)*43758.5453);
-}
-
-// intersection functions
-
-bool intersectPlane(const in vec3 ro, const in vec3 rd, const in float height, inout float dist) {	
-	if (rd.y==0.0) {
-		return false;
-	}
-		
-	float d = -(ro.y - height)/rd.y;
-	d = min(100000.0, d);
-	if( d > 0. && d < dist ) {
-		dist = d;
-		return true;
-    } else {
-		return false;
-	}
-}
-
-// light direction
-
-vec3 lig = normalize(vec3( 0.3,0.5, 0.6));
-
-vec3 bgColor( const in vec3 rd ) {
-	float sun = clamp( dot(lig,rd), 0.0, 1.0 );
-	vec3 col = vec3(0.5, 0.52, 0.55) - rd.y*0.2*vec3(1.0,0.8,1.0) + 0.15*0.75;
-	col += vec3(1.0,.6,0.1)*pow( sun, 8.0 );
-	col *= 0.95;
-	return col;
-}
-
-// coulds functions by inigo quilez
-
-#define CLOUDSCALE (500./(64.*0.03))
-
-float cloudMap( const in vec3 p, const in float ani ) {
-	vec3 r = p/CLOUDSCALE;
-
-	float den = -1.8+cos(r.y*5.-4.3);
-		
-	float f;
-	vec3 q = 2.5*r*vec3(0.75,1.0,0.75)  + vec3(1.0,2.0,1.0)*ani*0.15;
-    f  = 0.50000*noise( q ); q = q*2.02 - vec3(-1.0,1.0,-1.0)*ani*0.15;
-    f += 0.25000*noise( q ); q = q*2.03 + vec3(1.0,-1.0,1.0)*ani*0.15;
-    f += 0.12500*noise( q ); q = q*2.01 - vec3(1.0,1.0,-1.0)*ani*0.15;
-    f += 0.06250*noise( q ); q = q*2.02 + vec3(1.0,1.0,1.0)*ani*0.15;
-    f += 0.03125*noise( q );
-	
-	return 0.065*clamp( den + 4.4*f, 0.0, 1.0 );
-}
-
-vec3 raymarchClouds( const in vec3 ro, const in vec3 rd, const in vec3 bgc, const in vec3 fgc, const in float startdist, const in float maxdist, const in float ani ) {
-    // dithering	
-	float t = startdist+CLOUDSCALE*0.02*hash(rd.x+35.6987221*rd.y+time);//0.1*texture( iChannel0, fragCoord.xy/iChannelResolution[0].x ).x;
-	
-    // raymarch	
-	vec4 sum = vec4( 0.0 );
-	for( int i=0; i<64; i++ ) {
-		if( sum.a > 0.99 || t > maxdist ) continue;
-		
-		vec3 pos = ro + t*rd;
-		float a = cloudMap( pos, ani );
-
-        // lighting	
-		float dif = clamp(0.1 + 0.8*(a - cloudMap( pos + lig*0.15*CLOUDSCALE, ani )), 0., 0.5);
-		vec4 col = vec4( (1.+dif)*fgc, a );
-		// fog		
-	//	col.xyz = mix( col.xyz, fgc, 1.0-exp(-0.0000005*t*t) );
-		
-		col.rgb *= col.a;
-		sum = sum + col*(1.0 - sum.a);	
-
-        // advance ray with LOD
-		t += (0.03*CLOUDSCALE)+t*0.012;
-	}
-
-    // blend with background	
-	sum.xyz = mix( bgc, sum.xyz/(sum.w+0.0001), sum.w );
-	
-	return clamp( sum.xyz, 0.0, 1.0 );
-}
-
-// terrain functions
-float terrainMap( const in vec3 p ) {
-	return (textureLod( iChannel1, (-p.zx*m2)*0.000046, 0. ).x*600.) * smoothstep( 820., 1000., length(p.xz) ) - 2. + noise(p.xz*0.5)*15.;
-}
-
-vec3 raymarchTerrain( const in vec3 ro, const in vec3 rd, const in vec3 bgc, const in float startdist, inout float dist ) {
-	float t = startdist;
-
-    // raymarch	
-	vec4 sum = vec4( 0.0 );
-	bool hit = false;
-	vec3 col = bgc;
-	
-	for( int i=0; i<80; i++ ) {
-		if( hit ) break;
-		
-		t += 8. + t/300.;
-		vec3 pos = ro + t*rd;
-		
-		if( pos.y < terrainMap(pos) ) {
-			hit = true;
-		}		
-	}
-	if( hit ) {
-		// binary search for hit		
-		float dt = 4.+t/400.;
-		t -= dt;
-		
-		vec3 pos = ro + t*rd;	
-		t += (0.5 - step( pos.y , terrainMap(pos) )) * dt;		
-		for( int j=0; j<2; j++ ) {
-			pos = ro + t*rd;
-			dt *= 0.5;
-			t += (0.5 - step( pos.y , terrainMap(pos) )) * dt;
-		}
-		pos = ro + t*rd;
-		
-		vec3 dx = vec3( 100.*EPSILON, 0., 0. );
-		vec3 dz = vec3( 0., 0., 100.*EPSILON );
-		
-		vec3 normal = vec3( 0., 0., 0. );
-		normal.x = (terrainMap(pos + dx) - terrainMap(pos-dx) ) / (200. * EPSILON);
-		normal.z = (terrainMap(pos + dz) - terrainMap(pos-dz) ) / (200. * EPSILON);
-		normal.y = 1.;
-		normal = normalize( normal );		
-
-		col = vec3(0.2) + 0.7*texture( iChannel2, pos.xz * 0.01 ).xyz * 
-				   vec3(1.,.9,0.6);
-		
-		float veg = 0.3*fbm(pos*0.2)+normal.y;
-					
-		if( veg > 0.75 ) {
-			col = vec3( 0.45, 0.6, 0.3 )*(0.5+0.5*fbm(pos*0.5))*0.6;
-		} else 
-		if( veg > 0.66 ) {
-			col = col*0.6+vec3( 0.4, 0.5, 0.3 )*(0.5+0.5*fbm(pos*0.25))*0.3;
-		}
-		col *= vec3(0.5, 0.52, 0.65)*vec3(1.,.9,0.8);
-		
-		vec3 brdf = col;
-		
-		float diff = clamp( dot( normal, -lig ), 0., 1.);
-		
-		col = brdf*diff*vec3(1.0,.6,0.1);
-		col += brdf*clamp( dot( normal, lig ), 0., 1.)*vec3(0.8,.6,0.5)*0.8;
-		col += brdf*clamp( dot( normal, vec3(0.,1.,0.) ), 0., 1.)*vec3(0.8,.8,1.)*0.2;
-		
-		dist = t;
-		t -= pos.y*3.5;
-		col = mix( col, bgc, 1.0-exp(-0.0000005*t*t) );
-		
-	}
-	return col;
-}
-
-float waterMap( vec2 pos ) {
-	vec2 posm = pos * m2;
-	
-	return abs( fbm( vec3( 8.*posm, time ))-0.5 )* 0.1;
-}
-
-void mainImage( out vec4 fragColor, in vec2 fragCoord ) {
-	vec2 q = fragCoord.xy / iResolution.xy;
-    vec2 p = -1.0 + 2.0*q;
-    p.x *= iResolution.x/ iResolution.y;
-	
-	// camera parameters
-	vec3 ro = vec3(0.0, 0.5, 0.0);
-	vec3 ta = vec3(0.0, 0.45,1.0);
-	if (iMouse.z>=1.) {
-		ta.xz *= rot( (iMouse.x/iResolution.x-.5)*7. );
-	}
-		
-	ta.xz *= rot( mod(iTime * 0.05, 6.2831852) );
-    
-	// build ray
-    vec3 ww = normalize( ta - ro);
-    vec3 uu = normalize(cross( vec3(0.0,1.0,0.0), ww ));
-    vec3 vv = normalize(cross(ww,uu));
-    vec3 rd = normalize( p.x*uu + p.y*vv + 2.5*ww );
-
-	float fresnel, refldist = 5000., maxdist = 5000.;
-	bool reflected = false;
-	vec3 normal, col = bgColor( rd );
-	vec3 roo = ro, rdo = rd, bgc = col;
-	
-	if( intersectPlane( ro, rd, 0., refldist ) && refldist < 200. ) {
-		ro += refldist*rd;	
-		vec2 coord = ro.xz;
-		float bumpfactor = BUMPFACTOR * (1. - smoothstep( 0., BUMPDISTANCE, refldist) );
-				
-		vec2 dx = vec2( EPSILON, 0. );
-		vec2 dz = vec2( 0., EPSILON );
-		
-		normal = vec3( 0., 1., 0. );
-		normal.x = -bumpfactor * (waterMap(coord + dx) - waterMap(coord-dx) ) / (2. * EPSILON);
-		normal.z = -bumpfactor * (waterMap(coord + dz) - waterMap(coord-dz) ) / (2. * EPSILON);
-		normal = normalize( normal );		
-		
-		float ndotr = dot(normal,rd);
-		fresnel = pow(1.0-abs(ndotr),5.);
-
-		rd = reflect( rd, normal);
-
-		reflected = true;
-		bgc = col = bgColor( rd );
-	}
-
-	col = raymarchTerrain( ro, rd, col, reflected?(800.-refldist):800., maxdist );
-    col = raymarchClouds( ro, rd, col, bgc, reflected?max(0.,min(150.,(150.-refldist))):150., maxdist, time*0.05 );
-	
-	if( reflected ) {
-		col = mix( col.xyz, bgc, 1.0-exp(-0.0000005*refldist*refldist) );
-		col *= fresnel*0.9;		
-		vec3 refr = refract( rdo, normal, 1./1.3330 );
-		intersectPlane( ro, refr, -2., refldist );
-		col += mix( texture( iChannel2, (roo+refldist*refr).xz*1.3 ).xyz * 
-				   vec3(1.,.9,0.6), vec3(1.,.9,0.8)*0.5, clamp( refldist / 3., 0., 1.) ) 
-			   * (1.-fresnel)*0.125;
-	}
-	
-	col = pow( col, vec3(0.7) );
-	
-	// contrast, saturation and vignetting	
-	col = col*col*(3.0-2.0*col);
-    col = mix( col, vec3(dot(col,vec3(0.33))), -0.5 );
- 	col *= 0.25 + 0.75*pow( 16.0*q.x*q.y*(1.0-q.x)*(1.0-q.y), 0.1 );
-	
-    fragColor = vec4( col, 1.0 );
-}
-`,
-"Graviton Glider": `// FM-2030's messenger - Result of an improvised live code session on Twitch
-// Thankx to crundle for the help and haptix for suggestions
-// LIVE SHADER CODING, SHADER SHOWDOWN STYLE, EVERY TUESDAYS 21:00 Uk time:
-// https://www.twitch.tv/evvvvil_
-
-// "I have a deep nostalgia for the future." - FM-2030
-
-vec2 z,v,e=vec2(.00035,-.00035); float t,tt,b,bb,g,gg;vec3 np,bp,pp,cp,dp,po,no,al,ld;//global vars. About as exciting as vegans talking about sausages.
-float bo(vec3 p,vec3 r){p=abs(p)-r;return max(max(p.x,p.y),p.z);} //box primitive function. Box is the only primitve I hang out with, I find the others have too many angles and seem to have a multi-faced agenda.
-mat2 r2(float r){return mat2(cos(r),sin(r),-sin(r),cos(r));} //rotate function. Short and sweet, just like a midget wrestler covered in Mapple syrup.
-float smin(float a,float b,float h){ float k=clamp((a-b)/h*.5+.5,0.,1.);return mix(a,b,k)-k*(1.-k)*h;} //Smooth min function, because sometimes brutality isn't the answer. Put that in your pipe and smoke it, Mr Officer.
-float noi(vec3 p){ //Noise function stolen from Virgill who, like me, doesn't understand it. But, unlike me, Virgill can play the tuba.
-  vec3 f=floor(p),s=vec3(7,157,113);
-  p-=f; vec4 h=vec4(0,s.yz,s.y+s.z)+dot(f,s);;
-  p=p*p*(3.-2.*p);
-  h=mix(fract(sin(h)*43758.5),fract(sin(h+s.x)*43758.5),p.x);
-  h.xy=mix(h.xz,h.yw,p.y);
-  return mix(h.x,h.y,p.z);  
-}
-vec2 fb( vec3 p, float s ) // fb "fucking bit" function make a base geometry which we use to make spaceship and central structures using more complex positions defined in mp
-{ //fb just does a bunch blue hollow boxes inside eachother with a white edge on top + a couple of black bars going through to symbolise the lack of middle class cyclists incarcerated for crimes against fun. Stay boring, Dave, I'm watching you.
-  vec2 h,t=vec2(bo(p,vec3(5,5,2)),s); //Dumb fucking blue boxes (could also be said about Chelsea Football Club's fans)
-  t.x=max(t.x,-bo(p,vec3(3.5,3.5,2))); //Dig a hole in them blue boxes, and just like with Chelsea Football Club - less is more
-  t.x=abs(t.x)-.3; //Onion skin blue boxes for more geom
-  t.x=max(t.x,bo(p,vec3(10,10,1)));//Cut front & back of box to reveal onion edges. In reality onions are boring and have no edges, I suspect they listen to Coldplay or Muse. Yeah, Dave, I'm still watching you!
-  h=vec2(bo(p,vec3(5,5,2)),6); //Dumb fucking white boxes (could also be said about Tottenham Football Club's fans)
-  h.x=max(h.x,-bo(p,vec3(3.5,3.5,2))); //Dig hole in white boxes, make it hollow, just like Tottenham FC's trophy cabinet.
-  h.x=abs(h.x)-.1; //Onion skin the fucking white boxes for more geom
-  h.x=max(h.x,bo(p,vec3(10,10,1.4))); //Cut front & back of box to reveal onion edges. Onions are like Tottenham FC's style of football: they make people cry.
-  t=t.x<h.x?t:h; //Merge blue and white geom while retaining material ID
-  h=vec2(length(abs(p.xz)-vec2(2,0))-.2,3); //Black prison bars, to symbolise the meta-physical struggle of half eaten sausages.
-  t=t.x<h.x?t:h; return t; //Pack into a colourful sausage and hand it over to the feds...
-}
-vec2 mp( vec3 p )
-{ 
-  bp=p+vec3(0,0,tt*10.);
-  np=p+noi(bp*.05)*15.+noi(bp*.5)*1.+noi(bp*4.)*.1+noi(bp*0.01)*20.; 
-  vec2 h,t=vec2(np.y+20.,5); //TERRAIN
-  t.x=smin(t.x,0.75*(length(abs(np.xy-vec2(0,10.+sin(p.x*.1)*10.))-vec2(65,0))-(18.+sin(np.z*.1+tt)*10.)),15.); //LEFT TERRAIN CYLINDER
-  t.x*=0.5;  
-  pp=p+vec3(10,15,0);
-  pp.x+=sin(p.z*.02+tt/5.)*7.+sin(p.z*.001+20.+tt/100.)*4.; //ROAD POSITON
-  bp=abs(pp);bp.xy*=r2(-.785);
-  h=vec2(bo(bp-vec3(0,6,0),vec3(2,0.5,1000)),6); //ROAd WHITE
-  t=t.x<h.x?t:h;
-  h=vec2(bo(bp-vec3(0,6.2,0),vec3(1.,.8,1000)),3); //ROAd BLACK
-  t=t.x<h.x?t:h;  
-  cp=pp-dp; //SPACESHIP POSITON
-  cp.xy*=r2(sin(tt*.4)*.5);  
-  h=vec2(length(cp.xy)-(max(-1.,.3+cp.z*.03)),6); 
-  h.x=max(h.x,bo(cp+vec3(0,0,25),vec3(10,10,30)));
-  g+=0.1/(0.1*h.x*h.x*(20.-abs(sin(abs(cp.z*.1)-tt*3.))*19.7));
-  t=t.x<h.x?t:h;
-  cp*=1.3;
-  for(int i=0;i<3;i++){ //SPACESHIP KIFS
-    cp=abs(cp)-vec3(-2,0.5,4); 
-    cp.xy*=r2(2.0);     
-    cp.xz*=r2(.8+sin(cp.z*.1)*.2);     
-    cp.yz*=r2(-.8+sin(cp.z*.1)*.2);     
-  } 
-  h=fb(cp,8.); h.x*=0.5;  t=t.x<h.x?t:h; //SPACESHIP  
-  pp.z=mod(pp.z+tt*10.,40.)-20.; //CENTRAL STRUCTURE POSITION  
-  pp=abs(pp)-vec3(0,20,0);  
-  for(int i=0;i<3;i++){ //CENTRAL STRUCTURE KIFS
-    pp=abs(pp)-vec3(4.2,3,0); 
-    pp.xy*=r2(.785); 
-    pp.x-=2.;
-  }  
-  h=fb(pp.zyx,7.); t=t.x<h.x?t:h; //CENTRAL STRUCTURE
-  h=vec2(0.5*bo(abs(pp.zxy)-vec3(7,0,0),vec3(0.1,0.1,1000)),6); //GLOWY LINES CENTRAL STRUCTURE
-  g+=0.2/(0.1*h.x*h.x*(50.+sin(np.y*np.z*.001+tt*3.)*48.)); t=t.x<h.x?t:h;
-  t=t.x<h.x?t:h; return t; // Add central structure and return the whole shit
-}
-vec2 tr( vec3 ro, vec3 rd ) // main trace / raycast / raymarching loop function 
-{
-  vec2 h,t= vec2(.1); //Near plane because when it all started the hipsters still lived in Norwich and they only wore tweed.
-  for(int i=0;i<128;i++){ //Main loop de loop 
-    h=mp(ro+rd*t.x); //Marching forward like any good fascist army: without any care for culture theft. (get distance to geom)
-    if(h.x<.0001||t.x>250.) break; //Conditional break we hit something or gone too far. Don't let the bastards break you down!
-    t.x+=h.x;t.y=h.y; //Huge step forward and remember material id. Let me hold the bottle of gin while you count the colours.
-  }
-  if(t.x>250.) t.y=0.;//If we've gone too far then we stop, you know, like Alexander The Great did when he realised his wife was sexting some Turkish bloke. (10 points whoever gets the reference)
-  return t;
-}
-#define a(d) clamp(mp(po+no*d).x/d,0.,1.)
-#define s(d) smoothstep(0.,1.,mp(po+ld*d).x/d)
-void mainImage( out vec4 fragColor, in vec2 fragCoord )//2 lines above are a = ambient occlusion and s = sub surface scattering
-{
-  vec2 uv=(fragCoord.xy/iResolution.xy-0.5)/vec2(iResolution.y/iResolution.x,1); //get UVs, nothing fancy, 
-  tt=mod(iTime+3.,62.82);  //Time variable, modulo'ed to avoid ugly artifact. Imagine moduloing your timeline, you would become a cry baby straight after dying a bitter old man. Christ, that's some fucking life you've lived, Steve.
-  dp=vec3(sin(tt*.4)*4.,20.+sin(tt*.4)*2.,-200.+mod(tt*30.,471.2388));
-  vec3 ro=mix(dp-vec3(10,20.+sin(tt*.4)*5.,40),vec3(17,-5,0),ceil(sin(tt*.4))),//Ro=ray origin=camera position We build camera right here broski. Gotta be able to see, to peep through the keyhole.
-  cw=normalize(dp-vec3(10,15,0)-ro), cu=normalize(cross(cw,normalize(vec3(0,1,0)))),cv=normalize(cross(cu,cw)),
-  rd=mat3(cu,cv,cw)*normalize(vec3(uv,.5)),co,fo;//rd=ray direction (where the camera is pointing), co=final color, fo=fog color
-  ld=normalize(vec3(.2,.4,-.3)); //ld=light direction
-  co=fo=vec3(.1,.1,.15)-length(uv)*.1-rd.y*.1;//background is dark blueish with vignette and subtle vertical gradient based on ray direction y axis. 
-  z=tr(ro,rd);t=z.x; //Trace the trace in the loop de loop. Sow those fucking ray seeds and reap them fucking pixels.
-  if(z.y>0.){ //Yeah we hit something, unlike you at your best man speech.
-    po=ro+rd*t; //Get ray pos, know where you at, be where you is.
-    no=normalize(e.xyy*mp(po+e.xyy).x+e.yyx*mp(po+e.yyx).x+e.yxy*mp(po+e.yxy).x+e.xxx*mp(po+e.xxx).x); //Make some fucking normals. You do the maths while I count how many instances of Holly Willoughby there really is.
-    al=mix(vec3(.4,.0,.1),vec3(.7,.1,.1),cos(bp.y*.08)*.5+.5); //al=albedo=base color, by default it's a gradient between red and darker red. 
-    if(z.y<5.) al=vec3(0); //material ID < 5 makes it black
-    if(z.y>5.) al=vec3(1); //material ID > 5 makes it white
-    if(z.y>6.) al=clamp(mix(vec3(.0,.1,.4),vec3(.4,.0,.1),sin(np.y*.1+2.)*.5+.5)+(z.y>7.?0.:abs(ceil(cos(pp.x*1.6-1.1))-ceil(cos(pp.x*1.6-1.3)))),0.,1.);
-    float dif=max(0.,dot(no,ld)), //Dumb as fuck diffuse lighting
-    fr=pow(1.+dot(no,rd),4.), //Fr=fresnel which adds background reflections on edges to composite geometry better
-    sp=pow(max(dot(reflect(-ld,no),-rd),0.),30.); //Sp=specular, stolen from Shane
-    co=mix(sp+mix(vec3(.8),vec3(1),abs(rd))*al*(a(.1)*a(.4)+.2)*(dif),fo,min(fr,.3)); //Building the final lighting result, compressing the fuck outta everything above into an RGB shit sandwich
-    co=mix(fo,co,exp(-.0000007*t*t*t)); //Fog soften things, but it won't stop your mother from being unimpressed by your current girlfriend
-  }
-  fo=mix(vec3(.1,.2,.4),vec3(.1,.1,.5),0.5+0.5*sin(np.y*.1-tt*2.));//Glow colour is actual a grdient to make it more intresting
-  fragColor = vec4(pow(co+g*0.15*mix(fo.xyz,fo.zyx,clamp(sin(tt*.5),-.5,.5)+.5),vec3(.55)),1);// Naive gamma correction and glow applied at the end. Glow switches from blue to red hues - nice idea by Haptix - cheers broski
-}`,
 "Julia Colors": `/****************************************************
  * Combined Julia set with time-based zoom
  ****************************************************/

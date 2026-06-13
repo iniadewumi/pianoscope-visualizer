@@ -5,8 +5,32 @@ document.addEventListener('DOMContentLoaded', function() {
     const miniFullscreen = document.getElementById('mini-fullscreen');
     const miniShaderToggle = document.getElementById('mini-shader-toggle');
     const mainMicToggle = document.getElementById('mic-toggle');
-    const mainFullscreen = document.getElementById('fullscreen');
+    const canvas = document.getElementById('visualizer');
     const body = document.body;
+
+    function toggleFullscreen() {
+        const target = canvas || document.documentElement;
+        if (document.fullscreenElement) {
+            document.exitFullscreen();
+        } else if (target.requestFullscreen) {
+            target.requestFullscreen();
+        } else if (target.webkitRequestFullscreen) {
+            target.webkitRequestFullscreen();
+        } else if (target.mozRequestFullScreen) {
+            target.mozRequestFullScreen();
+        } else if (target.msRequestFullscreen) {
+            target.msRequestFullscreen();
+        }
+    }
+
+    function updateFullscreenButtonIcon() {
+        if (!miniFullscreen) return;
+        if (document.fullscreenElement) {
+            miniFullscreen.innerHTML = '<i class="fas fa-compress"></i>';
+        } else {
+            miniFullscreen.innerHTML = '<i class="fas fa-expand"></i>';
+        }
+    }
     
     // Function to toggle pure view mode
     function togglePureViewMode() {
@@ -49,11 +73,10 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
     
-    // Mini fullscreen button syncs with main fullscreen button
-    if (miniFullscreen && mainFullscreen) {
-        miniFullscreen.addEventListener('click', function() {
-            mainFullscreen.click();
-        });
+    // Mini fullscreen button
+    if (miniFullscreen) {
+        miniFullscreen.addEventListener('click', toggleFullscreen);
+        document.addEventListener('fullscreenchange', updateFullscreenButtonIcon);
     }
     
     // Mini shader toggle syncs with main shader toggle
@@ -90,14 +113,31 @@ document.addEventListener('DOMContentLoaded', function() {
     // Run initial update after a short delay to ensure everything is initialized
     setTimeout(updateMiniControlStates, 500);
     
-    // Keyboard shortcut for pure view mode (Escape key)
+    // Keyboard shortcuts
     document.addEventListener('keydown', function(e) {
+        const active = document.activeElement;
+        const isTyping = active && (
+            active.tagName === 'INPUT' ||
+            active.tagName === 'TEXTAREA' ||
+            active.isContentEditable
+        );
+
         if (e.key === 'Escape' && body.classList.contains('pure-view-mode')) {
             togglePureViewMode();
         } else if (e.key === 'p' && e.ctrlKey) {
             // Ctrl+P for pure view toggle
             togglePureViewMode();
             e.preventDefault(); // Prevent browser print dialog
+        } else if ((e.key === 'm' || e.key === 'M') && !isTyping) {
+            e.preventDefault();
+            if (miniMicToggle) {
+                miniMicToggle.click();
+            } else if (mainMicToggle) {
+                mainMicToggle.click();
+            }
+        } else if ((e.key === 'f' || e.key === 'F') && !isTyping) {
+            e.preventDefault();
+            toggleFullscreen();
         }
     });
     

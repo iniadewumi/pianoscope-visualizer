@@ -1,4 +1,442 @@
 export const TEST_SHADERS = {
+  "PIANOSCOPE Kaliset Hex Parallax": `
+/*
+PIANOSCOPE Shader
+Name: Kaliset Hex Parallax
+Mode: kaliset_hex_parallax
+Inspired by: Kaliset fractal + hex grid volumetric parallax
+Audio: Uses iChannel0 texture lookup for hex cell tinting
+*/
+
+#define S3 1.73205080757
+#define HEXSIZE 10
+#define JULIA 0.584
+#define SCROLL_SPEED_FACTOR 0.0024
+#define P vec2
+#define V vec3
+#define LSZ 12
+#define CSZ 10
+#define WSZ 7
+
+float getKalisetFractal(vec2 uv) {
+    vec2 p = fract(uv) - 0.5;
+
+    float previousDistance = 0.0;
+    float totalChange = 0.0;
+
+    for (int j = 0; j < 14; j++) {
+        float dProd = dot(p, p);
+        if (dProd < 0.00001) dProd = 0.0000001;
+
+        p = abs(p) / dProd;
+        p.x -= JULIA;
+        p.y -= JULIA;
+
+        float distance = length(p);
+        totalChange += abs(distance - previousDistance);
+        previousDistance = distance;
+    }
+
+    if (totalChange >= 1000.0 || totalChange != totalChange || abs(totalChange) > 1e10) {
+        totalChange = 1000.0;
+    }
+
+    return totalChange;
+}
+
+mat2 rot(float a) {
+    return mat2(cos(a), sin(a), -sin(a), cos(a));
+}
+
+float random(float noise) {
+    return fract(sin(noise * 12.9898) * 43758.5453123);
+}
+
+float drawLine(P p, P mc) {
+    float f = p.y - p.x * mc.x - mc.y;
+    float d = f / sqrt(1.0 + mc.x * mc.x);
+    float pw = fwidth(d);
+    return 1.0 - smoothstep(-1.0, 1.0, 0.25 - abs(d) / pw);
+}
+
+float drawLine(P p, P a, P b) {
+    float m = (b.y - a.y) / (b.x - a.x);
+    float c = a.y - m * a.x;
+    P minp = min(a, b);
+    P maxp = max(a, b);
+    P pin = clamp(p, minp, maxp);
+    float d = distance(pin, p);
+    return mix(1.0, drawLine(p, P(m, c)), step(d, 0.0));
+}
+
+float drawCirc(P p, V c) {
+    float f = distance(p, c.xy);
+    return 1.0 - smoothstep(-1.0, 1.0, 0.25 - abs(c.z - f) / fwidth(f));
+}
+
+float drawWave(P p, V w) {
+    p = rot(w.z) * p;
+    float fy = w.x * sin(w.y * p.x);
+    P fp = P(p.x, fy);
+    float d = distance(fp, p);
+    return 1.0 - smoothstep(-1.0, 1.0, 0.5 - d / max(1.0 / iResolution.y, fwidth(fy)));
+}
+
+float drawBox(P p, vec4 mimx) {
+    P pin = clamp(p, mimx.xy, mimx.zw);
+    float d = distance(p, pin);
+    return 1.0 - smoothstep(0.0, 1.0, 1.0 - abs(1.0 - d * iResolution.y));
+}
+
+vec3 parityColor(P p, V circs[CSZ], V waves[WSZ], vec4 box) {
+    vec3 colorAcc = vec3(0.0);
+    float totalFlicker = 0.0;
+
+    for (int i = 0; i < CSZ; ++i) {
+        float f = sqrt(dot(p - circs[i].xy, p - circs[i].xy)) - circs[i].z;
+        if (f < 0.0) {
+            float seed = float(i) + floor(iTime * 8.0);
+            vec3 circleColor = vec3(
+                random(seed * 1.15),
+                random(seed * 2.43),
+                random(seed * 3.71)
+            );
+            colorAcc += circleColor;
+            totalFlicker += 1.0;
+        }
+    }
+
+    float v = 0.0;
+    for (int i = 0; i < WSZ; ++i) {
+        V w = waves[i];
+        P rp = rot(w.z) * p;
+        float f = w.x * sin(w.y * rp.x) - rp.y;
+        v += step(0.0, f);
+    }
+    P pin = clamp(p, box.xy, box.zw);
+    v += step(0.0, distance(p, pin) - 1.0 / iResolution.y);
+
+    if (totalFlicker > 0.0) {
+        return mod(colorAcc, 1.0);
+    }
+    return vec3(mod(v, 2.0));
+}
+
+void mainImage(out vec4 fragColor, in vec2 fragCoord) {
+    vec2 coords = fragCoord / iResolution.xy;
+    coords.x *= iResolution.x / iResolution.y;
+    float zoom = iResolution.x / float(HEXSIZE);
+    float ar = iResolution.x / iResolution.y;
+    vec2 uv5 = ((fragCoord - 0.5 * iResolution.xy) / iResolution.x);
+    uv5 *= zoom;
+    uv5.x += 0.5 * zoom;
+    uv5.y += 0.5 * zoom / S3;
+    float minRes = min(iResolution.x, iResolution.y);
+    vec2 tv = fragCoord / iResolution.xy;
+    tv.x *= ar;
+
+    vec2 r = vec2(1.0, S3);
+    vec2 h = r * 0.5;
+    vec2 a = mod(uv5, r) - h;
+    vec2 b = mod(uv5 - h, r) - h;
+    vec2 c = dot(a, a) < dot(b, b) ? a : b;
+    vec2 id = (uv5 - c) / h;
+    vec2 tvid = id / zoom + iTime / 150.0;
+    tvid.y *= S3;
+
+    P uv = (fragCoord - 0.5 * iResolution.xy) / min(iResolution.x, iResolution.y);
+
+    V circs[CSZ] = V[CSZ](
+        V(0.04 + 0.1 * sin(iTime * 1.2), 0.07 + 0.1 * cos(iTime * 1.5), 0.05),
+        V(0.38 + 0.15 * cos(iTime * 0.8), 0.2 + 0.1 * sin(iTime * 1.1), 0.12),
+        V(0.8 + 0.05 * sin(iTime * 2.0), 0.45 + 0.05 * cos(iTime * 1.8), 0.25),
+        V(0.7 + 0.12 * cos(iTime * 1.4), -0.03 + 0.15 * sin(iTime * 0.9), 0.17),
+        V(-0.02 + 0.2 * sin(iTime * 0.7), 0.37 + 0.1 * cos(iTime * 1.3), 0.11),
+        V(-0.55 + 0.08 * cos(iTime * 1.6), 0.25 + 0.12 * sin(iTime * 1.0), 0.3),
+        V(-0.78 + 0.05 * sin(iTime * 2.2), -0.2 + 0.05 * cos(iTime * 2.5), 0.1),
+        V(-0.02 + 0.15 * cos(iTime * 1.1), -0.38 + 0.15 * sin(iTime * 0.7), 0.3),
+        V(0.47 + 0.03 * sin(iTime * 3.0), -0.43 + 0.03 * cos(iTime * 2.8), 0.05),
+        V(0.85 + 0.1 * cos(iTime * 0.5), -0.6 + 0.1 * sin(iTime * 0.6), 0.25)
+    );
+
+    V waves[WSZ] = V[WSZ](
+        V(1.04, 14.0, 0.7),
+        V(1.05, 9.5, 0.4),
+        V(1.05, 9.5, 0.05),
+        V(0.03, 9.5, -0.2),
+        V(0.03, 9.5, -0.55),
+        V(0.05, 12.0, -0.9),
+        V(0.05, 12.0, -1.57)
+    );
+
+    vec4 box = vec4(-1.8, -0.45, 0.8, 0.45);
+
+    vec3 bColor = parityColor(uv, circs, waves, box);
+
+    for (int i = 0; i < CSZ; ++i) {
+        bColor = mix(vec3(0.0), bColor, drawCirc(uv, circs[i]));
+    }
+    for (int i = 0; i < WSZ; ++i) {
+        bColor = mix(vec3(0.0), bColor, drawWave(uv, waves[i]));
+    }
+    bColor = mix(vec3(0.0), bColor, drawBox(uv, box));
+
+    vec3 frontStarColor = vec3(0.0, 0.44, 0.38);
+    vec3 backStarColor = vec3(0.5, 0.0, 0.5);
+
+    vec4 result = vec4(0.0);
+    float volumetricLayerFade = 1.0;
+
+    for (int i = 0; i < 12; i++) {
+        float time = iTime / volumetricLayerFade;
+        vec2 p = coords * zoom + tvid * bColor.xy;
+        p.y += 1.5;
+
+        p += vec2(time * SCROLL_SPEED_FACTOR, time * SCROLL_SPEED_FACTOR);
+        p /= volumetricLayerFade;
+
+        float totalChange = getKalisetFractal(p);
+        float totalChangeSample = totalChange * 0.05;
+
+        vec4 layerColor = vec4(mix(frontStarColor, backStarColor, float(i) / 12.0), 1.0);
+
+        result += layerColor * totalChangeSample * volumetricLayerFade;
+        volumetricLayerFade *= 0.9;
+    }
+
+    result.rgb = pow(result.rgb * 0.12, vec3(1.6)) * bColor.xyz * 5.0;
+    fragColor = vec4(result.rgb, 1.0);
+}
+`,
+  "PIANOSCOPE Amapiano Kente Loom": `
+/*
+PIANOSCOPE Shader
+Name: Amapiano Kente Loom (v5.1 — smooth motion)
+Mode: amapiano_kente_loom
+Inspired by: p5.js kente unit grid — drawStripe / drawMovingRect / drawCircleStripe
+Palette: coolors.co (nighttime weighted)
+Audio: Bass = gentle stripe width; Mid = very subtle cycle drift; High = soft edge shimmer
+Note: v5.1 removes ratio jumps and raw-FFT modulation that caused jitter
+*/
+
+#define TAU 6.28318530718
+#define UNITS           5.0
+#define CYCLE           7.5
+#define STRIPE_BASS     0.22
+#define SHIMMER_HIGH    0.30
+
+vec2 centeredUV(vec2 fragCoord) {
+    return (fragCoord - 0.5 * iResolution.xy) / iResolution.y;
+}
+
+float fft(float x) {
+    return texture(iChannel0, vec2(clamp(x, 0.0, 1.0), 0.0)).x;
+}
+
+float getBass() {
+    return (fft(0.01) + fft(0.03) + fft(0.05) + fft(0.07)) * 0.25;
+}
+
+float getMid() {
+    return (fft(0.15) + fft(0.25) + fft(0.35) + fft(0.45)) * 0.25;
+}
+
+float getHigh() {
+    return (fft(0.55) + fft(0.70) + fft(0.85) + fft(0.95)) * 0.25;
+}
+
+float fallbackBass() { return 0.32 + 0.12 * sin(iTime * 0.85); }
+float fallbackMid()  { return 0.28 + 0.08 * sin(iTime * 0.45 + 0.8); }
+float fallbackHigh() { return 0.16 + 0.06 * sin(iTime * 1.6 + 1.5); }
+
+float safeAudio(float value, float fallback) {
+    return max(value, fallback * 0.35);
+}
+
+// Squash FFT spikes — smoother than audioBoost for motion driving
+float softAudio(float v) {
+    return pow(clamp(v, 0.0, 1.0), 1.6);
+}
+
+float audioBoost(float v) {
+    return clamp(pow(v, 0.75) * 1.35, 0.0, 1.0);
+}
+
+float smoothBass() {
+    return (fft(0.01) + fft(0.02) + fft(0.03) + fft(0.04) +
+            fft(0.05) + fft(0.06) + fft(0.07) + fft(0.08)) * 0.125;
+}
+
+float hash21(vec2 p) {
+    p = fract(p * vec2(123.34, 456.21));
+    p += dot(p, p + 45.32);
+    return fract(p.x * p.y);
+}
+
+mat2 rot2(float a) {
+    float c = cos(a), s = sin(a);
+    return mat2(c, -s, s, c);
+}
+
+float easeInOutCubic(float x) {
+    if (x < 0.5) return 0.5 * pow(2.0 * x, 3.0);
+    return 0.5 * pow(2.0 * (x - 1.0), 3.0) + 1.0;
+}
+
+vec3 coolor(float i) {
+    float idx = mod(floor(i), 7.0);
+    vec3 c0 = vec3(0.000, 0.071, 0.098);
+    vec3 c1 = vec3(0.000, 0.478, 0.247);
+    vec3 c2 = vec3(0.682, 0.125, 0.071);
+    vec3 c3 = vec3(0.933, 0.608, 0.000);
+    vec3 c4 = vec3(0.000, 0.114, 0.682);
+    vec3 c5 = vec3(0.863, 0.506, 0.004);
+    vec3 c6 = vec3(0.733, 0.243, 0.012);
+    vec3 col = c0;
+    col = mix(col, c1, step(0.5, idx) * (1.0 - step(1.5, idx)));
+    col = mix(col, c2, step(1.5, idx) * (1.0 - step(2.5, idx)));
+    col = mix(col, c3, step(2.5, idx) * (1.0 - step(3.5, idx)));
+    col = mix(col, c4, step(3.5, idx) * (1.0 - step(4.5, idx)));
+    col = mix(col, c5, step(4.5, idx) * (1.0 - step(5.5, idx)));
+    col = mix(col, c6, step(5.5, idx) * (1.0 - step(6.5, idx)));
+    return col;
+}
+
+// Nighttime-biased pairs: more black/green/blue, gold sparingly
+vec2 pickColors(vec2 id) {
+    float roll = hash21(id + 0.3);
+    float a;
+    if (roll < 0.38) {
+        a = floor(hash21(id + 1.0) * 2.0);
+    } else if (roll < 0.62) {
+        a = 4.0;
+    } else if (roll < 0.82) {
+        a = mix(2.0, 6.0, step(0.5, hash21(id + 2.0)));
+    } else {
+        a = mix(3.0, 5.0, step(0.55, hash21(id + 3.0)));
+    }
+    float b = mod(a + 2.0 + floor(hash21(id + 7.9) * 2.0) + 1.0, 7.0);
+    if (abs(b - a) < 0.5) b = mod(a + 3.0, 7.0);
+    return vec2(a, b);
+}
+
+float inUnitSquare(vec2 p) {
+    return smoothstep(0.502, 0.488, max(abs(p.x), abs(p.y)));
+}
+
+vec3 drawStripe(vec2 p, float rotA, vec3 c1, vec3 c2, float ratio, float bass, float high) {
+    float inside = inUnitSquare(p);
+    vec2 q = rot2(rotA) * p;
+    float span = 0.2;
+    float sizeRatio = easeInOutCubic(mod(ratio * 2.0, 1.0));
+    float pulse = 0.12 + bass * STRIPE_BASS * 0.10;
+    float stripeW = span * (1.0 + sin((sizeRatio + 0.35) * TAU) * pulse);
+    float offsetRatio = easeInOutCubic(mod(ratio * 2.0, 1.0)) + floor(ratio * 2.0);
+    float offset = offsetRatio * span * 2.0;
+    offset += 0.012 * sin(iTime * 0.28 + q.y * 3.0);
+
+    float lx = mod(q.x + offset + span * 8.0, span * 2.0);
+    float stripe = smoothstep(stripeW + 0.012, stripeW - 0.012, lx);
+    vec3 col = mix(c1, c2, stripe * inside);
+
+    float stripeEdge = smoothstep(0.025, 0.0, abs(lx - stripeW));
+    col += c2 * stripeEdge * high * SHIMMER_HIGH * 0.14 * inside;
+    return col;
+}
+
+vec3 drawMovingRect(vec2 p, float rotA, vec3 c1, vec3 c2, float ratio, float bass) {
+    float inside = inUnitSquare(p);
+    vec2 q = rot2(rotA) * p;
+    float rectSize = 0.5;
+    float offsetRatio = easeInOutCubic(mod(ratio * 2.0, 1.0)) + floor(ratio * 2.0);
+    float amp = 0.5 * (1.0 + bass * 0.12);
+    float ox = clamp(offsetRatio, 0.0, 1.0) * amp;
+    float oy = mod(clamp(offsetRatio, 1.0, 2.0), 1.0) * amp;
+
+    vec2 cA = q - vec2(-0.25 + ox, -0.25 + oy);
+    vec2 cB = -cA;
+    float halfR = rectSize * 0.5;
+    float rA = smoothstep(halfR + 0.008, halfR - 0.008, max(abs(cA.x), abs(cA.y)));
+    float rB = smoothstep(halfR + 0.008, halfR - 0.008, max(abs(cB.x), abs(cB.y)));
+    return mix(c1, c2, max(rA, rB) * inside);
+}
+
+vec3 drawCircleStripe(vec2 p, float rotA, vec3 c1, vec3 c2, float ratio, float bass) {
+    float inside = inUnitSquare(p);
+    vec2 q = rot2(rotA) * p;
+    float span = 0.35;
+    float sizeRatio = easeInOutCubic(mod(ratio * 2.0, 1.0));
+    float r = 0.42 * (1.0 - sin(sizeRatio * TAU) * (0.08 + bass * 0.04));
+    float offsetRatio = easeInOutCubic(mod(ratio * 2.0, 1.0)) + floor(ratio * 2.0);
+    float offset = offsetRatio * span;
+
+    float lx = mod(q.x + offset + span * 6.0, span) - span * 0.5;
+    float d = length(vec2(lx, q.y * 0.85));
+    float circ = smoothstep(r + 0.010, r - 0.010, d);
+    return mix(c1, c2, circ * inside);
+}
+
+vec3 drawUnit(vec2 p, vec2 id, float ratio, float bass, float high) {
+    float rotIdx = floor(hash21(id + 1.1) * 4.0);
+    float rotA = rotIdx * TAU * 0.25;
+    float mode = floor(hash21(id + 2.2) * 4.0);
+    vec2 ci = pickColors(id);
+    vec3 c1 = coolor(ci.x);
+    vec3 c2 = coolor(ci.y);
+
+    vec3 col;
+    if (mode < 1.0) {
+        col = drawMovingRect(p, rotA * 0.5, c1, c2, ratio, bass);
+    } else if (mode < 2.0) {
+        col = drawStripe(p, rotA, c1, c2, ratio, bass, high);
+    } else if (mode < 3.0) {
+        col = drawMovingRect(p, rotA, c1, c2, ratio, bass);
+    } else {
+        col = drawCircleStripe(p, rotA, c1, c2, ratio, bass);
+    }
+
+    float edge = smoothstep(0.46, 0.495, max(abs(p.x), abs(p.y)));
+    col += coolor(3.0) * edge * high * SHIMMER_HIGH * 0.08;
+    return col;
+}
+
+void mainImage(out vec4 fragColor, in vec2 fragCoord) {
+    vec2 uv = centeredUV(fragCoord);
+
+    float bassRaw = safeAudio(smoothBass(), fallbackBass());
+    float bass = softAudio(bassRaw);
+    float high = softAudio(safeAudio(getHigh(), fallbackHigh())) * 0.85;
+
+    vec3 bg = coolor(0.0);
+    float scale = UNITS * 1.05;
+    vec2 grid = uv * scale;
+
+    vec2 idPre = floor(grid + UNITS * 0.5);
+    if (mod(idPre.y, 2.0) > 0.5) {
+        grid.x += 0.5;
+    }
+
+    vec2 id = floor(grid + UNITS * 0.5);
+    vec2 f = fract(grid + UNITS * 0.5) - 0.5;
+
+    // Steady eased cycle — row sync only, no audio ratio jumps
+    float rowRatio = fract(iTime / CYCLE + id.y * 0.08 + id.x * 0.02);
+
+    vec3 col = drawUnit(f, id, rowRatio, bass, high);
+
+    float gap = smoothstep(0.495, 0.502, max(abs(f.x), abs(f.y)));
+    col = mix(col, bg, gap * 0.92);
+
+    // Nighttime wash + vignette
+    col = mix(col, bg, 0.06);
+    col *= smoothstep(1.40, 0.42, length(uv));
+    col = pow(max(col, 0.0), vec3(1.10));
+    col = min(col, vec3(0.75));
+
+    fragColor = vec4(col, 1.0);
+}
+`,
+
   "Neon Heart": `// gelami crease fix: https://www.shadertoy.com/view/7l3GDS
 
 #define POINT_COUNT 8

@@ -5876,35 +5876,7 @@ void mainImage( out vec4 fragColor, in vec2 fragCoord )
     // Output to screen
     fragColor = vec4(col,1.0);
 }`,
-"IN PROGRESS":`// compact version of https://www.shadertoy.com/view/4sl3RX 
-// --- infinite fall --- Fabrice NEYRET  august 2013
 
-
-#define L  20.
-#define R(a) mat2(C=cos(a),S=sin(a),-S,C)
-float C,S,v, t;
-
-float N(vec2 u) { // infinite perlin noise
-	mat2 M = R(1.7);
-    C = S = 0.;
-	for (float i=0.; i<L; i++)
-	{   float k = i-t,
-		      a = 1.-cos(6.28*k/L),
-		      s = exp2(mod(k,L));
-		C += a/s* ( 1. - abs( 2.* texture(iChannel0, M*u*s/1e3 ).r - 1.) ); 
-		S += a/s;  M *= M;
-	}
-    return 1.5*C/S;
-}
-
-void mainImage( out vec4 o, vec2 u ) {
-	vec2 r = iResolution.xy, e=vec2(.004,0);
-    t = 1.5*iTime;
- 	v = N( u = (u-.5*r) / r.y * R(t) );
-	o =   v*v*v/vec4(1,2,4,1) 
-        * min( 1., 51.*N(u+e) + 205.*N(u+e.yx) -256.*v ) // lum
-;
-}`,
 "Missing Head": `// Fork of "Football" by . https://shadertoy.com/view/llKcR3
 // 2019-07-25 21:23:38
 // Modified from https://www.shadertoy.com/view/Xds3zN by iq.
@@ -6574,84 +6546,93 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
     }
 }`,
 
-"Grid Experiment": `// Textured Audio-Reactive Tiles
-// Author: GitHub Copilot for iniadewumi
-// Created: 2025-05-03
+"Grid Experiment": `// 3D Audio-Reactive Tile Grid — 5×5 raymarched boxes
+// Author: GitHub Copilot for iniadewumi · expanded for pianoscope-visualizer
 
-#define MAX_STEPS 100
+#define GRID 5
+#define MAX_STEPS 80
 #define MIN_DIST 0.001
-#define MAX_DIST 40.0
+#define MAX_DIST 32.0
 
-// Audio frequency bands
-float freqs[4];
-
-// Hash function for randomization
-float hash(float n) {
-    return fract(sin(n) * 43758.5453123);
+float fft(float x) {
+    return texture(iChannel0, vec2(clamp(x, 0.0, 1.0), 0.0)).x;
 }
 
-// Box SDF with rounded edges
+float fallbackMotion(float seed) {
+    return 0.30 + 0.20 * sin(iTime * (0.75 + seed * 0.35) + seed * 6.28318);
+}
+
+float tileAudio(int ix, int iz) {
+    float u = (float(ix) + 0.5) / float(GRID);
+    float v = (float(iz) + 0.5) / float(GRID);
+    float low = fft(mix(0.02, 0.38, u));
+    float high = fft(mix(0.42, 0.96, v));
+    float raw = mix(low, high, 0.5);
+    float fb = fallbackMotion(float(ix * GRID + iz) * 0.09);
+    return clamp(pow(max(raw, fb * 0.38), 0.72) * 1.4, 0.0, 1.0);
+}
+
+float hash21(vec2 p) {
+    p = fract(p * vec2(123.34, 456.21));
+    p += dot(p, p + 45.32);
+    return fract(p.x * p.y);
+}
+
 float udBox(vec3 p, vec3 b, float r) {
     return length(max(abs(p) - b, 0.0)) - r;
 }
 
-// Dynamic texture based on position and time
-vec3 getDynamicTexture(vec2 p, float height, float freq) {
-    // Sample basic texture
-    vec2 uv = p * 0.5;
-    vec3 tex = texture(iChannel1, uv).rgb;
-    
-    // Add some animated patterns
-    float time = iTime * 0.5;
-    vec2 q = p * 3.0;
-    q += vec2(sin(time + p.y), cos(time + p.x)) * freq;
-    
-    // Create moving patterns
-    float pattern = sin(q.x + time) * cos(q.y + time * 0.5);
-    pattern += sin(length(p * 5.0) - time * 2.0) * 0.5;
-    
-    // Color palette function from the second shader
-    vec3 color = 0.5 + 0.5 * cos(6.28318 * (height + vec3(0.0, 0.33, 0.67)));
-    
-    // Combine everything
-    vec3 final = mix(tex, color, pattern * 0.5);
-    final += vec3(0.2, 0.3, 0.4) * freq; // Add audio-reactive glow
-    
-    return final;
+vec3 tileAlbedo(vec2 id, float h, float audio, vec3 pos, vec3 boxCenter) {
+    float t = hash21(id + 0.1);
+    vec3 cool = 0.52 + 0.48 * cos(6.28318 * (t + audio * 0.2 + vec3(0.0, 0.33, 0.67)));
+    vec3 warm = vec3(0.95, 0.45, 0.12) * audio;
+    vec3 base = mix(cool, warm, 0.18 + 0.22 * hash21(id.yx));
+
+    vec3 local = pos - boxCenter;
+    float stripe = 0.5 + 0.5 * sin(local.x * 18.0 + hash21(id) * 6.28 + iTime * 1.5);
+    float cap = smoothstep(0.02, h * 0.45, local.y);
+    base = mix(base * 0.55, base * (1.0 + stripe * 0.35 * audio), cap);
+
+    return base;
 }
 
-// Map function for four tiles
-float map(vec3 pos, out vec3 tileColor) {
-    float minDist = MAX_DIST;
-    tileColor = vec3(0.0);
-    
-    // Grid positions for 2x2 layout
-    vec2 positions[4] = vec2[4](
-        vec2(-0.7, -0.7),  // Bottom left
-        vec2( 0.7, -0.7),  // Bottom right
-        vec2(-0.7,  0.7),  // Top left
-        vec2( 0.7,  0.7)   // Top right
-    );
-    
-    // Process each tile
-    for(int i = 0; i < 4; i++) {
-        float height = clamp(freqs[i] * 2.5, 0.5, 2.5);
-        vec3 p = pos - vec3(positions[i].x, height * 0.5, positions[i].y);
-        float d = udBox(p, vec3(0.3, height * 0.5, 0.3), 0.1);
-        
-        if(d < minDist) {
-            minDist = d;
-            // Get dynamic texture for this tile
-            tileColor = getDynamicTexture(positions[i], height, freqs[i]);
+float map(vec3 pos, out vec3 albedo) {
+    float d = MAX_DIST;
+    albedo = vec3(0.04, 0.06, 0.10);
+
+    float floorD = pos.y + 0.005;
+    if(floorD < d) {
+        d = floorD;
+        albedo = vec3(0.03, 0.05, 0.08);
+    }
+
+    float spacing = 0.50;
+    float halfGrid = float(GRID - 1) * 0.5;
+    float tileHalf = spacing * 0.36;
+
+    for(int ix = 0; ix < GRID; ix++) {
+        for(int iz = 0; iz < GRID; iz++) {
+            vec2 id = vec2(float(ix), float(iz));
+            vec2 center = (id - halfGrid) * spacing;
+            float audio = tileAudio(ix, iz);
+            float height = mix(0.22, 2.2, pow(audio, 0.78));
+            vec3 boxCenter = vec3(center.x, height * 0.5, center.y);
+
+            vec3 q = pos - boxCenter;
+            float boxD = udBox(q, vec3(tileHalf, height * 0.5, tileHalf), 0.035);
+
+            if(boxD < d) {
+                d = boxD;
+                albedo = tileAlbedo(id, height, audio, pos, boxCenter);
+            }
         }
     }
-    
-    return minDist;
+
+    return d;
 }
 
-// Normal calculation
 vec3 getNormal(vec3 p) {
-    vec2 e = vec2(0.001, 0.0);
+    vec2 e = vec2(0.0015, 0.0);
     vec3 dummy;
     return normalize(vec3(
         map(p + e.xyy, dummy) - map(p - e.xyy, dummy),
@@ -6660,80 +6641,72 @@ vec3 getNormal(vec3 p) {
     ));
 }
 
-// Ray marching
-float raymarch(vec3 ro, vec3 rd, out vec3 color) {
-    float d = 0.0;
-    color = vec3(0.0);
-    
+float raymarch(vec3 ro, vec3 rd, out vec3 albedo) {
+    float t = 0.0;
+    albedo = vec3(0.0);
+
     for(int i = 0; i < MAX_STEPS; i++) {
-        vec3 p = ro + rd * d;
-        vec3 tileColor;
-        float dist = map(p, tileColor);
-        
+        vec3 p = ro + rd * t;
+        vec3 col;
+        float dist = map(p, col);
+
         if(dist < MIN_DIST) {
-            color = tileColor;
-            return d;
+            albedo = col;
+            return t;
         }
-        if(d > MAX_DIST) break;
-        
-        d += dist;
+        if(t > MAX_DIST) break;
+
+        t += dist * 0.88;
     }
-    
+
     return MAX_DIST;
 }
 
 void mainImage(out vec4 fragColor, in vec2 fragCoord) {
-    // Sample audio
-    freqs[0] = texture(iChannel0, vec2(0.01, 0.25)).x;
-    freqs[1] = texture(iChannel0, vec2(0.07, 0.25)).x;
-    freqs[2] = texture(iChannel0, vec2(0.15, 0.25)).x;
-    freqs[3] = texture(iChannel0, vec2(0.30, 0.25)).x;
-    
-    // Screen coordinates
     vec2 uv = (fragCoord - 0.5 * iResolution.xy) / iResolution.y;
-    
-    // Camera setup
-    float time = iTime * 0.5;
-    vec3 ro = vec3(4.0 * cos(time), 3.0, 4.0 * sin(time));
-    vec3 ta = vec3(0.0, 0.8, 0.0);
-    
-    // Camera matrix
+
+    float time = iTime * 0.38;
+    float orbit = 5.8 + 0.35 * sin(time * 0.6);
+    float lift = 3.6 + 0.25 * cos(time * 0.45);
+    vec3 ro = vec3(orbit * cos(time), lift, orbit * sin(time));
+    vec3 ta = vec3(0.0, 0.55, 0.0);
+
     vec3 ww = normalize(ta - ro);
     vec3 uu = normalize(cross(ww, vec3(0.0, 1.0, 0.0)));
     vec3 vv = normalize(cross(uu, ww));
-    vec3 rd = normalize(uv.x * uu + uv.y * vv + 1.5 * ww);
-    
-    // Raymarch and get color
+    vec3 rd = normalize(uv.x * uu + uv.y * vv + 1.45 * ww);
+
+    vec3 albedo;
+    float d = raymarch(ro, rd, albedo);
     vec3 color;
-    float d = raymarch(ro, rd, color);
-    
+
     if(d < MAX_DIST) {
         vec3 pos = ro + rd * d;
         vec3 nor = getNormal(pos);
-        
-        // Lighting
-        vec3 light = normalize(vec3(0.5, 0.7, -0.3));
-        float diff = max(dot(nor, light), 0.0);
-        float amb = 0.5 + 0.5 * nor.y;
-        float spec = pow(max(dot(reflect(-light, nor), -rd), 0.0), 32.0);
-        
-        // Final color
-        color *= diff * 0.7 + amb * 0.3;
-        color += vec3(1.0) * spec * 0.5;
-        
-        // Add pulsing glow based on audio
-        float audioIntensity = (freqs[0] + freqs[1] + freqs[2] + freqs[3]) * 0.25;
-        color += color * audioIntensity * 0.3;
+
+        vec3 keyLight = normalize(vec3(0.45, 0.85, -0.35));
+        vec3 fillLight = normalize(vec3(-0.55, 0.35, 0.65));
+        float diff = max(dot(nor, keyLight), 0.0) * 0.75 + max(dot(nor, fillLight), 0.0) * 0.25;
+        float amb = 0.35 + 0.65 * nor.y;
+        float spec = pow(max(dot(reflect(-keyLight, nor), -rd), 0.0), 48.0);
+        float fres = pow(1.0 - max(dot(nor, -rd), 0.0), 3.0);
+
+        color = albedo * (diff * 0.72 + amb * 0.28);
+        color += vec3(1.0, 0.95, 0.9) * spec * 0.45;
+        color += albedo * fres * 0.18;
+
+        float rim = pow(1.0 - max(dot(nor, -rd), 0.0), 2.0);
+        float pulse = fft(0.05) + fft(0.25) + fft(0.55);
+        pulse = max(pulse, fallbackMotion(0.3));
+        color += albedo * rim * pulse * 0.35;
     } else {
-        color = vec3(0.1); // Background color
+        color = vec3(0.04, 0.06, 0.11);
+        color += 0.015 * sin(uv.x * 12.0 + time) * sin(uv.y * 10.0 - time);
     }
-    
-    // Add some atmosphere
-    color = mix(color, vec3(0.1, 0.15, 0.2), smoothstep(0.0, 1.0, d/MAX_DIST));
-    
-    // Gamma correction
+
+    color = mix(color, vec3(0.04, 0.07, 0.12), smoothstep(0.0, 1.0, d / MAX_DIST));
     color = pow(color, vec3(0.4545));
-    
+
     fragColor = vec4(color, 1.0);
 }`,
 "Knodding Donkey": `//CC0 1.0 Universal https://creativecommons.org/publicdomain/zero/1.0/

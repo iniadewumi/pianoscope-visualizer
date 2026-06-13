@@ -285,6 +285,7 @@ function clearFeedbackTextures(gl, state) {
     }
 
     let usesFeedbackPass = false;
+    let iResolutionIsVec2 = false;
     let noiseTexture = null;
     let feedbackState = null;
     
@@ -628,6 +629,7 @@ function setupShaderProgram(vertexSource, fragmentSource) {
 
     function configureFeedbackPass(fragmentSource) {
         usesFeedbackPass = fragmentSource.includes('iWriteFeedback');
+        iResolutionIsVec2 = /uniform\s+vec2\s+iResolution/.test(fragmentSource);
         if (usesFeedbackPass) {
             if (!noiseTexture) {
                 noiseTexture = createNoiseTexture(gl);
@@ -685,7 +687,13 @@ function setupShaderProgram(vertexSource, fragmentSource) {
     }
 
     function setShaderUniforms(currentTime) {
-        if (uniforms.iResolution) gl.uniform3f(uniforms.iResolution, canvas.width, canvas.height, 1.0);
+        if (uniforms.iResolution) {
+            if (iResolutionIsVec2) {
+                gl.uniform2f(uniforms.iResolution, canvas.width, canvas.height);
+            } else {
+                gl.uniform3f(uniforms.iResolution, canvas.width, canvas.height, 1.0);
+            }
+        }
         if (uniforms.iTime) gl.uniform1f(uniforms.iTime, currentTime);
         if (uniforms.iTimeDelta) gl.uniform1f(uniforms.iTimeDelta, deltaTime);
         if (uniforms.iFrame) gl.uniform1f(uniforms.iFrame, frameCount);
