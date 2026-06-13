@@ -76,7 +76,10 @@ document.addEventListener('DOMContentLoaded', function() {
     // Mini fullscreen button
     if (miniFullscreen) {
         miniFullscreen.addEventListener('click', toggleFullscreen);
-        document.addEventListener('fullscreenchange', updateFullscreenButtonIcon);
+        document.addEventListener('fullscreenchange', function() {
+            updateFullscreenButtonIcon();
+            window.dispatchEvent(new Event('resize'));
+        });
     }
     
     // Mini shader toggle syncs with main shader toggle

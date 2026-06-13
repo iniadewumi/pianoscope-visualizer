@@ -13,7 +13,8 @@ const ShaderPrefixes = {
         "#version 300 es\n" +
         "precision highp float;\n" +
         "out vec4 fragColor;\n" +
-        "#define texture2D texture"+"\n",
+        "#define texture2D texture\n" +
+        "#define gl_FragColor fragColor\n",
     
     // WebGL1 shader prefix (common for both vertex and fragment)
     webgl1Prefix: 
@@ -61,23 +62,37 @@ const kioskHtmlContent = `<!DOCTYPE html>
         let animationFrameId = null;
         let startTime = performance.now() / 1000;
         let lastTime = startTime;
+        let frameCount = 0;
+        let iResolutionIsVec2 = false;
         
         // Shader prefix constants passed from parent window
         let shaderPrefixes = null;
         
         // Set up the canvas
         const canvas = document.getElementById('kiosk-canvas');
-        canvas.width = window.innerWidth;
-        canvas.height = window.innerHeight;
-        
-        // Handle window resize
-        window.addEventListener('resize', function() {
-            canvas.width = window.innerWidth;
-            canvas.height = window.innerHeight;
+
+        function resizeKioskCanvas() {
+            const dpr = window.devicePixelRatio || 1;
+            const displayWidth = canvas.clientWidth;
+            const displayHeight = canvas.clientHeight;
+            if (displayWidth === 0 || displayHeight === 0) return;
+
+            const bufferWidth = Math.round(displayWidth * dpr);
+            const bufferHeight = Math.round(displayHeight * dpr);
+            canvas.width = bufferWidth;
+            canvas.height = bufferHeight;
+
             if (gl) {
-                gl.viewport(0, 0, canvas.width, canvas.height);
+                gl.viewport(0, 0, bufferWidth, bufferHeight);
             }
-        });
+        }
+        
+        window.addEventListener('resize', resizeKioskCanvas);
+        document.addEventListener('fullscreenchange', resizeKioskCanvas);
+        if (typeof ResizeObserver !== 'undefined') {
+            new ResizeObserver(resizeKioskCanvas).observe(canvas);
+        }
+        resizeKioskCanvas();
         
         // Double-click for fullscreen
         canvas.addEventListener('dblclick', function() {
@@ -131,7 +146,7 @@ const kioskHtmlContent = `<!DOCTYPE html>
                 // Send ready message
                 window.opener.postMessage({ type: 'kiosk-ready' }, '*');
             } else if (message.type === 'shader-update') {
-                // Update shader program
+                iResolutionIsVec2 = /uniform\\s+vec2\\s+iResolution/.test(message.fragmentShader);
                 updateShaderProgram(message.vertexShader, message.fragmentShader);
             } else if (message.type === 'audio-data') {
                 // Update audio data
@@ -165,6 +180,8 @@ const kioskHtmlContent = `<!DOCTYPE html>
             
             // Start animation loop
             startAnimationLoop();
+
+            resizeKioskCanvas();
         }
         
         // Update shader program
@@ -274,18 +291,28 @@ const kioskHtmlContent = `<!DOCTYPE html>
                 const currentTime = nowSec - startTime;
                 const deltaTime = nowSec - lastTime;
                 lastTime = nowSec;
+                frameCount++;
                 
                 gl.useProgram(currentProgram);
                 
                 // Set common uniforms if they exist
                 const iResolution = gl.getUniformLocation(currentProgram, 'iResolution');
-                if (iResolution) gl.uniform3f(iResolution, canvas.width, canvas.height, 1.0);
+                if (iResolution) {
+                    if (iResolutionIsVec2) {
+                        gl.uniform2f(iResolution, canvas.width, canvas.height);
+                    } else {
+                        gl.uniform3f(iResolution, canvas.width, canvas.height, 1.0);
+                    }
+                }
                 
                 const iTime = gl.getUniformLocation(currentProgram, 'iTime');
                 if (iTime) gl.uniform1f(iTime, currentTime);
                 
                 const iTimeDelta = gl.getUniformLocation(currentProgram, 'iTimeDelta');
                 if (iTimeDelta) gl.uniform1f(iTimeDelta, deltaTime);
+
+                const iFrame = gl.getUniformLocation(currentProgram, 'iFrame');
+                if (iFrame) gl.uniform1f(iFrame, frameCount);
                 
                 const iChannel0 = gl.getUniformLocation(currentProgram, 'iChannel0');
                 if (iChannel0) {
@@ -358,61 +385,37 @@ function openKioskMode() {
     }
     
     // Listen for messages from the kiosk window
-    window.addEventListener('message', function(event) {
+    function handleKioskMessage(event) {
+        if (event.source !== kioskWindow) return;
+
         const message = event.data;
         
         if (message.type === 'kiosk-loaded') {
-            // Kiosk window is loaded, initialize WebGL with our shader prefixes
             kioskWindow.postMessage({ 
                 type: 'init',
                 shaderPrefixes: ShaderPrefixes
             }, '*');
         } else if (message.type === 'kiosk-ready') {
-            // Kiosk is ready, send current shader
             sendCurrentShaderToKiosk();
         }
-    });
+    }
+
+    window.addEventListener('message', handleKioskMessage);
     
     // Clean up when kiosk window is closed
     kioskWindow.addEventListener('beforeunload', function() {
+        window.removeEventListener('message', handleKioskMessage);
         window.kioskWindow = null;
     });
-}
-
-// Function to get the current shader source
-function getShaderSource(shader) {
-    if (!shader) return null;
-    
-    const gl = document.getElementById('visualizer').getContext('webgl2') ||
-              document.getElementById('visualizer').getContext('webgl') || 
-              document.getElementById('visualizer').getContext('experimental-webgl');
-    
-    if (!gl) return null;
-    
-    return gl.getShaderSource(shader);
 }
 
 // Function to send the current shader to the kiosk window
 function sendCurrentShaderToKiosk() {
     if (!window.kioskWindow || window.kioskWindow.closed) return;
     
-    // Get the current vertex and fragment shaders
-    // This assumes you have global variables for these in your visualizer
-    let vertexSource = null;
-    let fragmentSource = null;
-    
-    // Try to get shader sources from different possible global variables
-    if (window.currentVertexShader) {
-        vertexSource = getShaderSource(window.currentVertexShader);
-    } else if (window.visualizer && window.visualizer.currentVertexShader) {
-        vertexSource = getShaderSource(window.visualizer.currentVertexShader);
-    }
-    
-    if (window.currentFragmentShader) {
-        fragmentSource = getShaderSource(window.currentFragmentShader);
-    } else if (window.visualizer && window.visualizer.currentFragmentShader) {
-        fragmentSource = getShaderSource(window.visualizer.currentFragmentShader);
-    }
+    // Use raw shader sources (before WebGL prefix) to avoid double-prefix compile errors
+    let vertexSource = window.currentVertexShaderSource || null;
+    let fragmentSource = window.currentFragmentShaderSource || null;
     
     // If we couldn't get the shader sources, use default fallback shaders
     if (!vertexSource) {
@@ -428,7 +431,7 @@ function sendCurrentShaderToKiosk() {
         fragmentSource = `
             precision highp float;
             
-            uniform vec2 iResolution;
+            uniform vec3 iResolution;
             uniform float iTime;
             uniform sampler2D iChannel0;
             

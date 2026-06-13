@@ -131,6 +131,8 @@ function clearFeedbackTextures(gl, state) {
 
     window.currentVertexShader = null;
     window.currentFragmentShader = null;
+    window.currentVertexShaderSource = null;
+    window.currentFragmentShaderSource = null;
     window.audioData = null;
     
     // Check if elements exist to prevent errors
@@ -289,24 +291,32 @@ function clearFeedbackTextures(gl, state) {
     let noiseTexture = null;
     let feedbackState = null;
     
-    // Resize canvas to window
+    // Resize canvas to match its displayed size at native device pixel ratio
     function resizeCanvas() {
-        // Check if in pure view mode
-        const isPureViewMode = document.body.classList.contains('pure-view-mode');
-        
-        // Set appropriate height
-        const canvasHeight = isPureViewMode ? window.innerHeight : window.innerHeight * 0.8;
-        
         const dpr = window.devicePixelRatio || 1;
-        canvas.width = window.innerWidth * dpr;
-        canvas.height = canvasHeight * dpr;
-        gl.viewport(0, 0, canvas.width, canvas.height);
+        const displayWidth = canvas.clientWidth;
+        const displayHeight = canvas.clientHeight;
+        if (displayWidth === 0 || displayHeight === 0) return;
 
-        if (usesFeedbackPass) {
-            setupFeedbackBuffers(canvas.width, canvas.height, true);
+        const bufferWidth = Math.round(displayWidth * dpr);
+        const bufferHeight = Math.round(displayHeight * dpr);
+
+        if (canvas.width !== bufferWidth || canvas.height !== bufferHeight) {
+            canvas.width = bufferWidth;
+            canvas.height = bufferHeight;
+
+            if (usesFeedbackPass) {
+                setupFeedbackBuffers(canvas.width, canvas.height, true);
+            }
         }
+
+        gl.viewport(0, 0, canvas.width, canvas.height);
     }
+
     window.addEventListener('resize', resizeCanvas);
+    if (typeof ResizeObserver !== 'undefined') {
+        new ResizeObserver(resizeCanvas).observe(canvas);
+    }
     resizeCanvas();
     
     // === SHADER MANAGEMENT ===
@@ -406,7 +416,11 @@ function setupShaderProgram(vertexSource, fragmentSource) {
 
     window.currentVertexShader = currentVertexShader;
 
-    window.currentFragmentShader = currentFragmentShader; 
+    window.currentFragmentShader = currentFragmentShader;
+
+    window.currentVertexShaderSource = vertexSource;
+
+    window.currentFragmentShaderSource = fragmentSource;
 
     
 
