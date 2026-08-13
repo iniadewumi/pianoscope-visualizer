@@ -1,5 +1,7 @@
 # PIANOSCOPE Shader Research Brief
 
+**Agent HOW-TO library:** [`knowledge/README.md`](knowledge/README.md) — pattern tiling, IQ techniques, genre recipes, keyword index. Use alongside this brief.
+
 This document is meant to be handed to a **Cursor agent** (or another coding assistant) working in the **pianoscope-visualizer** repo. It describes what shaders to build and how they should look and behave — not where generic `.glsl` files live.
 
 The goal is not to make generic "African" visuals. The goal is to build a visual system for PIANOSCOPE that feels specific, musical, contemporary, and culturally aware.

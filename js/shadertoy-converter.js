@@ -47,16 +47,21 @@ uniform sampler2D iChannel2;
 uniform sampler2D iChannel3;
 `;
 
+    // Shadertoy's image pass renders opaque and discards whatever mainImage writes
+    // to alpha. Our canvas is composited with the page, so alpha must be forced to
+    // 1 here or shaders that leave it at 0 (common in golfed tanh-tonemap shaders)
+    // vanish into the background.
     const WEBGL_MAIN = `
 #if __VERSION__ >= 300
 void main() {
     mainImage(fragColor, gl_FragCoord.xy);
+    fragColor.a = 1.0;
 }
 #else
 void main() {
     vec4 fragColor;
     mainImage(fragColor, gl_FragCoord.xy);
-    gl_FragColor = fragColor;
+    gl_FragColor = vec4(fragColor.rgb, 1.0);
 }
 #endif
 `;

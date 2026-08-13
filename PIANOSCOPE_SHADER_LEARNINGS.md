@@ -1,5 +1,7 @@
 # PIANOSCOPE Shader Learnings (Agent Notes)
 
+**New agents:** Start at [`knowledge/README.md`](knowledge/README.md) — local HOW-TO library with keyword index, pattern/IQ techniques, and genre recipes. Use this file for iteration postmortems and porting case studies.
+
 **Read this after [`cursor inst.md`](cursor inst.md).** The brief defines *what* to build and *why*. This doc captures *what we tried*, *what failed*, *what worked*, and *how to avoid repeating mistakes* — based on implementing the first PIANOSCOPE shader in this repo.
 
 **Current state (as of polish pass):**
@@ -10,13 +12,14 @@
 
 ## Quick start for a future agent
 
-1. Read [`cursor inst.md`](cursor inst.md) sections: Repository context, Audio channel layout, GLSL compatibility, Recommended first target.
-2. Read this doc's **Iteration postmortem** and **Anti-patterns** before writing GLSL.
-3. Study shaders in [`js/shaders.js`](js/shaders.js) listed under **Repo shaders worth stealing from**.
-4. Add new entries to `TEST_SHADERS` in [`js/test-shaders.js`](js/test-shaders.js) — do not edit `shaders.js` / `shaders2.js`.
-5. Serve over HTTP (`npx serve .`), not `file://` if modules fail.
-6. Test with mic on **and** off (fallback motion must work).
-7. Get visual approval before building the next genre shader.
+1. Read [`knowledge/00-AGENT-START.md`](knowledge/00-AGENT-START.md) and grep [`knowledge/KEYWORDS.md`](knowledge/KEYWORDS.md) for your task.
+2. Read [`cursor inst.md`](cursor inst.md) sections: Repository context, Audio channel layout, GLSL compatibility, Recommended first target.
+3. Read this doc's **Iteration postmortem** and **Anti-patterns** before writing GLSL (also summarized in [`knowledge/howto/07-anti-patterns-and-failures.md`](knowledge/howto/07-anti-patterns-and-failures.md)).
+4. Study shaders per [`knowledge/howto/08-steal-from-library.md`](knowledge/howto/08-steal-from-library.md).
+5. Add new entries to `TEST_SHADERS` in [`js/test-shaders.js`](js/test-shaders.js) — do not edit `shaders.js` / `shaders2.js`.
+6. Serve over HTTP (`npx serve .`), not `file://` if modules fail.
+7. Test with mic on **and** off (fallback motion must work).
+8. Get visual approval before building the next genre shader.
 
 **If fixing a broken library shader** (e.g. `"Murakami Galaxy"` in `shaders.js`), read **Porting Shadertoy library shaders** below before guessing at line numbers.
 

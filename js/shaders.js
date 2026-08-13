@@ -1,6 +1,1678 @@
 
 // Sample Shadertoy shaders to quickly test
 export const SHADERS = {
+    "Neon":`// Original shader: https://glslsandbox.com/e#50965.0
+// Neon glowing LED style text (but without the inappropriate language)
+
+//#define ROTATE   // <- Uncomment to make the text spin.
+
+#ifdef GL_ES
+precision highp float;
+#endif
+
+vec2 uv;
+
+//uniform float time;
+//uniform vec2 resolution;
+
+const vec2 ch_size  = vec2(1.0, 2.0) * 0.6;              // character size (X,Y)
+const vec2 ch_space = ch_size + vec2(1.0, 1.0);    // character distance Vector(X,Y)
+const vec2 ch_start = vec2 (ch_space.x * -5., 1.); // start position
+      vec2 ch_pos   = vec2 (0.0, 0.0);             // character position(X,Y)
+//      vec3 ch_color = vec3 (1.5, 0.75, 0.5);        // character color (R,G,B)
+//const vec3 bg_color = vec3 (0.2, 0.2, 0.2);        // background color (R,G,B)
+
+#define REPEAT_SIGN false // True/False; True=Multiple, False=Single
+
+/* 16 segment display...Akin to LED Display.
+
+Segment bit positions:
+  __2__ __1__
+ |\    |    /|
+ | \   |   / |
+ 3  11 40 9  0
+ |   \ | /   |
+ |    \|/    |
+  _12__ __8__
+ |           |
+ |    /|\    |
+ 4   / | \   7
+ | 13 14  15 |
+ | /   |   \ |
+  __5__|__6__
+
+15 12 11 8 7  4 3  0
+ |  | |  | |  | |  |
+ 0000 0000 0000 0000
+
+example: letter A
+
+   12    8 7  4 3210
+    |    | |  | ||||
+ 0001 0001 1001 1111
+
+ binary to hex -> 0x119F
+*/
+
+#define n0 ddigit(0x22FF);
+#define n1 ddigit(0x0281);
+#define n2 ddigit(0x1177);
+#define n3 ddigit(0x11E7);
+#define n4 ddigit(0x5508);
+#define n5 ddigit(0x11EE);
+#define n6 ddigit(0x11FE);
+#define n7 ddigit(0x2206);
+#define n8 ddigit(0x11FF);
+#define n9 ddigit(0x11EF);
+
+#define A ddigit(0x119F);
+#define B ddigit(0x927E);
+#define C ddigit(0x007E);
+#define D ddigit(0x44E7);
+#define E ddigit(0x107E);
+#define F ddigit(0x101E);
+#define G ddigit(0x807E);
+#define H ddigit(0x1199);
+#define I ddigit(0x4466);
+#define J ddigit(0x4436);
+#define K ddigit(0x9218);
+#define L ddigit(0x0078);
+#define M ddigit(0x0A99);
+#define N ddigit(0x8899);
+#define O ddigit(0x00FF);
+#define P ddigit(0x111F);
+#define Q ddigit(0x80FF);
+#define R ddigit(0x911F);
+#define S ddigit(0x8866);
+#define T ddigit(0x4406);
+#define U ddigit(0x00F9);
+#define V ddigit(0x2218);
+#define W ddigit(0xA099);
+#define X ddigit(0xAA00);
+#define Y ddigit(0x4A00);
+#define Z ddigit(0x2266);
+#define _ ch_pos.x += ch_space.x;
+#define s_dot     ddigit(0);
+#define s_minus   ddigit(0x1100);
+#define s_plus    ddigit(0x5500);
+#define s_greater ddigit(0x2800);
+#define s_less    ddigit(0x8200);
+#define s_sqrt    ddigit(0x0C02);
+#define nl1 ch_pos = ch_start;  ch_pos.y -= 3.0;
+#define nl2 ch_pos = ch_start;  ch_pos.y -= 6.0;
+#define nl3 ch_pos = ch_start;	ch_pos.y -= 9.0;
+
+float dseg(vec2 p0, vec2 p1)
+{
+	vec2 dir = normalize(p1 - p0);
+	vec2 cp = (uv - ch_pos - p0) * mat2(dir.x, dir.y,-dir.y, dir.x);
+	return distance(cp, clamp(cp, vec2(0), vec2(distance(p0, p1), 0)));   
+}
+
+bool bit(int n, int b)
+{
+	return mod(floor(float(n) / exp2(floor(float(b)))), 2.0) != 0.0;
+}
+
+float d = 1e6;
+
+void ddigit(int n)
+{
+	float v = 1e6;	
+	vec2 cp = uv - ch_pos;
+	if (n == 0)     v = min(v, dseg(vec2(-0.405, -1.000), vec2(-0.500, -1.000)));
+	if (bit(n,  0)) v = min(v, dseg(vec2( 0.500,  0.063), vec2( 0.500,  0.937)));
+	if (bit(n,  1)) v = min(v, dseg(vec2( 0.438,  1.000), vec2( 0.063,  1.000)));
+	if (bit(n,  2)) v = min(v, dseg(vec2(-0.063,  1.000), vec2(-0.438,  1.000)));
+	if (bit(n,  3)) v = min(v, dseg(vec2(-0.500,  0.937), vec2(-0.500,  0.062)));
+	if (bit(n,  4)) v = min(v, dseg(vec2(-0.500, -0.063), vec2(-0.500, -0.938)));
+	if (bit(n,  5)) v = min(v, dseg(vec2(-0.438, -1.000), vec2(-0.063, -1.000)));
+	if (bit(n,  6)) v = min(v, dseg(vec2( 0.063, -1.000), vec2( 0.438, -1.000)));
+	if (bit(n,  7)) v = min(v, dseg(vec2( 0.500, -0.938), vec2( 0.500, -0.063)));
+	if (bit(n,  8)) v = min(v, dseg(vec2( 0.063,  0.000), vec2( 0.438, -0.000)));
+	if (bit(n,  9)) v = min(v, dseg(vec2( 0.063,  0.063), vec2( 0.438,  0.938)));
+	if (bit(n, 10)) v = min(v, dseg(vec2( 0.000,  0.063), vec2( 0.000,  0.937)));
+	if (bit(n, 11)) v = min(v, dseg(vec2(-0.063,  0.063), vec2(-0.438,  0.938)));
+	if (bit(n, 12)) v = min(v, dseg(vec2(-0.438,  0.000), vec2(-0.063, -0.000)));
+	if (bit(n, 13)) v = min(v, dseg(vec2(-0.063, -0.063), vec2(-0.438, -0.938)));
+	if (bit(n, 14)) v = min(v, dseg(vec2( 0.000, -0.938), vec2( 0.000, -0.063)));
+	if (bit(n, 15)) v = min(v, dseg(vec2( 0.063, -0.063), vec2( 0.438, -0.938)));
+	ch_pos.x += ch_space.x;
+	d = min(d, v);
+}
+mat2 rotate(float a)
+{
+	float c = cos(a);
+	float s = sin(a);
+	return mat2(c, s, -s, c);
+}
+vec3 hsv2rgb_smooth( in vec3 c )
+{
+    vec3 rgb = clamp( abs(mod(c.x*6.0+vec3(0.0,4.0,2.0),6.0)-3.0)-1.0, 0.0, 1.0 );
+
+	rgb = rgb*rgb*(3.0-2.0*rgb); // cubic smoothing	
+
+	return c.z * mix( vec3(1.0), rgb, c.y);
+}
+
+void mainImage( out vec4 fragColor, in vec2 fragCoord )
+{
+	
+	vec2 aspect = iResolution.xy / iResolution.y;
+	uv = ( fragCoord.xy / iResolution.y ) - aspect / 2.0;
+	float _d =  1.0-length(uv);
+	uv *= 12.0 ;
+    #ifdef ROTATE
+	uv *= rotate(iTime+uv.x*0.05);
+    #endif
+
+	vec3 ch_color = hsv2rgb_smooth(vec3(iTime*0.4+uv.y*0.1,0.5,1.0));
+
+	vec3 bg_color = vec3(_d*0.4, _d*0.2, _d*0.1);
+	uv.x += 0.5+sin(uv.y*0.0)*0.5;
+	ch_pos = ch_start;
+	     
+        P I A N S C O P E
+                nl1 
+       S O U L T R O N I C S
+			 
+		
+	vec3 color = mix(ch_color, bg_color, 1.0- (0.08 / d*2.0));  // shading
+	fragColor = vec4(color, 1.0);
+}
+`,
+    "Fish": `/* 
+Some kind of sea creature(?) from https://x.com/yuruyurau/status/2080977918914969636 
+
+a=(y,d=mag(k=(4+cos(i/9-t*2))*cos(i/35),e=y/7-13)+sin(e/9+t/2)-4)=>point((q=2*sin(k*3)-y/35*k*(9+k*sin(cos(e)*9-d*2+t)))+40*cos(c=d-t)+200,q*sin(c)+d*35)
+t=0,draw=$=>{t||createCanvas(w=400,w);background(9).stroke(w,96);for(t+=PI/80,i=1e4;i--;)a(i/235)}//#つぶやきProcessing
+*/
+vec2 curve(float i){
+  float t = iTime*2.0;
+  float y = i / 235.;
+  float k = (4.0+cos(i/9.0-t*2.0))*cos(i/35.0);
+  float e = y / 7. - 13.0;
+  float d = sqrt(k * k + e * e) + sin(e/9.0+t/2.0)-4.0;
+  float c = d-t;
+  float q = 2.0 * sin(k*3.0) - y/35.0 * k * (9.0 + k * sin(cos(e)*9.0 - d*2.0+t));
+  return -vec2(q + 40.0 * cos(c), q * sin(c) + d * 35.0 - 200.0)/200.0;
+}
+
+uint state;
+float lcg_float() {
+    state = 1103515245u * state + 12345u;
+    return float(state) / 4294967295.0;
+}
+
+float biased_rnd(float p) { // returns a random number between -1 and 1 biased towards 0
+  float r = lcg_float()*2.0-1.0;
+  return pow(abs(r),p)*sign(r);
+}
+
+void mainImage( out vec4 fragColor, in vec2 fragCoord )
+{
+  vec2 p = (fragCoord.xy*2.-iResolution.xy)/iResolution.y;
+  // seed rng
+  state = uint(fragCoord.x) * 19349u + uint(fragCoord.y) * 35641u + uint(iTime*123.456) * 1367u;
+  float best = 5000.0; // closest point on curve (initial guess)
+  float md = 1e9; // minimum distance
+  for(int i=0; i<200; i++) {
+    float x = mod(best + biased_rnd(4.)*5000.0, 1e4); // try another point on curve
+    float d = length(p-curve(x)); // distance from pixel
+    if(d < md) {
+      best = x;
+      md = d;
+    }
+  }
+  fragColor = vec4(vec3(smoothstep(4. / iResolution.y,0.0, md)), 1);
+}`,
+    "Reflective metaballs":`// 3D gradient noise from iq's https://www.shadertoy.com/view/Xsl3Dl
+vec3 hash( vec3 p ) // replace this by something better
+{
+	p = vec3( dot(p,vec3(127.1,311.7, 74.7)),
+			  dot(p,vec3(269.5,183.3,246.1)),
+			  dot(p,vec3(113.5,271.9,124.6)));
+
+	return -1.0 + 2.0*fract(sin(p)*43758.5453123);
+}
+float noise( in vec3 p )
+{
+    vec3 i = floor( p );
+    vec3 f = fract( p );
+	
+	vec3 u = f*f*(3.0-2.0*f);
+
+    return mix( mix( mix( dot( hash( i + vec3(0.0,0.0,0.0) ), f - vec3(0.0,0.0,0.0) ), 
+                          dot( hash( i + vec3(1.0,0.0,0.0) ), f - vec3(1.0,0.0,0.0) ), u.x),
+                     mix( dot( hash( i + vec3(0.0,1.0,0.0) ), f - vec3(0.0,1.0,0.0) ), 
+                          dot( hash( i + vec3(1.0,1.0,0.0) ), f - vec3(1.0,1.0,0.0) ), u.x), u.y),
+                mix( mix( dot( hash( i + vec3(0.0,0.0,1.0) ), f - vec3(0.0,0.0,1.0) ), 
+                          dot( hash( i + vec3(1.0,0.0,1.0) ), f - vec3(1.0,0.0,1.0) ), u.x),
+                     mix( dot( hash( i + vec3(0.0,1.0,1.0) ), f - vec3(0.0,1.0,1.0) ), 
+                          dot( hash( i + vec3(1.0,1.0,1.0) ), f - vec3(1.0,1.0,1.0) ), u.x), u.y), u.z );
+}
+
+// Metaballs and analytic normals from Klems' https://www.shadertoy.com/view/4dj3zV
+void mainImage( out vec4 fragColor, in vec2 fragCoord )
+{
+    vec3 a, q, p, gradient, dir;
+    float b, dist;
+    dir = normalize(vec3((2.*fragCoord.xy-iResolution.xy)/min(iResolution.x,iResolution.y), 1.7));
+    p = vec3(0, 0, -7);
+    for(int i = 0; i < 100; i++) {
+        q = p; // save current position
+        p += dir * dist; // step
+        gradient = vec3(0);
+        dist = 0.;
+        for(float j = 0.; j < 8.; j++) {
+            vec3 ballp = sin(vec3(1,2,4) * j + iTime * .3) * 3.; // ball position
+            b = dot(a = p - ballp, a);
+            gradient += a / (b * b);
+            dist += 1. / b;
+        }
+        dist = 1. - dist;
+        if(dist < .001) { // if we've hit the metaballs
+            dir = reflect(dir, normalize(gradient)); // set new reflected marching direction
+            p = q; // restore previous position
+            dist = 0.; // and don't step in this iteration
+        }
+     }
+    vec3 col = dir + 1.;
+    fragColor.rgb = noise(col * 2. + iTime * .3) * col * 2.;
+}`,
+    "Etherflow":`void mainImage(out vec4 o, vec2 u) {
+        float d,a,e,i,s,t = iTime;
+        vec3  ep, p = iResolution;    
+        
+        // scale coords
+        u = (u+u-p.xy)/p.y;
+        
+        u += vec2(cos(t*.4)*.3, cos(t*.8)*.1);
+        
+        for(o = vec4(0); i++<1e2;
+    
+            // accumulate distance
+            d += s = min(.02+.4*abs(s),e=max(.8*e, .01)),
+            
+            // grayscale color
+            o += 16.*vec4(3,2,7,0)/(s+e*.5)+.1*vec4(6,2,1,0)/length(u.x))
+            
+            // noise loop start, march
+            for (p = vec3(u*d,d+t), // p = ro + rd *d, p.z + t;
+        
+                // entity (orb) position
+                ep = p - vec3(
+                    sin(sin(t*1.4)+t*.3) * 16.,
+                    sin(sin(t)+t*1.5) *16.,
+                    42.+t+cos(t*.5)*32.),
+                    
+                // orb sphere
+                e = length(ep) - .1,
+                        
+                // plane, mix with entity/orb
+                s = mix(e*.02,16.-abs(p.x), smoothstep(0.,32., e)),
+                
+                // noise params
+                a = .4; a < 8.; a *= 1.4)
+    
+                // apply turbulence
+                p += cos(p.yzx * .5)*.2,
+                
+                // apply noise
+                s -= abs(dot(cos(2.*t+.2*p.z+p * a ), .2+p-p)) / a;
+        
+        // tanh tonemap, blue tint, brightness, moon
+        o = tanh(o/1e3);
+    }`,
+    "Sol":`// MIT License
+/*
+
+    -24 chars by @FabriceNeyret2
+    
+    ty!!   :D
+
+*/
+
+void mainImage(out vec4 o, vec2 u) {
+    float d,a,e,i,s,t = iTime*.5;
+    vec3  p = iResolution;    
+    
+    // scale coords
+    u = (u+u-p.xy)/p.y;
+    
+    // cinema bars
+    if (abs(u.y) > .8) { o *= 0.; return; }
+ 
+    vec2 v = u.yx*.7 + vec2(1.2,.1);
+    float l1 = 2./length(u + v),
+          l2 = 2./length(u - v);
+ 
+    // camera movement
+    u += cos(t*vec2(.4,.8)) * vec2(.3,.1);
+    for(o*=0.; i++<1e2;
+    
+        // entity (orb)
+        e = length(p - vec3(
+            sin(sin(t*.2)+t*.4) * 2.,
+            1.+sin(sin(t*1.3)+t*.2) *1.23,
+            12.+t+cos(t*.5)*8.))-.1,
+        
+        // accumulate distance
+        d += s = min(.01+.4*abs(s),e=max(.8*e, .01)),
+        
+        // grayscale color
+        o += 1e2/(s+e*4.)+ l1 + l2)
+        
+        // noise loop start, march
+        for (p = vec3(u*d,d+t), // p = ro + rd *d, p.z + t;
+            
+            // plane
+            s =5.+p.y+cos(p.x*.1)*4.,
+            
+            // noise starts at .01 up to 3.,
+            // grow by a+=a
+            a = .01; a < 3.; a += a)
+            
+            // apply noise
+            s -= abs(dot(sin(.2*p.z+.6*t+p / a ), .4+p-p)) * a;
+    
+    // tanh tonemap, brightness
+    o = tanh(vec4(5,2,1,0)*o*o*o/1e9);
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+/*
+void mainImage(out vec4 o, vec2 u) {
+    float d,a,e,i,s,t = iTime*.5;
+    vec3  p = iResolution;    
+    
+    // scale coords
+    u = (u+u-p.xy)/p.y;
+    
+    // cinema bars
+    if (abs(u.y) > .8) { o = vec4(0); return; }
+ 
+ 
+    float l1 = 2./length(u + (u.yx*.7+.2-vec2(-1.,.1))),
+          l2 = 2./length(u - (u.yx*.7+.2-vec2(-1.,.1)));
+ 
+ 
+    // camera movement
+    u += vec2(cos(t*.4)*.3, cos(t*.8)*.1);
+    
+    for(o*=i; i++<1e2;
+    
+        // entity (orb)
+        e = length(p - vec3(
+            sin(sin(t*.2)+t*.4) * 2.,
+            1.+sin(sin(t*1.3)+t*.2) *1.23,
+            12.+t+cos(t*.5)*8.))-.1,
+        
+        // accumulate distance
+        d += s = min(.01+.4*abs(s),e=max(.8*e, .01)),
+        
+        // grayscale color
+        o += 1e2/(s+e*4.)+ l1 + l2)
+        
+        // noise loop start, march
+        for (p = vec3(u*d,d+t), // p = ro + rd *d, p.z + t;
+            
+            // diagonal plane
+            s =5.+p.y+cos(p.x*.1)*4.,
+            
+            // noise starts at .42 up to 16.,
+            // grow by a+=a
+            a = .01; a < 3.; a += a)
+            
+            // apply noise
+            s -= abs(dot(sin(.2*p.z+.6*t+p / a ), .4+p-p)) * a;
+    
+    // tanh tonemap, brightness, light off-screen
+    o = tanh(vec4(5,2,1,0)*o*o*o/1e9);
+}
+*/`,
+    "Starfire": `void mainImage(out vec4 o, vec2 u) {
+        float i,a,d,s,t=iTime;
+        vec3  p,r = iResolution;
+        
+        float bass = texture(iChannel0, vec2(0.1, 0.1)).x;
+        for(o*=i; i++<1e2;
+            d += s = .005+abs(s) * .5,
+            o += vec4(11,2.7-cos(.5*t)*.6, (2.*bass) + .8,0)/s)
+            for (p = vec3(((u-r.xy/2.)/r.y+cos(t*.3)*vec2(.02,.03)) * d, d - 15.),
+                s = length(p) - 5.8,
+                a = 1.; a < 24.; a += a)
+                p += cos(.15*t+a+p.yzx*3.)*.3,
+                s -= abs(dot(sin(.14*t+p * a * 6.), .05+p-p)) / a;
+        o = tanh(o / 1e4);
+    }
+    `,
+        "Heart Beats":`
+        // Heart Beats
+    // By Noztol
+    
+    vec2 rotate2D(vec2 position, float angle) {
+        float s = sin(angle), c = cos(angle);
+        return mat2(c, -s, s, c) * position;
+    }
+    
+    vec3 acesTonemap(vec3 colorInput) {
+        mat3 m1 = mat3(0.59719, 0.07600, 0.02840, 0.35458, 0.90834, 0.13383, 0.04823, 0.01566, 0.83777);
+        mat3 m2 = mat3(1.60475, -0.10208, -0.00327, -0.53108, 1.10813, -0.07276, -0.07367, -0.00605, 1.07602);
+        vec3 v = m1 * colorInput;
+        vec3 a = v * (v + 0.0245786) - 0.000090537;
+        vec3 b = v * (0.983729 * v + 0.4329510) + 0.238081;
+        return m2 * (a / b);
+    }
+    
+    // Xor's version
+    float dotNoise(vec3 position) {
+        const float PHI = 1.618033988;
+        const mat3 GOLD = mat3(
+            -0.571464913, +0.814921382, +0.096597072,
+            -0.278044873, -0.303026659, +0.911518454,
+            +0.772087367, +0.494042493, +0.399753815
+        );
+        return dot(cos(GOLD * position), sin(PHI * position * GOLD));
+    }
+    
+    void mainImage(out vec4 fragColor, in vec2 fragCoord) {
+        vec3 finalColor = vec3(0.0);
+        
+        float rawBass = texture(iChannel0, vec2(0.05, 0.25)).x;
+        float pulse = smoothstep(0.4, 0.9, rawBass); 
+        float mid = texture(iChannel0, vec2(0.50, 0.25)).x; 
+        
+        float state = sin(iTime * 0.5) * 0.5 + 0.5;
+        state = smoothstep(0.1, 0.9, state);
+        
+        const int antiAliasingLevel = 2;
+        
+        for(int xOffset = 0; xOffset < antiAliasingLevel; xOffset++) {
+            for(int yOffset = 0; yOffset < antiAliasingLevel; yOffset++) {
+                vec2 subPixelOffset = (vec2(float(xOffset), float(yOffset)) + 0.5) / float(antiAliasingLevel) - 0.5;
+                vec2 uv = fragCoord + subPixelOffset;
+                
+                float stepDistance;
+                float currentTime = iTime;
+                
+                vec3 rayPosition;
+                vec3 accumulatedLight = vec3(0.0);
+                vec3 warpedPosition;
+                vec3 rayDirection;
+                
+                rayPosition.z = currentTime * 1.5 + mix(0.0, pulse * 0.1, state); 
+                
+                rayDirection = normalize(vec3(2.0 * uv - iResolution.xy, iResolution.y));
+                
+                for(float iteration = 0.0; iteration < 14.0; iteration++) {
+                    warpedPosition = rayPosition;
+                    
+                    float twist = mix(0.0, pulse * 0.5, state);
+                    warpedPosition.xy = rotate2D(sin(warpedPosition.xy * 0.25), currentTime * 0.5 + warpedPosition.z * 2.0 + twist);
+                    
+                    float noiseIntensity = mix(0.7, 0.7 + mid * 0.3, state);
+                    stepDistance = 0.001 + abs(dotNoise(warpedPosition * 20.0) / 20.0 - dotNoise(warpedPosition)) * noiseIntensity;
+                    
+                    float phaseShift = mix(0.0, pulse * 1.5, state);
+                    float waveAmp = mix(0.5, 0.4 + pulse * 0.4, state);
+                    float wave = abs(rayPosition.y * 0.2 + sin(rayPosition.z * 2.0 + (abs(rayPosition.x) * 0.5) - phaseShift));
+                    stepDistance += wave * waveAmp;
+                    
+                    rayPosition += rayDirection * stepDistance;
+                    
+                    float blend = sin(iteration * 0.4 + length(rayPosition.xy * 0.5) - currentTime * 1.5) * 0.5 + 0.5;
+                    blend = smoothstep(0.3, 0.7, blend); 
+                    
+                    vec3 softPink = vec3(1.0, 0.5, 0.7);
+                    vec3 softBlue = vec3(0.4, 0.85, 1.0);
+                    
+                    vec3 hardPink = vec3(1.0, 0.1, 0.5);      
+                    vec3 hardBlue = vec3(0.05, 0.6, 1.0); 
+                    
+                    vec3 currentPink = mix(softPink, hardPink, state);
+                    vec3 currentBlue = mix(softBlue, hardBlue, state);
+                    vec3 palette = mix(currentPink, currentBlue, blend);
+                    
+                    vec3 softLight = palette * 1.4; 
+                    vec3 hardLight = palette * (0.6 + pulse * 0.5);
+                    accumulatedLight += mix(softLight, hardLight, state) / stepDistance;
+                }
+                
+                float exposure = mix(1500.0, 1200.0, state);
+                finalColor += acesTonemap(accumulatedLight * accumulatedLight / exposure);  
+            }
+        }
+        
+        fragColor = vec4(finalColor / float(antiAliasingLevel * antiAliasingLevel), 1.0);
+    }`,
+    
+        "Woman in the CRT":`
+        // Woman in the CRT
+    // Woman model copied from https://www.shadertoy.com/view/wfGczm
+    // CRT effects and color phasing by Noztol
+    
+    float sdSphere(vec3 p, float r) {
+        return length(p) - r;
+    }
+    
+    float sdCylinder(vec3 p, float r, float h) {
+        vec2 d = abs(vec2(length(p.xz), p.y)) - vec2(r, h);
+        return min(max(d.x, d.y), 0.0) + length(max(d, 0.0));
+    }
+    
+    float sdRoundCone(vec3 p, float r1, float r2, float h) {
+        float b = (r1 - r2) / h;
+        float a = sqrt(max(1.0 - b * b, 0.0001));
+        vec2 q = vec2(length(p.xz), p.y);
+        float k = dot(q, vec2(-b, a));
+        if (k < 0.0) return length(q) - r1;
+        if (k > a * h) return length(q - vec2(0.0, h)) - r2;
+        return dot(q, vec2(a, b)) - r1;
+    }
+    
+    float sdVerticalCapsule(vec3 p, float h, float r) {
+        p.y -= clamp(p.y, 0.0, h);
+        return length(p) - r;
+    }
+    
+    float sdVesicaSegment(vec3 p, vec3 a, vec3 b, float w) {
+        vec3 c = (a + b) * 0.5;
+        vec3 ba = b - a;
+        float l = length(ba);
+        vec3 v = ba / max(l, 0.0001);
+        vec3 rel = p - c;
+        float y = dot(rel, v);
+        vec2 q = vec2(length(rel - y * v), abs(y));
+        float r = 0.5 * l;
+        float ww = max(w, 0.0001);
+        float d = 0.5 * (r * r - ww * ww) / ww;
+        vec3 h = (r * q.x < d * (q.y - r)) ? vec3(0.0, r, 0.0) : vec3(-d, 0.0, d + ww);
+        return length(q - h.xy) - h.z;
+    }
+    
+    float opSmoothUnion(float d1, float d2, float k) {
+        float h = clamp(0.5 + 0.5 * (d2 - d1) / k, 0.0, 1.0);
+        return mix(d2, d1, h) - k * h * (1.0 - h);
+    }
+    
+    float opSmoothSubtraction(float d1, float d2, float k) {
+        float h = clamp(0.5 - 0.5 * (d2 + d1) / k, 0.0, 1.0);
+        return mix(d2, -d1, h) + k * h * (1.0 - h);
+    }
+    
+    float opSmoothIntersection(float d1, float d2, float k) {
+        float h = clamp(0.5 - 0.5 * (d2 - d1) / k, 0.0, 1.0);
+        return mix(d2, d1, h) + k * h * (1.0 - h);
+    }
+    
+    float opXor(float d1, float d2) {
+        return max(min(d1, d2), -max(d1, d2));
+    }
+    
+    vec3 hsvToRgb(vec3 c) {
+        vec4 K = vec4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
+        vec3 p = abs(fract(c.xxx + K.xyz) * 6.0 - K.www);
+        return c.z * mix(K.xxx, clamp(p - K.xxx, 0.0, 1.0), c.y);
+    }
+    
+    vec3 intToColor(int i) {
+        float goldenRatio = 0.618033988749895;
+        float hue = fract(float(i) * goldenRatio);
+        float satBucket = floor(mod(float(i), 3.0));
+        float valBucket = floor(mod(float(i), 4.0));
+        float sat = clamp(0.7 + satBucket * 0.1, 0.0, 1.0);
+        float val = clamp(0.7 + valBucket * 0.075, 0.0, 1.0);
+        return hsvToRgb(vec3(hue, sat, val));
+    }
+    
+    mat3 rotateX(float a) {
+        float c = cos(a), s = sin(a);
+        return mat3(1, 0, 0, 0, c, -s, 0, s, c);
+    }
+    
+    mat3 rotateY(float a) {
+        float c = cos(a), s = sin(a);
+        return mat3(c, 0, s, 0, 1, 0, -s, 0, c);
+    }
+    
+    mat3 rotateZ(float a) {
+        float c = cos(a), s = sin(a);
+        return mat3(c, -s, 0, s, c, 0, 0, 0, 1);
+    }
+    
+    // === Experimental Shapes ===
+    
+    // Cart2Polar for Mandelbulb
+    vec3 cart2polar(in vec3 st) {
+        float r = length(st);
+        float phi = acos(st.z / r);
+        float theta = atan(st.y, st.x);
+        return vec3(r, phi, theta);
+    }
+    
+    // Mandelbulb SDF
+    float sdMandelbulb(in vec3 st, float power, float maxIterations) {
+        vec3 zeta = st;
+        float m = dot(st, st);
+        float dz = 1.0;
+        int iterations = int(maxIterations);
+        
+        for (int i = 0; i < 50; i++) {
+            if (i >= iterations) break;
+            
+            dz = power * pow(m, 3.5) * dz + 1.0;
+            vec3 sphericalZ = cart2polar(zeta);
+            float newx = pow(sphericalZ.x, power) * sin(sphericalZ.y * power) * cos(sphericalZ.z * power);
+            float newy = pow(sphericalZ.x, power) * sin(sphericalZ.y * power) * sin(sphericalZ.z * power);
+            float newz = pow(sphericalZ.x, power) * cos(sphericalZ.y * power);
+            zeta.x = newx + st.x;
+            zeta.y = newy + st.y;
+            zeta.z = newz + st.z;
+            
+            m = dot(zeta, zeta);
+            if (m > 2.0) break;
+        }
+        
+        // Distance estimation through the Hubbard-Douady potential
+        return 0.25 * log(m) * sqrt(m) / dz;
+    }
+    
+    // Supershape helpers
+    vec3 Spherical(vec3 pos) {
+        float r = sqrt(pos.x * pos.x + pos.y * pos.y + pos.z * pos.z);
+        float theta = pos.z / r;
+        float phi = atan(pos.y, pos.x);
+        vec3 w = vec3(r, theta, phi);
+        return w;
+    }
+    
+    bool hair = true;
+    
+    // Complex Woman SDF (performance test primitive)
+    float sdComplexWoman(vec3 p) {
+        vec3 smoothunion_1_p = p;
+        smoothunion_1_p -= vec3(0.000, 0.000, 0.000); // Centered at origin
+        smoothunion_1_p *= rotateX(-2.6878);
+        smoothunion_1_p *= rotateY(2.8449);
+        smoothunion_1_p *= rotateZ(2.8798);
+        float smoothunion_1_scale = max(1.000, 0.0001);
+        smoothunion_1_p /= smoothunion_1_scale;
+        vec3 smoothunion_2_p = smoothunion_1_p;
+        smoothunion_2_p -= vec3(0.000, 0.000, 0.000); // Centered (was -3.100, 0.500, -1.100)
+        smoothunion_2_p *= rotateX(1.0123);
+        smoothunion_2_p *= rotateY(-0.8901);
+        smoothunion_2_p *= rotateZ(-2.0420);
+        float smoothunion_2_scale = max(1.000, 0.0001);
+        smoothunion_2_p /= smoothunion_2_scale;
+        vec3 smoothunion_3_p = smoothunion_2_p;
+        smoothunion_3_p -= vec3(0.000, 0.000, 0.000);
+        float smoothunion_3_scale = max(1.000, 0.0001);
+        smoothunion_3_p /= smoothunion_3_scale;
+        vec3 smoothunion_4_p = smoothunion_3_p;
+        smoothunion_4_p -= vec3(0.000, 0.000, 0.000);
+        float smoothunion_4_scale = max(1.000, 0.0001);
+        smoothunion_4_p /= smoothunion_4_scale;
+        vec3 symx_1_p = smoothunion_4_p;
+        symx_1_p -= vec3(0.000, 0.000, 0.000);
+        symx_1_p *= rotateX(0.1571);
+        float symx_1_scale = max(1.000, 0.0001);
+        symx_1_p /= symx_1_scale;
+        vec3 symx_1_warp = symx_1_p;
+        symx_1_warp.x = abs(symx_1_warp.x);
+        vec3 smoothunion_5_p = symx_1_warp;
+        smoothunion_5_p -= vec3(0.000, 0.000, 0.000);
+        float smoothunion_5_scale = max(1.000, 0.0001);
+        smoothunion_5_p /= smoothunion_5_scale;
+        vec3 smoothunion_6_p = smoothunion_5_p;
+        smoothunion_6_p -= vec3(-0.200, 0.000, -0.100);
+        smoothunion_6_p *= rotateY(-0.1920);
+        smoothunion_6_p *= rotateZ(0.5061);
+        float smoothunion_6_scale = max(1.000, 0.0001);
+        smoothunion_6_p /= smoothunion_6_scale;
+        vec3 cheapbend_1_p = smoothunion_6_p;
+        cheapbend_1_p -= vec3(0.900, -0.400, 0.100);
+        cheapbend_1_p *= rotateX(-1.1345);
+        cheapbend_1_p *= rotateY(0.8901);
+        cheapbend_1_p *= rotateZ(0.1396);
+        float cheapbend_1_scale = max(1.000, 0.0001);
+        cheapbend_1_p /= cheapbend_1_scale;
+        vec3 cheapbend_1_warp = cheapbend_1_p;
+        float cheapbend_1_angle = 0.900 * cheapbend_1_warp.x;
+        mat2 cheapbend_1_mat = mat2(cos(cheapbend_1_angle), -sin(cheapbend_1_angle), sin(cheapbend_1_angle), cos(cheapbend_1_angle));
+        vec2 cheapbend_1_rot = cheapbend_1_mat * cheapbend_1_warp.xy;
+        cheapbend_1_warp.xy = cheapbend_1_rot;
+        vec3 sphere_1_p = cheapbend_1_warp;
+        sphere_1_p -= vec3(-0.400, -0.300, 0.000);
+        float sphere_1_scale = max(0.950, 0.0001);
+        sphere_1_p /= sphere_1_scale;
+        float sphere_1 = sdSphere(sphere_1_p, 0.500) * sphere_1_scale;
+        float cheapbend_1 = sphere_1 * cheapbend_1_scale;
+        vec3 smoothunion_7_p = smoothunion_6_p;
+        smoothunion_7_p -= vec3(0.000, 0.000, 0.000);
+        float smoothunion_7_scale = max(0.950, 0.0001);
+        smoothunion_7_p /= smoothunion_7_scale;
+        vec3 sphere_2_p = smoothunion_7_p;
+        sphere_2_p -= vec3(0.700, 0.000, -0.100);
+        float sphere_2_scale = max(0.850, 0.0001);
+        sphere_2_p /= sphere_2_scale;
+        float sphere_2 = sdSphere(sphere_2_p, 0.500) * sphere_2_scale;
+        vec3 vesicasegment_1_p = smoothunion_7_p;
+        vesicasegment_1_p -= vec3(0.700, 0.000, 0.000);
+        vesicasegment_1_p *= rotateX(-0.0349);
+        vesicasegment_1_p *= rotateY(-1.7104);
+        float vesicasegment_1_scale = max(1.050, 0.0001);
+        vesicasegment_1_p /= vesicasegment_1_scale;
+        float vesicasegment_1 = sdVesicaSegment(vesicasegment_1_p, vec3(-0.500, 0.000, 0.000), vec3(0.500, 0.000, 0.000), 0.360) * vesicasegment_1_scale;
+        float smoothunion_7 = opSmoothUnion(sphere_2, vesicasegment_1, 0.010) * smoothunion_7_scale;
+        float smoothunion_6 = opSmoothUnion(cheapbend_1, smoothunion_7, 0.070) * smoothunion_6_scale;
+        vec3 sphere_3_p = smoothunion_5_p;
+        sphere_3_p -= vec3(0.300, -0.800, -1.300);
+        sphere_3_p *= rotateZ(-0.0349);
+        float sphere_3_scale = max(1.150, 0.0001);
+        sphere_3_p /= sphere_3_scale;
+        float sphere_3 = sdSphere(sphere_3_p, 0.350) * sphere_3_scale;
+        float smoothunion_5 = opSmoothUnion(smoothunion_6, sphere_3, 0.390) * smoothunion_5_scale;
+        float symx_1 = smoothunion_5 * symx_1_scale;
+        vec3 smoothunion_8_p = smoothunion_4_p;
+        smoothunion_8_p -= vec3(-0.100, 0.000, 0.000);
+        float smoothunion_8_scale = max(1.000, 0.0001);
+        smoothunion_8_p /= smoothunion_8_scale;
+        vec3 smoothunion_9_p = smoothunion_8_p;
+        smoothunion_9_p -= vec3(0.000, 0.000, 0.000);
+        float smoothunion_9_scale = max(1.000, 0.0001);
+        smoothunion_9_p /= smoothunion_9_scale;
+        vec3 cheapbend_2_p = smoothunion_9_p;
+        cheapbend_2_p -= vec3(0.900, 0.700, -2.200);
+        cheapbend_2_p *= rotateX(0.2967);
+        cheapbend_2_p *= rotateY(-1.5533);
+        cheapbend_2_p *= rotateZ(-0.8029);
+        float cheapbend_2_scale = max(1.000, 0.0001);
+        cheapbend_2_p /= cheapbend_2_scale;
+        vec3 cheapbend_2_warp = cheapbend_2_p;
+        float cheapbend_2_angle = 0.200 * cheapbend_2_warp.x;
+        mat2 cheapbend_2_mat = mat2(cos(cheapbend_2_angle), -sin(cheapbend_2_angle), sin(cheapbend_2_angle), cos(cheapbend_2_angle));
+        vec2 cheapbend_2_rot = cheapbend_2_mat * cheapbend_2_warp.xy;
+        cheapbend_2_warp.xy = cheapbend_2_rot;
+        vec3 vesicasegment_2_p = cheapbend_2_warp;
+        vesicasegment_2_p -= vec3(-1.200, -1.400, -1.300);
+        vesicasegment_2_p *= rotateX(-0.5236);
+        vesicasegment_2_p *= rotateY(-0.9948);
+        vesicasegment_2_p *= rotateZ(-1.1868);
+        float vesicasegment_2_scale = max(0.450, 0.0001);
+        vesicasegment_2_p /= vesicasegment_2_scale;
+        float vesicasegment_2 = sdVesicaSegment(vesicasegment_2_p, vec3(-2.700, -0.400, 1.200), vec3(0.100, -0.100, -0.100), 0.170) * vesicasegment_2_scale;
+        float cheapbend_2 = vesicasegment_2 * cheapbend_2_scale;
+        vec3 vesicasegment_3_p = smoothunion_9_p;
+        vesicasegment_3_p -= vec3(-0.500, -1.300, -1.500);
+        vesicasegment_3_p *= rotateX(-0.2094);
+        vesicasegment_3_p *= rotateY(0.2443);
+        vesicasegment_3_p *= rotateZ(-1.6581);
+        float vesicasegment_3_scale = max(0.750, 0.0001);
+        vesicasegment_3_p /= vesicasegment_3_scale;
+        float vesicasegment_3 = sdVesicaSegment(vesicasegment_3_p, vec3(-1.400, -0.100, -0.700), vec3(0.800, -0.400, 0.800), 0.310) * vesicasegment_3_scale;
+        float smoothunion_9 = opSmoothUnion(cheapbend_2, vesicasegment_3, 0.290) * smoothunion_9_scale;
+        vec3 cheapbend_3_p = smoothunion_8_p;
+        cheapbend_3_p -= vec3(-1.300, -0.600, -2.800);
+        cheapbend_3_p *= rotateX(1.4486);
+        cheapbend_3_p *= rotateY(1.1345);
+        cheapbend_3_p *= rotateZ(-3.0369);
+        float cheapbend_3_scale = max(1.050, 0.0001);
+        cheapbend_3_p /= cheapbend_3_scale;
+        vec3 cheapbend_3_warp = cheapbend_3_p;
+        float cheapbend_3_angle = -0.300 * cheapbend_3_warp.x;
+        mat2 cheapbend_3_mat = mat2(cos(cheapbend_3_angle), -sin(cheapbend_3_angle), sin(cheapbend_3_angle), cos(cheapbend_3_angle));
+        vec2 cheapbend_3_rot = cheapbend_3_mat * cheapbend_3_warp.xy;
+        cheapbend_3_warp.xy = cheapbend_3_rot;
+        vec3 verticalcapsule_1_p = cheapbend_3_warp;
+        verticalcapsule_1_p -= vec3(-0.300, 0.200, -1.900);
+        verticalcapsule_1_p *= rotateX(0.1571);
+        verticalcapsule_1_p *= rotateY(-1.4835);
+        verticalcapsule_1_p *= rotateZ(-0.3491);
+        float verticalcapsule_1_scale = max(0.600, 0.0001);
+        verticalcapsule_1_p /= verticalcapsule_1_scale;
+        float verticalcapsule_1 = sdVerticalCapsule(verticalcapsule_1_p, 2.150, 0.390) * verticalcapsule_1_scale;
+        float cheapbend_3 = verticalcapsule_1 * cheapbend_3_scale;
+        float smoothunion_8 = opSmoothUnion(smoothunion_9, cheapbend_3, 0.150) * smoothunion_8_scale;
+        float smoothunion_4 = opSmoothUnion(symx_1, smoothunion_8, 0.260) * smoothunion_4_scale;
+        vec3 cheapbend_4_p = smoothunion_3_p;
+        cheapbend_4_p -= vec3(0.000, 0.000, 0.000);
+        float cheapbend_4_scale = max(1.000, 0.0001);
+        cheapbend_4_p /= cheapbend_4_scale;
+        vec3 cheapbend_4_warp = cheapbend_4_p;
+        float cheapbend_4_angle = 0.300 * cheapbend_4_warp.x;
+        mat2 cheapbend_4_mat = mat2(cos(cheapbend_4_angle), -sin(cheapbend_4_angle), sin(cheapbend_4_angle), cos(cheapbend_4_angle));
+        vec2 cheapbend_4_rot = cheapbend_4_mat * cheapbend_4_warp.xy;
+        cheapbend_4_warp.xy = cheapbend_4_rot;
+        vec3 verticalcapsule_2_p = cheapbend_4_warp;
+        verticalcapsule_2_p -= vec3(0.000, -0.900, -0.800);
+        verticalcapsule_2_p *= rotateX(-0.8552);
+        verticalcapsule_2_p *= rotateY(-0.1396);
+        float verticalcapsule_2_scale = max(0.950, 0.0001);
+        verticalcapsule_2_p /= verticalcapsule_2_scale;
+        float verticalcapsule_2 = sdVerticalCapsule(verticalcapsule_2_p, 0.800, 0.410) * verticalcapsule_2_scale;
+        float cheapbend_4 = verticalcapsule_2 * cheapbend_4_scale;
+        float smoothunion_3 = opSmoothUnion(smoothunion_4, cheapbend_4, 0.110) * smoothunion_3_scale;
+        vec3 smoothunion_10_p = smoothunion_2_p;
+        smoothunion_10_p -= vec3(0.000, 0.000, 0.000);
+        float smoothunion_10_scale = max(1.000, 0.0001);
+        smoothunion_10_p /= smoothunion_10_scale;
+        vec3 cheapbend_5_p = smoothunion_10_p;
+        cheapbend_5_p -= vec3(0.000, 0.500, -0.200);
+        cheapbend_5_p *= rotateX(-2.9845);
+        cheapbend_5_p *= rotateY(-0.0349);
+        cheapbend_5_p *= rotateZ(-0.0873);
+        float cheapbend_5_scale = max(0.900, 0.0001);
+        cheapbend_5_p /= cheapbend_5_scale;
+        vec3 cheapbend_5_warp = cheapbend_5_p;
+        float cheapbend_5_angle = -1.200 * cheapbend_5_warp.x;
+        mat2 cheapbend_5_mat = mat2(cos(cheapbend_5_angle), -sin(cheapbend_5_angle), sin(cheapbend_5_angle), cos(cheapbend_5_angle));
+        vec2 cheapbend_5_rot = cheapbend_5_mat * cheapbend_5_warp.xy;
+        cheapbend_5_warp.xy = cheapbend_5_rot;
+        vec3 verticalcapsule_3_p = cheapbend_5_warp;
+        verticalcapsule_3_p -= vec3(0.000, 0.000, 0.000);
+        verticalcapsule_3_p *= rotateX(0.2443);
+        verticalcapsule_3_p *= rotateY(-0.4363);
+        float verticalcapsule_3_scale = max(1.000, 0.0001);
+        verticalcapsule_3_p /= verticalcapsule_3_scale;
+        float verticalcapsule_3 = sdVerticalCapsule(verticalcapsule_3_p, 0.700, 0.140) * verticalcapsule_3_scale;
+        float cheapbend_5 = verticalcapsule_3 * cheapbend_5_scale;
+        vec3 vesicasegment_4_p = smoothunion_10_p;
+        vesicasegment_4_p -= vec3(-0.200, 0.400, -0.400);
+        vesicasegment_4_p *= rotateX(1.1345);
+        vesicasegment_4_p *= rotateY(0.7330);
+        vesicasegment_4_p *= rotateZ(0.0349);
+        float vesicasegment_4_scale = max(1.000, 0.0001);
+        vesicasegment_4_p /= vesicasegment_4_scale;
+        float vesicasegment_4 = sdVesicaSegment(vesicasegment_4_p, vec3(0.900, -0.400, -0.500), vec3(0.200, -0.500, -1.000), 0.190) * vesicasegment_4_scale;
+        float smoothunion_10 = opSmoothUnion(cheapbend_5, vesicasegment_4, 0.100) * smoothunion_10_scale;
+        float smoothunion_2 = opSmoothUnion(smoothunion_3, smoothunion_10, 0.070) * smoothunion_2_scale;
+        vec3 smoothunion_11_p = smoothunion_1_p;
+        smoothunion_11_p -= vec3(3.100, -0.500, 1.100); // Offset to maintain relative position
+        float smoothunion_11_scale = max(1.000, 0.0001);
+        smoothunion_11_p /= smoothunion_11_scale;
+        vec3 roundcone_1_p = smoothunion_11_p;
+        roundcone_1_p -= vec3(-3.000, 0.300, -1.400);
+        roundcone_1_p *= rotateX(-1.0821);
+        roundcone_1_p *= rotateY(0.1047);
+        roundcone_1_p *= rotateZ(-0.5934);
+        float roundcone_1_scale = max(1.000, 0.0001);
+        roundcone_1_p /= roundcone_1_scale;
+        float roundcone_1 = sdRoundCone(roundcone_1_p, 0.360, 0.170, 0.600) * roundcone_1_scale;
+        vec3 verticalcapsule_4_p = smoothunion_11_p;
+        verticalcapsule_4_p -= vec3(-3.100, 0.500, -1.000);
+        verticalcapsule_4_p *= rotateX(-1.0123);
+        verticalcapsule_4_p *= rotateY(-0.3840);
+        verticalcapsule_4_p *= rotateZ(-0.9948);
+        float verticalcapsule_4_scale = max(1.000, 0.0001);
+        verticalcapsule_4_p /= verticalcapsule_4_scale;
+        float verticalcapsule_4 = sdVerticalCapsule(verticalcapsule_4_p, 0.500, 0.170) * verticalcapsule_4_scale;
+        float smoothunion_11 = opSmoothUnion(roundcone_1, verticalcapsule_4, 0.260) * smoothunion_11_scale;
+        float smoothunion_1 = opSmoothUnion(smoothunion_2, smoothunion_11, 0.140) * smoothunion_1_scale;
+        return smoothunion_1;
+    }
+    
+    float sceneSDF(vec3 p) {
+        vec3 smoothunion_1_p = p;
+        smoothunion_1_p -= vec3(-0.300, 0.000, 0.000);
+        smoothunion_1_p *= rotateY(-0.3+sin(iTime)*0.7);
+        //smoothunion_1_p *= rotateZ(0.1920);
+        smoothunion_1_p *= rotateX(0.1920);
+        float smoothunion_1_scale = max(1.000, 0.0001);
+        smoothunion_1_p /= smoothunion_1_scale;
+        vec3 smoothunion_2_p = smoothunion_1_p;
+        smoothunion_2_p -= vec3(0.000, 0.000, 0.000);
+        float smoothunion_2_scale = max(1.000, 0.0001);
+        smoothunion_2_p /= smoothunion_2_scale;
+        vec3 smoothunion_3_p = smoothunion_2_p;
+        smoothunion_3_p -= vec3(-0.100, -0.400, 0.700);
+        smoothunion_3_p *= rotateX(0.0349);
+        smoothunion_3_p *= rotateY(0.8552);
+        smoothunion_3_p *= rotateZ(0.1571);
+        float smoothunion_3_scale = max(0.600, 0.0001);
+        smoothunion_3_p /= smoothunion_3_scale;
+        vec3 roundcone_1_p = smoothunion_3_p;
+        roundcone_1_p -= vec3(0.000, -0.100, 0.000);
+        roundcone_1_p *= rotateX(-2.9671);
+        roundcone_1_p *= rotateY(-0.1222);
+        roundcone_1_p *= rotateZ(0.1222);
+        float roundcone_1_scale = max(0.800, 0.0001);
+        roundcone_1_p /= roundcone_1_scale;
+        float roundcone_1_dist;
+        float roundcone_1_skip = length(roundcone_1_p) - (1.020);
+        if (roundcone_1_skip > 2.0) {
+            roundcone_1_dist = roundcone_1_skip;
+        } else {
+            roundcone_1_dist = sdRoundCone(roundcone_1_p, 0.470, 0.130, 0.550);
+        }
+        float roundcone_1 = roundcone_1_dist;
+        roundcone_1 *= roundcone_1_scale;
+        vec3 roundcone_2_p = smoothunion_3_p;
+        roundcone_2_p -= vec3(0.100, -0.500, 0.000);
+        roundcone_2_p *= rotateX(-0.0698);
+        roundcone_2_p *= rotateY(-0.6109);
+        roundcone_2_p *= rotateZ(3.0194);
+        float roundcone_2_scale = max(1.000, 0.0001);
+        roundcone_2_p /= roundcone_2_scale;
+        float roundcone_2_dist;
+        float roundcone_2_skip = length(roundcone_2_p) - (1.230);
+        if (roundcone_2_skip > 2.0) {
+            roundcone_2_dist = roundcone_2_skip;
+        } else {
+            roundcone_2_dist = sdRoundCone(roundcone_2_p, 0.280, 0.210, 0.950);
+        }
+        float roundcone_2 = roundcone_2_dist;
+        roundcone_2 *= roundcone_2_scale;
+        float smoothunion_3 = opSmoothUnion(roundcone_1, roundcone_2, 0.300);
+        smoothunion_3 *= smoothunion_3_scale;
+        vec3 smoothunion_4_p = smoothunion_2_p;
+        smoothunion_4_p -= vec3(0.000, 0.000, 0.000);
+        float smoothunion_4_scale = max(1.000, 0.0001);
+        smoothunion_4_p /= smoothunion_4_scale;
+        vec3 smoothunion_5_p = smoothunion_4_p;
+        smoothunion_5_p -= vec3(-0.100, 0.000, 0.000);
+        float smoothunion_5_scale = max(1.000, 0.0001);
+        smoothunion_5_p /= smoothunion_5_scale;
+        vec3 complexwoman_1_p = smoothunion_5_p;
+        complexwoman_1_p -= vec3(0.000, 0.000, 0.000);
+        float complexwoman_1_scale = max(1.000, 0.0001);
+        complexwoman_1_p /= complexwoman_1_scale;
+        float complexwoman_1_dist;
+        float complexwoman_1_skip = length(complexwoman_1_p) - (6.0);
+        if (complexwoman_1_skip > 2.0) {
+            complexwoman_1_dist = complexwoman_1_skip;
+        } else {
+            complexwoman_1_dist = sdComplexWoman(complexwoman_1_p);
+        }
+        float complexwoman_1 = complexwoman_1_dist;
+        complexwoman_1 *= complexwoman_1_scale;
+        vec3 round_1_p = smoothunion_5_p;
+        round_1_p -= vec3(0.000, 0.000, 0.000);
+        round_1_p *= rotateX(-0.0349);
+        round_1_p *= rotateY(0.0873);
+        float round_1_scale = max(0.900, 0.0001);
+        round_1_p /= round_1_scale;
+        vec3 vesicasegment_1_p = round_1_p;
+        vesicasegment_1_p -= vec3(-0.700, 0.000, -0.900);
+        float vesicasegment_1_scale = max(0.900, 0.0001);
+        vesicasegment_1_p /= vesicasegment_1_scale;
+        float vesicasegment_1_dist;
+        float vesicasegment_1_skip = length(vesicasegment_1_p) - (1.293);
+        if (vesicasegment_1_skip > 2.0) {
+            vesicasegment_1_dist = vesicasegment_1_skip;
+        } else {
+            vesicasegment_1_dist = sdVesicaSegment(vesicasegment_1_p, vec3(-0.800, 1.300, 0.400), vec3(0.900, -0.200, 0.100), 0.150);
+        }
+        float vesicasegment_1 = vesicasegment_1_dist;
+        vesicasegment_1 *= vesicasegment_1_scale;
+        float round_1 = vesicasegment_1 - 0.040;
+        round_1 *= round_1_scale;
+        float smoothunion_5 = opSmoothUnion(complexwoman_1, round_1, 0.040);
+        smoothunion_5 *= smoothunion_5_scale;
+        vec3 smoothunion_6_p = smoothunion_4_p;
+        smoothunion_6_p -= vec3(-0.900, 0.000, 0.500);
+        smoothunion_6_p *= rotateX(-2.1293);
+        smoothunion_6_p *= rotateY(2.8972);
+        smoothunion_6_p *= rotateZ(1.0996);
+        float smoothunion_6_scale = max(0.800, 0.0001);
+        smoothunion_6_p /= smoothunion_6_scale;
+        vec3 sphere_1_p = smoothunion_6_p;
+        sphere_1_p -= vec3(0.000, -0.200, 0.000);
+        float sphere_1_scale = max(1.000, 0.0001);
+        sphere_1_p /= sphere_1_scale;
+        float sphere_1_dist;
+        float sphere_1_skip = length(sphere_1_p) - (0.400);
+        if (sphere_1_skip > 2.0) {
+            sphere_1_dist = sphere_1_skip;
+        } else {
+            sphere_1_dist = sdSphere(sphere_1_p, 0.400);
+        }
+        float sphere_1 = sphere_1_dist;
+        sphere_1 *= sphere_1_scale;
+        vec3 symx_1_p = smoothunion_6_p;
+        symx_1_p -= vec3(0.000, -0.100, 0.000);
+        symx_1_p *= rotateX(-0.5411);
+        symx_1_p *= rotateY(-0.0873);
+        symx_1_p *= rotateZ(0.0524);
+        float symx_1_scale = max(0.800, 0.0001);
+        symx_1_p /= symx_1_scale;
+        vec3 symx_1_warp = symx_1_p;
+        symx_1_warp.x = abs(symx_1_warp.x);
+        vec3 round_2_p = symx_1_warp;
+        round_2_p -= vec3(0.000, -0.100, 0.000);
+        round_2_p *= rotateX(0.0524);
+        float round_2_scale = max(0.850, 0.0001);
+        round_2_p /= round_2_scale;
+        vec3 vesicasegment_2_p = round_2_p;
+        vesicasegment_2_p -= vec3(0.000, -0.300, 0.100);
+        vesicasegment_2_p *= rotateX(1.2741);
+        vesicasegment_2_p *= rotateY(-0.9250);
+        vesicasegment_2_p *= rotateZ(-0.0175);
+        float vesicasegment_2_scale = max(0.750, 0.0001);
+        vesicasegment_2_p /= vesicasegment_2_scale;
+        float vesicasegment_2_dist;
+        float vesicasegment_2_skip = length(vesicasegment_2_p) - (0.700);
+        if (vesicasegment_2_skip > 2.0) {
+            vesicasegment_2_dist = vesicasegment_2_skip;
+        } else {
+            vesicasegment_2_dist = sdVesicaSegment(vesicasegment_2_p, vec3(-0.600, -0.800, 0.300), vec3(0.200, -0.200, 0.100), 0.190);
+        }
+        float vesicasegment_2 = vesicasegment_2_dist;
+        vesicasegment_2 *= vesicasegment_2_scale;
+        float round_2 = vesicasegment_2 - 0.070;
+        round_2 *= round_2_scale;
+        float symx_1 = round_2;
+        symx_1 *= symx_1_scale;
+        float smoothunion_6 = opSmoothUnion(sphere_1, symx_1, 0.170);
+        smoothunion_6 *= smoothunion_6_scale;
+        float smoothunion_4 = opSmoothUnion(smoothunion_5, smoothunion_6, 0.110);
+        smoothunion_4 *= smoothunion_4_scale;
+        float smoothunion_2 = opSmoothUnion(smoothunion_3, smoothunion_4, 0.240);
+        smoothunion_2 *= smoothunion_2_scale;
+        vec3 twist_1_p = smoothunion_1_p;
+        twist_1_p -= vec3(-0.900, -0.300, 0.400);
+        twist_1_p *= rotateX(3.0543);
+        twist_1_p *= rotateY(1.2043);
+        twist_1_p *= rotateZ(-2.8972);
+        float twist_1_scale = max(0.300, 0.0001);
+        twist_1_p /= twist_1_scale;
+        vec3 twist_1_warp = twist_1_p;
+        float twist_1_angle = 0.700 * twist_1_warp.y;
+        mat2 twist_1_mat = mat2(cos(twist_1_angle), -sin(twist_1_angle), sin(twist_1_angle), cos(twist_1_angle));
+        twist_1_warp.xz = twist_1_mat * twist_1_warp.xz;
+        vec3 smoothunion_7_p = twist_1_warp;
+        smoothunion_7_p -= vec3(0.000, 0.000, 0.000);
+        float smoothunion_7_scale = max(1.000, 0.0001);
+        smoothunion_7_p /= smoothunion_7_scale;
+        vec3 sphere_2_p = smoothunion_7_p;
+        sphere_2_p -= vec3(0.100, 0.000, 0.000);
+        sphere_2_p *= rotateX(-0.7505);
+        sphere_2_p *= rotateY(-0.6458);
+        sphere_2_p *= rotateZ(-0.4363);
+        float sphere_2_scale = max(1.550, 0.0001);
+        sphere_2_p /= sphere_2_scale;
+        float sphere_2_dist;
+        float sphere_2_skip = length(sphere_2_p) - (0.700);
+        if (sphere_2_skip > 2.0) {
+            sphere_2_dist = sphere_2_skip;
+        } else {
+            sphere_2_dist = sdSphere(sphere_2_p, 0.700);
+        }
+        float sphere_2 = sphere_2_dist;
+        sphere_2 *= sphere_2_scale;
+        vec3 mandelbulb_1_p = smoothunion_7_p;
+        mandelbulb_1_p -= vec3(0.400, -0.100, 0.300);
+        mandelbulb_1_p *= rotateX(-1.0821);
+        mandelbulb_1_p *= rotateY(-0.5061);
+        mandelbulb_1_p *= rotateZ(0.8029);
+        float mandelbulb_1_scale = max(1.300, 0.0001);
+        mandelbulb_1_p /= mandelbulb_1_scale;
+        float mandelbulb_1_dist;
+        float mandelbulb_1_skip = length(mandelbulb_1_p) - (1.5);
+        if (mandelbulb_1_skip > 2.0) {
+            mandelbulb_1_dist = mandelbulb_1_skip;
+        } else {
+            mandelbulb_1_dist = sdMandelbulb(mandelbulb_1_p, 7.000, 5.000);
+        }
+        float mandelbulb_1 = mandelbulb_1_dist;
+        mandelbulb_1 *= mandelbulb_1_scale;
+        float smoothunion_7 = opSmoothUnion(sphere_2, mandelbulb_1, 0.560);
+        smoothunion_7 *= smoothunion_7_scale;
+        float twist_1 = smoothunion_7;
+        twist_1 *= twist_1_scale;
+        float smoothunion_1 = opSmoothUnion(smoothunion_2, twist_1, 0.300);
+        smoothunion_1 *= smoothunion_1_scale;
+        if(smoothunion_4<0.1||smoothunion_3<0.1){hair=false;}
+        return smoothunion_1;
+    }
+    
+    vec3 calcNormal(vec3 p) {
+        vec2 e = vec2(0.001, 0.0);
+        return normalize(vec3(
+            sceneSDF(p + e.xyy) - sceneSDF(p - e.xyy),
+            sceneSDF(p + e.yxy) - sceneSDF(p - e.yxy),
+            sceneSDF(p + e.yyx) - sceneSDF(p - e.yyx)
+        ));
+    }
+    
+    void mainImage(out vec4 fragColor, in vec2 fragCoord) {
+        // Coordinate systems
+        vec2 uv = (fragCoord - 0.5 * iResolution.xy) / iResolution.y;
+        vec2 rawUV = fragCoord / iResolution.xy; // 0 to 1 for stripes
+    
+        // Camera settings from original code
+        vec3 cameraPos = vec3(2.02, -.2, 4.0);
+        vec3 cameraTarget = vec3(-0.51, -0.88, -0.15);
+        
+        // Ray setup
+        vec3 forward = normalize(cameraTarget - cameraPos);
+        vec3 right = normalize(cross(forward, vec3(0.0, 1.0, 0.0)));
+        vec3 up = cross(right, forward);
+        vec3 rd = normalize(forward + uv.x * right + uv.y * up);
+        vec3 ro = cameraPos;
+        
+        // Raymarch to find distance to the 3D surface
+        float t = 0.0;
+        float minDist = 1000.0;
+        
+        for (int i = 0; i < 75; i++) {
+            vec3 p = ro + rd * t;
+            float d = sceneSDF(p);
+            minDist = min(minDist, d);
+            
+            if (abs(d) < 0.005 || t > 20.0) break;
+            t += d * 0.5; // Conservative step multiplier
+        }
+        
+        
+        // Create masks based on distance to the 3D object
+        float mask = smoothstep(0.3, 0.0, minDist);
+        float solidMask = smoothstep(0.01, 0.0, minDist);
+    
+        // We combine a sine-wave flow with a heavy downward pull inside the body
+        float warpStrength = 0.1;
+        vec2 warp = vec2(
+            sin(rawUV.y * 20.0 + iTime * 3.0),
+            cos(rawUV.x * 20.0 + iTime * 2.5)
+        ) * mask * warpStrength;
+        
+        warp.y -= solidMask * 0.15; // Pull the stripes down inside the silhouette
+    
+        // Shift the colors around heavily where the mask is active
+        float chromaAmount = 0.04 * mask;
+        vec2 uvR = rawUV + warp + vec2(chromaAmount, 0.0);
+        vec2 uvG = rawUV + warp;
+        vec2 uvB = rawUV + warp - vec2(chromaAmount, 0.0);
+    
+        // Generate RGB Phosphor Stripes
+        float stripeDensity = 250.0; // Adjust for stripe thickness
+        
+        // Horizontal movement speed
+        float moveSpeed = iTime * 0.15; 
+        
+        float phaseR = mod((uvR.x - moveSpeed) * stripeDensity, 3.0);
+        float phaseG = mod((uvG.x - moveSpeed) * stripeDensity, 3.0);
+        float phaseB = mod((uvB.x - moveSpeed) * stripeDensity, 3.0);
+    
+        float r = (phaseR < 1.0) ? 1.0 : 0.0;
+        float g = (phaseG >= 1.0 && phaseG < 2.0) ? 1.0 : 0.0;
+        float b = (phaseB >= 2.0) ? 1.0 : 0.0;
+    
+        vec3 finalColor = vec3(r, g, b);
+    
+        // 3D Rim Lighting & RGB Phase Shift
+        if (minDist < 0.01) {
+            // Ray hit the object: calculate normal for volume
+            vec3 hitPoint = ro + rd * t;
+            vec3 n = calcNormal(hitPoint);
+            
+            // Calculate rim light based on view angle
+            float rim = 1.0 - max(dot(n, -rd), 0.0);
+            
+            float speed = iTime * 3.0;       // How fast the colors flow
+            float spread = hitPoint.y * 4.0; // How tight the color bands are on the body
+            
+            // Offset R, G, and B by 120 degrees (2.094 radians)
+            vec3 phaseColor = vec3(
+                sin(spread + speed) * 0.5 + 0.5,             // Red phase
+                sin(spread + speed + 2.094) * 0.5 + 0.5,     // Green phase
+                sin(spread + speed + 4.188) * 0.5 + 0.5      // Blue phase
+            );
+            
+            // Multiply the flowing RGB color by the 3D rim light
+            finalColor += phaseColor * pow(rim, 1.5) * 2.5;
+            
+        } else {
+            // Soft outer aura for rays that missed
+            float aura = smoothstep(0.01, 0.1, minDist) - smoothstep(0.1, 0.4, minDist);
+            finalColor += vec3(0.1, 0.3, 1.0) * aura * 0.8; 
+        }
+        
+        fragColor = vec4(finalColor, 1.0);
+    }`,
+    
+    "Buddah": `
+    // ==========================================
+    // --- INJECTED INTERIOR SHADER ---
+    // ==========================================
+    // Mandala
+    // By Noztol
+    
+    // Constants
+    #define PI 3.14159265359
+    
+    // A cosine-based color palette function
+    vec3 palette( in float t ) {
+        vec3 a = vec3(0.5, 0.5, 0.5);
+        vec3 b = vec3(0.5, 0.5, 0.5);
+        vec3 c = vec3(1.0, 1.0, 1.0);
+        // Tweak these values to change the color scheme!
+        vec3 d = vec3(0.263, 0.416, 0.557);
+        return a + b * cos( 6.28318 * (c * t + d) );
+    }
+    
+    void renderInterior( out vec4 fragColor, in vec2 fragCoord )
+    {
+        // Normalize pixel coordinates (from -1 to 1, centered, accounting for aspect ratio)
+        vec2 uv = (fragCoord * 2.0 - iResolution.xy) / iResolution.y;
+    
+        // Slowly rotate the entire mandala over time
+        float time = iTime * 0.15;
+        mat2 globalRot = mat2(cos(time), -sin(time), sin(time), cos(time));
+        uv *= globalRot;
+    
+        // --- RADIAL SYMMETRY (The Mandala Fold) ---
+        float petals = 12.0; // Number of symmetrical slices
+        float angle = atan(uv.y, uv.x);
+        float radius = length(uv);
+    
+        // Fold the angle to create mirroring 
+        float sector = 2.0 * PI / petals;
+        angle = mod(angle, sector);
+        angle = abs(angle - sector / 2.0);
+    
+        // Reconstruct UV coordinates in the newly folded space
+        uv = radius * vec2(cos(angle), sin(angle));
+    
+        // --- FRACTAL PATTERN GENERATION ---
+        vec3 finalColor = vec3(0.0);
+        
+        // Internal rotation for the fractal loop
+        mat2 fractalRot = mat2(cos(time), -sin(time), sin(time), cos(time));
+    
+        // Loop to build up the intricate glowing lines
+        for(float i = 0.0; i < 4.0; i++) {
+            // Fold space again to create geometric intersections
+            uv = abs(uv) - 0.25;
+            uv *= fractalRot;
+            uv *= 1.2; // Scale up each iteration
+    
+            // Calculate distance from the center of our folded space
+            float d = length(uv);
+            
+            // Pick a color from the palette based on distance, time, and loop iteration
+            vec3 col = palette(length(uv) + iTime * 0.4 + i * 0.15);
+    
+            // Turn the solid distance field into repeating sine waves (the rings/petals)
+            d = sin(d * 12.0 + iTime) / 12.0;
+            
+            // Take absolute value to create a sharp edge, then invert to create a glow
+            d = abs(d);
+            d = 0.01 / d;
+            d = pow(d, 1.2); // Intensify the core of the glow
+    
+            finalColor += col * d;
+        }
+    
+        // Output to screen
+        fragColor = vec4(finalColor, 1.0);
+    }
+    
+    // ==========================================
+    // --- DEFAULT EXTERIOR SHADER: WAVE ---
+    // ==========================================
+    vec3 getWaveExterior(vec2 fragCoord, vec2 uv, float d, vec3 baseColor) {
+        vec2 warpUV = uv * 1.5; 
+        float turbulence = 2.5;
+        float amplitude = 1.5;
+        
+        for(int i = 0; i < 4; i++) {
+            float newX = warpUV.x + sin(warpUV.y * 2.0 + iTime * 0.7) * 0.3;
+            float newY = warpUV.y + cos(warpUV.x * 2.0 + iTime * 0.5) * 0.3;
+            warpUV = vec2(newX, newY);
+            turbulence += sin(warpUV.x + warpUV.y) * amplitude;
+            warpUV *= 3.5;    
+            amplitude *= 1.6; 
+        }
+        
+        float distortionStrength = 0.12;
+        float warpedD = d + (turbulence * d * distortionStrength);
+    
+        float rippleFreq = 1.0; 
+        float rippleSpeed = 0.6; 
+        float fadeFalloff = 4.0; 
+        
+        float wavePhase = warpedD * rippleFreq - iTime * rippleSpeed;
+        float wave = abs(fract(wavePhase) - 0.5) * 2.0; 
+        
+        float blurAmount = max(0.0, d * 1.5); 
+        float edgeSharpness = max(0.0, 1.01 - blurAmount);
+        float outlines = smoothstep(edgeSharpness, 1.0, wave);
+        
+        float fade = exp(-max(0.0, d) * fadeFalloff);
+        
+        vec2 screenUV = fragCoord / iResolution.xy;
+        float edgeFade = smoothstep(0.0, 0.1, screenUV.x) * smoothstep(1.0, 0.9, screenUV.x) *
+                         smoothstep(0.0, 0.1, screenUV.y) * smoothstep(1.0, 0.9, screenUV.y);
+        
+        float echoes = outlines * fade * step(0.0, d) * edgeFade;
+        
+        vec3 bgColor = vec3(0.02, 0.02, 0.05);
+        // Tint the waves slightly with the interior color for a blended glow
+        vec3 waveTint = mix(vec3(0.2, 0.6, 1.0), baseColor, 0.6);
+        
+        return bgColor + (waveTint * echoes * 1.5);
+    }
+    
+    
+    // ==========================================
+    // --- AUTO-GENERATED SVG MASKS ---
+    // ==========================================
+    const int NUM_POLYS = 1;
+    const int N = 200;
+    
+    vec2 poly0[N] = vec2[](
+        vec2(0.82095, -0.77311),
+        vec2(0.81036, -0.72884),
+        vec2(0.79880, -0.69946),
+        vec2(0.78454, -0.67772),
+        vec2(0.76585, -0.65642),
+        vec2(0.74283, -0.63200),
+        vec2(0.72143, -0.61426),
+        vec2(0.69168, -0.59656),
+        vec2(0.65682, -0.57698),
+        vec2(0.63039, -0.56359),
+        vec2(0.59026, -0.54629),
+        vec2(0.56799, -0.53514),
+        vec2(0.53588, -0.52115),
+        vec2(0.49921, -0.49962),
+        vec2(0.47285, -0.47612),
+        vec2(0.45567, -0.45202),
+        vec2(0.44654, -0.42867),
+        vec2(0.44395, -0.39552),
+        vec2(0.44827, -0.35060),
+        vec2(0.45898, -0.32276),
+        vec2(0.47312, -0.30311),
+        vec2(0.48771, -0.28273),
+        vec2(0.50052, -0.25083),
+        vec2(0.50302, -0.22330),
+        vec2(0.49779, -0.17192),
+        vec2(0.49376, -0.15425),
+        vec2(0.48741, -0.13021),
+        vec2(0.48200, -0.10236),
+        vec2(0.47589, -0.07277),
+        vec2(0.46747, -0.03427),
+        vec2(0.45794, 0.00638),
+        vec2(0.44849, 0.04245),
+        vec2(0.44023, 0.06727),
+        vec2(0.43016, 0.09554),
+        vec2(0.42369, 0.11918),
+        vec2(0.41507, 0.14376),
+        vec2(0.39859, 0.17482),
+        vec2(0.37242, 0.21276),
+        vec2(0.35885, 0.23087),
+        vec2(0.33707, 0.25586),
+        vec2(0.30719, 0.28239),
+        vec2(0.26804, 0.30616),
+        vec2(0.22703, 0.32255),
+        vec2(0.18863, 0.33231),
+        vec2(0.15383, 0.33842),
+        vec2(0.12360, 0.34383),
+        vec2(0.09892, 0.35149),
+        vec2(0.08077, 0.36437),
+        vec2(0.06963, 0.38687),
+        vec2(0.08305, 0.42029),
+        vec2(0.08939, 0.40769),
+        vec2(0.10779, 0.38544),
+        vec2(0.12007, 0.40825),
+        vec2(0.12605, 0.44270),
+        vec2(0.13680, 0.47507),
+        vec2(0.14712, 0.50209),
+        vec2(0.15777, 0.53957),
+        vec2(0.16271, 0.57506),
+        vec2(0.16168, 0.60570),
+        vec2(0.16980, 0.64284),
+        vec2(0.17241, 0.67053),
+        vec2(0.16853, 0.69663),
+        vec2(0.15561, 0.73556),
+        vec2(0.13666, 0.76745),
+        vec2(0.11839, 0.78389),
+        vec2(0.09133, 0.80177),
+        vec2(0.07420, 0.83220),
+        vec2(0.05342, 0.85270),
+        vec2(0.03605, 0.87888),
+        vec2(0.03340, 0.90774),
+        vec2(0.02664, 0.93483),
+        vec2(0.01325, 0.97197),
+        vec2(0.00015, 1.00000),
+        vec2(-0.02478, 0.98048),
+        vec2(-0.04364, 0.95621),
+        vec2(-0.05458, 0.92883),
+        vec2(-0.06845, 0.90166),
+        vec2(-0.08157, 0.87168),
+        vec2(-0.10163, 0.83879),
+        vec2(-0.11526, 0.81361),
+        vec2(-0.13745, 0.79973),
+        vec2(-0.17164, 0.77211),
+        vec2(-0.19106, 0.74706),
+        vec2(-0.20423, 0.71919),
+        vec2(-0.21203, 0.68867),
+        vec2(-0.21532, 0.65564),
+        vec2(-0.21497, 0.62027),
+        vec2(-0.21952, 0.59346),
+        vec2(-0.22399, 0.56355),
+        vec2(-0.21243, 0.52519),
+        vec2(-0.20380, 0.49100),
+        vec2(-0.19226, 0.46919),
+        vec2(-0.17969, 0.44019),
+        vec2(-0.17323, 0.39650),
+        vec2(-0.17032, 0.36613),
+        vec2(-0.14867, 0.38959),
+        vec2(-0.13207, 0.40347),
+        vec2(-0.13456, 0.37209),
+        vec2(-0.15756, 0.33856),
+        vec2(-0.18485, 0.32480),
+        vec2(-0.20715, 0.31969),
+        vec2(-0.24107, 0.30893),
+        vec2(-0.27870, 0.29643),
+        vec2(-0.30421, 0.28843),
+        vec2(-0.33682, 0.27491),
+        vec2(-0.36415, 0.26310),
+        vec2(-0.39007, 0.24206),
+        vec2(-0.41205, 0.21502),
+        vec2(-0.42834, 0.18983),
+        vec2(-0.44061, 0.16895),
+        vec2(-0.45115, 0.12511),
+        vec2(-0.45751, 0.08709),
+        vec2(-0.46235, 0.04794),
+        vec2(-0.46588, 0.00832),
+        vec2(-0.46830, -0.03115),
+        vec2(-0.46982, -0.06982),
+        vec2(-0.47064, -0.10704),
+        vec2(-0.47097, -0.14218),
+        vec2(-0.47100, -0.17461),
+        vec2(-0.47096, -0.20367),
+        vec2(-0.47103, -0.22873),
+        vec2(-0.47143, -0.24914),
+        vec2(-0.47241, -0.26470),
+        vec2(-0.47475, -0.27850),
+        vec2(-0.47925, -0.28753),
+        vec2(-0.48768, -0.29809),
+        vec2(-0.50178, -0.31648),
+        vec2(-0.52333, -0.34902),
+        vec2(-0.55408, -0.40201),
+        vec2(-0.58882, -0.46808),
+        vec2(-0.59857, -0.49213),
+        vec2(-0.60888, -0.52663),
+        vec2(-0.62758, -0.55256),
+        vec2(-0.65604, -0.56800),
+        vec2(-0.68549, -0.58574),
+        vec2(-0.71388, -0.60280),
+        vec2(-0.74025, -0.62082),
+        vec2(-0.76366, -0.64141),
+        vec2(-0.78317, -0.66622),
+        vec2(-0.79784, -0.69686),
+        vec2(-0.81122, -0.73366),
+        vec2(-0.81990, -0.76009),
+        vec2(-0.82130, -0.79122),
+        vec2(-0.81671, -0.82572),
+        vec2(-0.80731, -0.85391),
+        vec2(-0.78892, -0.88736),
+        vec2(-0.76829, -0.91422),
+        vec2(-0.74593, -0.93174),
+        vec2(-0.71796, -0.94526),
+        vec2(-0.68691, -0.96019),
+        vec2(-0.65912, -0.97746),
+        vec2(-0.63373, -0.98145),
+        vec2(-0.60136, -0.97107),
+        vec2(-0.56804, -0.96907),
+        vec2(-0.53952, -0.97433),
+        vec2(-0.50903, -0.98195),
+        vec2(-0.47609, -0.98801),
+        vec2(-0.44017, -0.98860),
+        vec2(-0.40165, -0.98014),
+        vec2(-0.37449, -0.97125),
+        vec2(-0.34465, -0.97712),
+        vec2(-0.31469, -0.99155),
+        vec2(-0.28168, -0.99872),
+        vec2(-0.24483, -1.00000),
+        vec2(-0.20316, -0.98940),
+        vec2(-0.17777, -0.97720),
+        vec2(-0.15071, -0.98083),
+        vec2(-0.11775, -0.98000),
+        vec2(-0.08624, -0.96676),
+        vec2(-0.05683, -0.95192),
+        vec2(-0.02834, -0.94657),
+        vec2(0.00217, -0.96376),
+        vec2(0.03497, -0.97548),
+        vec2(0.06529, -0.97905),
+        vec2(0.10228, -0.96665),
+        vec2(0.12801, -0.95936),
+        vec2(0.14884, -0.96562),
+        vec2(0.18015, -0.97630),
+        vec2(0.21911, -0.98163),
+        vec2(0.25768, -0.97407),
+        vec2(0.28645, -0.96527),
+        vec2(0.31153, -0.96733),
+        vec2(0.34320, -0.97743),
+        vec2(0.39095, -0.98732),
+        vec2(0.42876, -0.98583),
+        vec2(0.45562, -0.97925),
+        vec2(0.47861, -0.97373),
+        vec2(0.49935, -0.96901),
+        vec2(0.52079, -0.96912),
+        vec2(0.54776, -0.97126),
+        vec2(0.57909, -0.97348),
+        vec2(0.61358, -0.97382),
+        vec2(0.65006, -0.97029),
+        vec2(0.68734, -0.96095),
+        vec2(0.72424, -0.94383),
+        vec2(0.75854, -0.91796),
+        vec2(0.77746, -0.90146),
+        vec2(0.79572, -0.87825),
+        vec2(0.81337, -0.83782),
+        vec2(0.82130, -0.80560)
+    );
+    
+    
+    
+    vec2 getPoint(int polyIdx, int ptIdx) {
+        if (polyIdx == 0) return poly0[ptIdx];
+        return poly0[ptIdx]; // Fallback
+    }
+    
+    vec2 getMorphedPoint(int idx, float t, int polyA, int polyB) {
+        vec2 pA = getPoint(polyA, idx);
+        vec2 pB = getPoint(polyB, idx); 
+        
+        float rA = length(pA), aA = atan(pA.y, pA.x);
+        float rB = length(pB), aB = atan(pB.y, pB.x);
+        
+        if (abs(aA - aB) > 3.1415926) {
+            if (aA < aB) aA += 6.2831853; 
+            else aB += 6.2831853;
+        }
+        
+        float aM = mix(aA, aB, t);
+        return vec2(cos(aM), sin(aM)) * mix(rA, rB, t);
+    }
+    
+    float sdMorphedPolygon(vec2 p, float t, int polyA, int polyB) {
+        vec2 q = abs(p) - vec2(1.05, 1.05); 
+        float dBox = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0);
+        
+        bool isGlowZone = dBox > 0.1;
+        int stride = isGlowZone ? 10 : 1; 
+        
+        vec2 v_j = getMorphedPoint(N - 1, t, polyA, polyB);
+        float d = dot(p - v_j, p - v_j);
+        float s = 1.0;
+        
+        for(int i = 0; i < N; i += stride) {
+            vec2 v_i = getMorphedPoint(i, t, polyA, polyB);
+            
+            vec2 e = v_j - v_i;
+            vec2 w = p - v_i;
+            vec2 b = w - e * clamp(dot(w,e)/dot(e,e), 0.0, 1.0);
+            d = min(d, dot(b,b));
+            
+            if (!isGlowZone) {
+                bvec3 c = bvec3(p.y >= v_i.y, p.y < v_j.y, e.x * w.y > e.y * w.x);
+                if(all(c) || all(not(c))) s *= -1.0;
+            }
+            v_j = v_i; 
+        }
+        return s * sqrt(d);
+    }
+    
+    void mainImage( out vec4 fragColor, in vec2 fragCoord )
+    {
+        // --- 1. Coordinates and Morph Time ---
+        vec2 uv = (2.0 * fragCoord - iResolution.xy) / min(iResolution.x, iResolution.y);
+        uv *= 1.1;
+    
+        float speed = 0.5;
+        float globalT = iTime * speed;
+        int polyA = int(mod(globalT, float(NUM_POLYS)));
+        int polyB = int(mod(globalT + 1.0, float(NUM_POLYS)));
+        float localT = smoothstep(0.1, 0.9, fract(globalT));
+    
+        // Get Signed Distance Field (SDF) of current morph frame
+        float d = sdMorphedPolygon(uv, localT, polyA, polyB);
+    
+        // --- 2. Render Both Shaders ---
+        vec4 colIn = vec4(0.0);
+        renderInterior(colIn, fragCoord);
+        
+        // Wave exterior takes 'd' and 'uv', tinting the waves with colIn
+        vec4 colOut = vec4(getWaveExterior(fragCoord, uv, d, colIn.rgb), 1.0);
+        
+        // --- 3. Composite Output ---
+        float aaThreshold = 2.0 / min(iResolution.x, iResolution.y);
+        float isOutside = smoothstep(0.0, aaThreshold * 2.0, d);
+        
+        // Mix: colIn when inside (0.0), colOut when outside (1.0)
+        vec3 col = mix(colIn.rgb, colOut.rgb, isOutside); 
+        
+        // Add a crisp white outline strictly on the boundary edge
+        col = mix(col, vec3(1.0), smoothstep(aaThreshold, 0.0, abs(d))); 
+    
+        fragColor = vec4(col, 1.0);
+    }
+    `,
     "Striped Water": `#define DRAG_MULT 0.38
 #define WATER_DEPTH 2.8
 #define CAMERA_HEIGHT 3.5
