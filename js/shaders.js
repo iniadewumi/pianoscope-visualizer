@@ -9532,7 +9532,7 @@ float raymarch(vec4 ro, vec4 rd, out vec4 p, out float marches, out vec4 id) {
 // The jist is that XY of UV can represent 2-Sphere angles to get a point on the sphere.
 // The 2-Sphere point than gives you an XYZ normalized [-1,1].
 vec3 uv3D(vec2 uv) {
-    float theta = uv.x * 2.0 * 3.14159265359; // Longitude
+    float theta = uv.x * 2.5 * 3.14159265359; // Longitude
     float phi = uv.y * 3.14159265359; // Latitude
     float x = sin(phi) * cos(theta);
     float y = sin(phi) * sin(theta);

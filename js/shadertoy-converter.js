@@ -45,6 +45,7 @@ uniform sampler2D iChannel0;
 uniform sampler2D iChannel1;
 uniform sampler2D iChannel2;
 uniform sampler2D iChannel3;
+uniform vec3 iChannelResolution[4];
 `;
 
     // Shadertoy's image pass renders opaque and discards whatever mainImage writes
@@ -248,80 +249,8 @@ void main() {
         shaderTabContent.appendChild(shaderTextarea);
         shaderTabContent.appendChild(errorDisplay);
 
-        // --- Video Tab Content setup ---
-        videoTabContent.innerHTML = `
-        <div class="video-controls">
-            <div class="video-source-section">
-                <h4>Video Source</h4>
-                <div class="video-source-controls">
-                    <button class="video-source-button" id="local-video-btn">
-                        <i class="fas fa-file-upload"></i> Upload Video
-                    </button>
-                    <input type="file" id="video-file-input" accept="video/*" style="display: none">
-
-                    <div class="url-input-container">
-                        <input type="text" id="video-url-input" placeholder="Enter video URL...">
-                        <button class="video-url-load-btn" id="load-url-btn">Load</button>
-                    </div>
-                </div>
-            </div>
-
-            <div class="sample-videos-section">
-                <h4>Sample Videos</h4>
-                <div class="sample-videos-container">    
-                    <button class="sample-video-button" data-video="videos/10742597-uhd_3824_2160_30fps.mp4">UHD Footage 10742597</button>
-                    <button class="sample-video-button" data-video="videos/11909795_1920_1080_24fps.mp4">Film 11909795</button>
-                    <button class="sample-video-button" data-video="videos/12176194_1920_1080_30fps.mp4">Footage 12176194</button>
-                    <button class="sample-video-button" data-video="videos/12617979_3840_2160_25fps.mp4">UHD 12617979</button>
-                    <button class="sample-video-button" data-video="videos/12820568_3840_2160_25fps.mp4">UHD 12820568</button>
-                    <button class="sample-video-button" data-video="videos/12852054_1920_1080_30fps.mp4">Footage 12852054</button>
-                    <button class="sample-video-button" data-video="videos/13583272_3840_2160_25fps.mp4">UHD 13583272</button>
-                    <button class="sample-video-button" data-video="videos/13583308_3840_2160_24fps.mp4">Film 13583308</button>
-                    <button class="sample-video-button" data-video="videos/jam.mp4">Jamming</button>
-                    <button class="sample-video-button" data-video="videos/latest.mp4">Latest</button>
-                    <button class="sample-video-button" data-video="videos/ranni.mp4">Ranni</button>
-                    <button class="sample-video-button" data-video="videos/sample.mp4">Sample</button>
-                    <button class="sample-video-button" data-video="videos/Tunnel - 26475.mp4">Tunnel 1</button>
-                    <button class="sample-video-button" data-video="videos/Tunnel - 37139.mp4">Tunnel 2</button>
-                    <button class="sample-video-button" data-video="videos/Tunnel - 65493.mp4">Tunnel 3</button>
-                    <button class="sample-video-button" data-video="videos/Wireframe - 26592.mp4">Wireframe 1</button>
-                    <button class="sample-video-button" data-video="videos/Wireframe - 36028.mp4">Wireframe 2</button>
-                    <button class="sample-video-button" data-video="videos/wraith.mp4">Wraith</button>
-                </div>
-            </div>
-
-            <div class="video-playback-controls">
-                <button id="play-pause-btn"><i class="fas fa-play"></i></button>
-                <div class="seek-bar-container">
-                    <input type="range" id="seek-bar" min="0" max="100" value="0" step="0.1">
-                    <div class="time-display">
-                        <span id="current-time">0:00</span> / <span id="duration">0:00</span>
-                    </div>
-                </div>
-                <div class="volume-control">
-                    <button id="mute-btn"><i class="fas fa-volume-up"></i></button>
-                    <input type="range" id="volume-bar" min="0" max="1" value="1" step="0.01">
-                </div>
-            </div>
-
-            <div class="video-options">
-                <label>
-                    <input type="checkbox" id="loop-video" checked>
-                    Loop Video
-                </label>
-                <div class="playback-speed">
-                    <span>Speed: </span>
-                    <select id="playback-speed">
-                        <option value="0.5">0.5x</option>
-                        <option value="1" selected>1x</option>
-                        <option value="1.5">1.5x</option>
-                        <option value="2">2x</option>
-                    </select>
-                </div>
-            </div>
-        </div>
-        `;
-        // --- End Video Tab Content setup ---
+        // Video tab is populated by VideoController.mountUI() once the catalog
+        // has been probed, so the markup lives with the code that drives it.
 
         // Add the content divs to the main UI container
         uiContainer.appendChild(shaderTabContent);
@@ -353,12 +282,6 @@ void main() {
                 const tabContent = document.getElementById(tabId);
                 if (tabContent) {
                     tabContent.classList.remove('hidden');
-                }
-
-                // Notify controller about mode change explicitly if necessary
-                // Check if videoController exists and has a method to set mode
-                if (typeof videoController !== 'undefined' && videoController && typeof videoController.setVideoMode === 'function') {
-                    videoController.setVideoMode(button.dataset.tab === 'video');
                 }
             });
         });

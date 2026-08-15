@@ -15,6 +15,8 @@ class VideoTextureHandler {
         this.videoElement.muted = true;
         this.videoElement.playsInline = true;
         this.videoElement.loop = true;
+        // Required for R2 / cross-origin clips sampled into WebGL textures.
+        this.videoElement.crossOrigin = 'anonymous';
         this.videoElement.style.display = 'none';
         document.body.appendChild(this.videoElement);
         
@@ -24,6 +26,21 @@ class VideoTextureHandler {
         this.isMuted = true;
         this.videoLoaded = false;
         this.playbackSpeed = 1.0;
+        this.currentSrc = null;
+
+        // Native pixel dimensions of the loaded clip, needed to letterbox or crop
+        // it against a canvas of a different shape.
+        this.videoWidth = 0;
+        this.videoHeight = 0;
+
+        // Object URLs created for uploaded files, revoked when replaced.
+        this.objectUrl = null;
+
+        // HTML5 video drops currentTime assignments while a seek is in flight.
+        // Keep the latest tap and apply it when the previous seek settles.
+        this.pendingSeekTime = null;
+        this.seekInFlight = false;
+        this.seekWatchdog = null;
         
         // Create WebGL texture for video
         this.videoTexture = null;
@@ -57,6 +74,8 @@ class VideoTextureHandler {
     bindEvents() {
         this.videoElement.addEventListener('loadedmetadata', () => {
             this.videoLoaded = true;
+            this.videoWidth = this.videoElement.videoWidth;
+            this.videoHeight = this.videoElement.videoHeight;
             
             // Notify any listeners that video metadata is loaded
             const event = new CustomEvent('videoMetadataLoaded', {
@@ -100,6 +119,12 @@ class VideoTextureHandler {
             document.dispatchEvent(new Event('videoPaused'));
         });
         
+        this.videoElement.addEventListener('seeked', () => {
+            this.clearSeekWatchdog();
+            this.seekInFlight = false;
+            this.flushSeek();
+        });
+
         this.videoElement.addEventListener('error', (e) => {
             console.error('Video error:', this.videoElement.error);
             
@@ -112,11 +137,26 @@ class VideoTextureHandler {
         });
     }
     
-    loadVideo(url) {
+    loadVideo(url, options = {}) {
         // Reset state
         this.videoLoaded = false;
         this.isPlaying = false;
         this.isPaused = true;
+        this.videoWidth = 0;
+        this.videoHeight = 0;
+        this.pendingSeekTime = null;
+        this.seekInFlight = false;
+        this.clearSeekWatchdog();
+        this.currentSrc = options.sourceId || url;
+
+        // Release the previous upload unless this load is that same upload.
+        if (this.objectUrl && this.objectUrl !== url) {
+            URL.revokeObjectURL(this.objectUrl);
+            this.objectUrl = null;
+        }
+        if (options.isObjectUrl) {
+            this.objectUrl = url;
+        }
 
         // Update video source
         this.videoElement.src = url;
@@ -131,7 +171,7 @@ class VideoTextureHandler {
     loadVideoFile(file) {
         if (file && file.type.startsWith('video/')) {
             const fileURL = URL.createObjectURL(file);
-            this.loadVideo(fileURL);
+            this.loadVideo(fileURL, { isObjectUrl: true, sourceId: `upload:${file.name}` });
         } else {
             console.error('Invalid file type. Please select a video file.');
             
@@ -212,31 +252,61 @@ class VideoTextureHandler {
     }
     
     setTime(time) {
-        if (this.videoLoaded) {
-            const clampedTime = Math.max(0, Math.min(time, this.videoElement.duration));
-            this.videoElement.currentTime = clampedTime;
+        if (!this.videoLoaded) return;
+
+        const duration = this.videoElement.duration;
+        if (!Number.isFinite(duration) || duration <= 0) return;
+
+        this.pendingSeekTime = Math.max(0, Math.min(time, duration));
+        if (!this.seekInFlight) this.flushSeek();
+    }
+
+    flushSeek() {
+        if (this.pendingSeekTime === null) return;
+
+        const next = this.pendingSeekTime;
+        this.pendingSeekTime = null;
+
+        if (Math.abs(this.videoElement.currentTime - next) < 0.04) return;
+
+        this.seekInFlight = true;
+        this.videoElement.currentTime = next;
+
+        this.clearSeekWatchdog();
+        this.seekWatchdog = setTimeout(() => {
+            this.seekInFlight = false;
+            this.flushSeek();
+        }, 400);
+    }
+
+    clearSeekWatchdog() {
+        if (this.seekWatchdog) {
+            clearTimeout(this.seekWatchdog);
+            this.seekWatchdog = null;
         }
     }
-    
+
+    isSeeking() {
+        return this.seekInFlight || this.pendingSeekTime !== null;
+    }
+
     setProgress(percentage) {
-        if (this.videoLoaded) {
-            const time = (percentage / 100) * this.videoElement.duration;
-            this.setTime(time);
-        }
+        if (!this.videoLoaded) return;
+        const duration = this.videoElement.duration;
+        if (!Number.isFinite(duration) || duration <= 0) return;
+        this.setTime((percentage / 100) * duration);
     }
     
     setVolume(volume) {
-        if (this.videoLoaded) {
-            this.videoElement.volume = Math.max(0, Math.min(1, volume));
-            
-            // Update mute state based on volume
-            if (volume === 0) {
-                this.isMuted = true;
-                this.videoElement.muted = true;
-            } else if (this.isMuted) {
-                this.isMuted = false;
-                this.videoElement.muted = false;
-            }
+        this.videoElement.volume = Math.max(0, Math.min(1, volume));
+
+        // Update mute state based on volume
+        if (volume === 0) {
+            this.isMuted = true;
+            this.videoElement.muted = true;
+        } else if (this.isMuted) {
+            this.isMuted = false;
+            this.videoElement.muted = false;
         }
     }
     
@@ -246,10 +316,8 @@ class VideoTextureHandler {
     }
     
     setPlaybackSpeed(speed) {
-        if (this.videoLoaded) {
-            this.playbackSpeed = speed;
-            this.videoElement.playbackRate = speed;
-        }
+        this.playbackSpeed = speed;
+        this.videoElement.playbackRate = speed;
     }
     
     setLoop(shouldLoop) {
@@ -268,16 +336,36 @@ class VideoTextureHandler {
     getVideoTexture() {
         return this.videoTexture;
     }
+
+    /**
+     * Native dimensions of the loaded clip. Falls back to a 1:1 square so
+     * shaders never divide by zero before metadata arrives.
+     */
+    getVideoSize() {
+        return {
+            width: this.videoWidth || 1,
+            height: this.videoHeight || 1
+        };
+    }
     
     hasVideo() {
         return this.videoLoaded;
     }
     
     dispose() {
+        this.clearSeekWatchdog();
+        this.pendingSeekTime = null;
+        this.seekInFlight = false;
+
         // Pause and unload video
         this.videoElement.pause();
         this.videoElement.src = '';
         this.videoElement.load();
+
+        if (this.objectUrl) {
+            URL.revokeObjectURL(this.objectUrl);
+            this.objectUrl = null;
+        }
         
         // Remove video element from DOM
         if (this.videoElement.parentNode) {

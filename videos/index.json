@@ -1,0 +1,15 @@
+{
+  "videos": [
+    { "src": "https://pub-ff498410309b44ea8ca524d7a17e6df8.r2.dev/pianoscope-videos/0813.mov", "title": "0813" },
+    { "src": "https://pub-ff498410309b44ea8ca524d7a17e6df8.r2.dev/pianoscope-videos/0813(2).mov", "title": "0813 (2)" },
+    { "src": "https://pub-ff498410309b44ea8ca524d7a17e6df8.r2.dev/pianoscope-videos/0813(3).mov", "title": "0813 (3)" },
+    { "src": "https://pub-ff498410309b44ea8ca524d7a17e6df8.r2.dev/pianoscope-videos/0813(4).mov", "title": "0813 (4)" },
+    { "src": "https://pub-ff498410309b44ea8ca524d7a17e6df8.r2.dev/pianoscope-videos/0813(5).mov", "title": "0813 (5)" },
+    { "src": "https://pub-ff498410309b44ea8ca524d7a17e6df8.r2.dev/pianoscope-videos/0813(6).mov", "title": "0813 (6)" },
+    { "src": "https://pub-ff498410309b44ea8ca524d7a17e6df8.r2.dev/pianoscope-videos/0813(7).mov", "title": "0813 (7)" },
+    { "src": "https://pub-ff498410309b44ea8ca524d7a17e6df8.r2.dev/pianoscope-videos/0813(8).mov", "title": "0813 (8)" },
+    { "src": "https://pub-ff498410309b44ea8ca524d7a17e6df8.r2.dev/pianoscope-videos/0813(9).mov", "title": "0813 (9)" },
+    { "src": "https://pub-ff498410309b44ea8ca524d7a17e6df8.r2.dev/pianoscope-videos/0813(10).mov", "title": "0813 (10)" },
+    { "src": "https://pub-ff498410309b44ea8ca524d7a17e6df8.r2.dev/pianoscope-videos/blue-dancer%202.mp4", "title": "blue-dancer 2" }
+  ]
+}

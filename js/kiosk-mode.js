@@ -58,6 +58,7 @@ const kioskHtmlContent = `<!DOCTYPE html>
         let isWebGL2 = false;
         let currentProgram = null;
         let audioTexture = null;
+        let videoTexture = null;
         let audioData = null;
         let animationFrameId = null;
         let startTime = performance.now() / 1000;
@@ -178,6 +179,15 @@ const kioskHtmlContent = `<!DOCTYPE html>
             audioData = new Uint8Array(audioTexWidth);
             gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE, audioTexWidth, 1, 0, gl.LUMINANCE, gl.UNSIGNED_BYTE, audioData);
             
+            // Receives frames from the opener's video element in video mode
+            videoTexture = gl.createTexture();
+            gl.bindTexture(gl.TEXTURE_2D, videoTexture);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 0, 255]));
+            
             // Start animation loop
             startAnimationLoop();
 
@@ -275,6 +285,28 @@ const kioskHtmlContent = `<!DOCTYPE html>
             gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, audioData.length, 1, gl.LUMINANCE, gl.UNSIGNED_BYTE, audioData);
         }
         
+        // Video state lives in the opener. Guarded because the opener can be
+        // closed or navigating while this loop is still running.
+        function getOpenerVideoState() {
+            try {
+                const controller = window.opener && window.opener.videoController;
+                if (!controller || !controller.isInVideoMode()) return null;
+
+                const element = controller.videoHandler.videoElement;
+                if (!element) return null;
+
+                const size = controller.getVideoSize();
+                return {
+                    element: element,
+                    width: size.width,
+                    height: size.height,
+                    fitMode: controller.getFitMode()
+                };
+            } catch (e) {
+                return null;
+            }
+        }
+        
         // Animation loop
         function startAnimationLoop() {
             if (animationFrameId) {
@@ -314,10 +346,32 @@ const kioskHtmlContent = `<!DOCTYPE html>
                 const iFrame = gl.getUniformLocation(currentProgram, 'iFrame');
                 if (iFrame) gl.uniform1f(iFrame, frameCount);
                 
+                // Both windows share an origin, so the opener's <video> element can
+                // be uploaded straight into this context instead of shipping pixels
+                // through postMessage. One decoder feeds both canvases in sync.
+                const videoState = getOpenerVideoState();
+                
+                if (videoState) {
+                    gl.activeTexture(gl.TEXTURE0);
+                    gl.bindTexture(gl.TEXTURE_2D, videoTexture);
+                    
+                    if (videoState.element.readyState >= 2) {
+                        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, videoState.element);
+                    }
+                    
+                    // The fit is computed against this window's own resolution, so
+                    // the kiosk display crops or letterboxes independently.
+                    const iVideoResolution = gl.getUniformLocation(currentProgram, 'iVideoResolution');
+                    if (iVideoResolution) gl.uniform2f(iVideoResolution, videoState.width, videoState.height);
+                    
+                    const iFitMode = gl.getUniformLocation(currentProgram, 'iFitMode');
+                    if (iFitMode) gl.uniform1f(iFitMode, videoState.fitMode);
+                }
+                
                 const iChannel0 = gl.getUniformLocation(currentProgram, 'iChannel0');
                 if (iChannel0) {
                     gl.activeTexture(gl.TEXTURE0);
-                    gl.bindTexture(gl.TEXTURE_2D, audioTexture);
+                    gl.bindTexture(gl.TEXTURE_2D, videoState ? videoTexture : audioTexture);
                     gl.uniform1i(iChannel0, 0);
                 }
                 
