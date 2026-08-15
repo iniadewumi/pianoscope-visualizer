@@ -73,8 +73,8 @@ float high = texture(iChannel0, vec2(0.70, 0.0)).x;
 
 **Exceptions (do not use for new PIANOSCOPE shaders unless intentional):**
 
-- **Video mode**: `iChannel0` becomes the video texture; audio is unavailable on that channel.
-- **Feedback-pass shaders** (`iWriteFeedback` in source): audio moves to **`iChannel2`**; `iChannel0`/`iChannel1` are noise/feedback buffers.
+- **Video mode**: audio stays on `iChannel0`; the current video frame is on **`iChannel1`**. Video effects live in `js/video-effects.js` and should sample it via the `videoAt()` / `videoUV()` helpers in that file's preamble so the Fit setting is honoured. Do not re-derive the aspect fit per effect.
+- **Feedback-pass shaders** (`iWriteFeedback` in source): audio moves to **`iChannel2`**; `iChannel0`/`iChannel1` are noise/feedback buffers. Feedback and video effects cannot currently be combined — both want `iChannel1`.
 
 ## What not to touch unless asked
 
@@ -243,7 +243,7 @@ uniform float iSampleRate;
 uniform vec4 iMouse;
 uniform vec4 iDate;
 uniform sampler2D iChannel0;   // live audio spectrum (mic mode)
-uniform sampler2D iChannel1;   // unused dummy texture unless video/feedback mode
+uniform sampler2D iChannel1;   // video frame in video mode, feedback buffer in feedback mode, else dummy
 uniform sampler2D iChannel2;
 uniform sampler2D iChannel3;
 ```

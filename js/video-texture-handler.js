@@ -36,6 +36,9 @@ class VideoTextureHandler {
         // Object URLs created for uploaded files, revoked when replaced.
         this.objectUrl = null;
 
+        // Live camera feed, when the source is a MediaStream rather than a file.
+        this.stream = null;
+
         // HTML5 video drops currentTime assignments while a seek is in flight.
         // Keep the latest tap and apply it when the previous seek settles.
         this.pendingSeekTime = null;
@@ -48,9 +51,25 @@ class VideoTextureHandler {
         
         // Track when we're in video mode
         this.videoMode = false;
+
+        // Uploading a 4K frame is the most expensive thing per render tick, and
+        // a 24fps clip has nothing new to give a 60fps loop most of the time.
+        this.hasNewFrame = true;
+        this.watchFrames();
         
         // Bind event listeners for video element
         this.bindEvents();
+    }
+
+    watchFrames() {
+        if (typeof this.videoElement.requestVideoFrameCallback !== 'function') return;
+
+        const onFrame = () => {
+            this.hasNewFrame = true;
+            this.videoElement.requestVideoFrameCallback(onFrame);
+        };
+        this.videoElement.requestVideoFrameCallback(onFrame);
+        this.usingFrameCallback = true;
     }
     
     setupVideoTexture() {
@@ -137,8 +156,7 @@ class VideoTextureHandler {
         });
     }
     
-    loadVideo(url, options = {}) {
-        // Reset state
+    resetPlaybackState() {
         this.videoLoaded = false;
         this.isPlaying = false;
         this.isPaused = true;
@@ -147,13 +165,33 @@ class VideoTextureHandler {
         this.pendingSeekTime = null;
         this.seekInFlight = false;
         this.clearSeekWatchdog();
-        this.currentSrc = options.sourceId || url;
+        this.hasNewFrame = true;
+    }
 
-        // Release the previous upload unless this load is that same upload.
-        if (this.objectUrl && this.objectUrl !== url) {
+    /**
+     * Detach whatever is currently feeding the element. A live srcObject takes
+     * precedence over src, so it has to be cleared before a file will load, and
+     * its tracks must be stopped or the camera light stays on.
+     */
+    releaseSource(nextUrl) {
+        if (this.stream) {
+            this.stream.getTracks().forEach((track) => track.stop());
+            this.stream = null;
+        }
+        if (this.videoElement.srcObject) {
+            this.videoElement.srcObject = null;
+        }
+        if (this.objectUrl && this.objectUrl !== nextUrl) {
             URL.revokeObjectURL(this.objectUrl);
             this.objectUrl = null;
         }
+    }
+
+    loadVideo(url, options = {}) {
+        this.resetPlaybackState();
+        this.currentSrc = options.sourceId || url;
+
+        this.releaseSource(url);
         if (options.isObjectUrl) {
             this.objectUrl = url;
         }
@@ -165,6 +203,28 @@ class VideoTextureHandler {
 
         // Enter video mode
         this.setVideoMode(true);
+    }
+
+    /**
+     * Feed the pipeline from a live MediaStream (camera) instead of a file. The
+     * texture path downstream is identical; only seeking and duration differ.
+     */
+    loadStream(stream, sourceId = 'camera') {
+        this.resetPlaybackState();
+        this.currentSrc = sourceId;
+
+        this.releaseSource();
+        this.stream = stream;
+
+        this.videoElement.removeAttribute('src');
+        this.videoElement.srcObject = stream;
+        this.play();
+
+        this.setVideoMode(true);
+    }
+
+    isLive() {
+        return !!this.stream;
     }
 
     
@@ -185,12 +245,17 @@ class VideoTextureHandler {
     }
     
     updateVideoTexture() {
-        if (this.videoMode && this.videoLoaded && this.isPlaying && 
+        if (this.videoMode && this.videoLoaded && this.isPlaying &&
             this.videoElement.readyState >= this.videoElement.HAVE_CURRENT_DATA) {
-            
+
+            // Without frame callbacks there is no way to tell a repeat frame from
+            // a fresh one, so fall back to uploading every tick.
+            if (this.usingFrameCallback && !this.hasNewFrame) return;
+            this.hasNewFrame = false;
+
             this.gl.bindTexture(this.gl.TEXTURE_2D, this.videoTexture);
             this.gl.texImage2D(
-                this.gl.TEXTURE_2D, 0, this.gl.RGBA, this.gl.RGBA, 
+                this.gl.TEXTURE_2D, 0, this.gl.RGBA, this.gl.RGBA,
                 this.gl.UNSIGNED_BYTE, this.videoElement
             );
         }
@@ -359,13 +424,9 @@ class VideoTextureHandler {
 
         // Pause and unload video
         this.videoElement.pause();
+        this.releaseSource();
         this.videoElement.src = '';
         this.videoElement.load();
-
-        if (this.objectUrl) {
-            URL.revokeObjectURL(this.objectUrl);
-            this.objectUrl = null;
-        }
         
         // Remove video element from DOM
         if (this.videoElement.parentNode) {

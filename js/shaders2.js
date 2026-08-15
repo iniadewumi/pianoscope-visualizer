@@ -1,4 +1,189 @@
 export const SHADERS2 = {
+    "Gloo": `#define PI 3.14159265
+#define MAX_STEPS 100
+#define MAX_DIST 10.0
+#define SURF_DIST 0.001
+
+// RU: Палитра цветов (генерация градиента по косинусу)
+// JP: カラーパレット（コサインベースのグラデーション生成）
+// EN: Color palette (cosine-based gradient generation)
+vec3 palette(in float t) {
+    vec3 a = vec3(0.5, 0.5, 0.5);
+    vec3 b = vec3(0.5, 0.5, 0.5);
+    vec3 c = vec3(1.0, 1.0, 1.0);
+    vec3 d = vec3(0.1, 0.4, 0.5);
+    return a + b * cos(2.0 * PI * (c * t + d));
+}
+
+// RU: Матрица 2D-вращения для осей координат
+// JP: 座標軸用の2D回転行列
+// EN: 2D rotation matrix for coordinate axes
+mat2 rot2D(float angle) {
+    float s = sin(angle), c = cos(angle);
+    return mat2(c, -s, s, c);
+}
+
+// RU: Функция расстояния (SDF) до тора с расчетом UV-координат поверхности
+// JP: トーラスへの距離関数 (SDF) と表面のUV座標計算
+// EN: Distance function (SDF) for a torus with surface UV mapping calculations
+float sdTorus(vec3 p, vec2 t, out vec2 torusUV) {
+    vec2 q = vec2(length(p.xz) - t.x, p.y);
+    float u = atan(p.z, p.x);
+    float v = atan(q.y, q.x);
+    torusUV = vec2(u, v);
+    return length(q) - t.y;
+}
+
+// RU: Вспомогательная функция для получения дробной части числа
+// JP: 数値の小数点以下（小数の部分）を取得する補助関数
+// EN: Helper function to get the fractional part of a number
+float fraction(float x) {
+    return x - floor(x);
+}
+
+// RU: Функция расстояния (SDF) до куба (прямоугольного параллелепипеда)
+// JP: 立方体（直方体）への距離関数 (SDF)
+// EN: Distance function (SDF) for a box (rectangular cuboid)
+float sdBox(vec3 p, vec3 b) {
+    vec3 q = abs(p) - b;
+    return length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0);
+}
+
+void mainImage(out vec4 fragColor, in vec2 fragCoord) {
+    // RU: Нормализация координат экрана (центрирование и приведение к пропорциям)
+    // JP: 画面座標の正規化（中心を原点にし、アスペクト比を補正）
+    // EN: Screen coordinate normalization (centering and aspect ratio correction)
+    vec2 uv = (2.0 * fragCoord - iResolution.xy) / iResolution.y;
+    
+    // RU: Инициализация луча: направление (rd) и начало луча/камера (ro)
+    // JP: レイの初期化：方向 (rd) と開始位置/カメラ (ro)
+    // EN: Ray initialization: direction (rd) and origin/camera position (ro)
+    vec3 rd = normalize(vec3(uv, 1.5));
+    vec3 ro = vec3(0.0, 0.0, -3.5);
+    
+    // RU: Общее вращение всей сцены (динамическое изменение ракурса камеры)
+    // JP: シーン全体の回転（カメラアングルの動的変化）
+    // EN: Global rotation of the scene (dynamic camera angle changes)
+    float rotX = 0.5 + 0.3 * sin(iTime * 0.2);
+    float rotY = iTime * 0.3;
+    rd.yz *= rot2D(rotX);
+    rd.xz *= rot2D(rotY);
+    ro.yz *= rot2D(rotX);
+    ro.xz *= rot2D(rotY);
+
+    // RU: Размеры объектов: параметры тора (вектор) и размер ребра куба
+    // JP: オブジェクトのサイズ：トーラスのパラメータと立方体の一辺の長さ
+    // EN: Object dimensions: torus parameters (vector) and box edge size
+    vec2 torusDims = vec2(1.2, 0.35); 
+    vec3 boxDims = vec3(0.35);         
+    vec3 finalColor = vec3(0.0);
+    float dO = 0.0; // RU: Общая пройденная дистанция луча | JP: レイの総移動距離 | EN: Total ray travel distance
+    
+    vec2 tUV = vec2(0.0);
+    vec2 boxUV = vec2(0.0);
+
+    // RU: Главный цикл трассировки лучей (Raymarching)
+    // JP: レイマーチングのメインループ
+    // EN: Main Raymarching loop
+    for(int i = 0; i < MAX_STEPS; i++) {
+        vec3 p = ro + rd * dO; // RU: Текущая точка на луче | JP: レイ上の現在位置 | EN: Current point along the ray
+        
+        // RU: 1. Расчет расстояния до тора и получение его UV
+        // JP: 1. トーラスへの距離計算とUV座標の取得
+        // EN: 1. Calculate distance to the torus and retrieve its UV coordinates
+        vec2 localTorusUV;
+        float dTorus = sdTorus(p, torusDims, localTorusUV);
+        
+        // RU: 2. Расчет куба с независимым вращением вокруг двух осей
+        // JP: 2. 2軸を中心に独立して回転する立方体の計算
+        // EN: 2. Calculate the box with independent rotation around two axes
+        vec3 pBox = p;
+        pBox.xy *= rot2D(iTime * 0.5);
+        pBox.xz *= rot2D(iTime * 0.3);
+        float dBoxObj = sdBox(pBox, boxDims);
+        
+        // RU: Объединение геометрии сцены (нахождение ближайшей поверхности)
+        // JP: シーン形状の結合（最も近い表面の探索）
+        // EN: Combining scene geometry (finding the closest surface)
+        float dS = min(dTorus, dBoxObj);
+        dO += max(dS * 0.5, SURF_DIST); // RU: Шаг вперед вдоль луча | JP: レイを進める | EN: Step forward along the ray
+        
+        // RU: Выход из цикла, если луч улетел в бесконечность
+        // JP: レイが無限遠に達した場合はループを抜ける
+        // EN: Break the loop if the ray goes beyond maximum distance
+        if(dO > MAX_DIST) break;
+
+        // RU: Эффект свечения: если луч проходит достаточно близко к геометрии
+        // JP: グロー効果：レイが形状に十分近づいた場合の処理
+        // EN: Glow effect: if the ray passes close enough to the geometry
+        if(dS < 0.1) { 
+            vec2 st = vec2(0.0);
+            
+            // RU: Проверка совпадения: определяем, к какому объекту ближе луч
+            // JP: 衝突判定：レイがどちらのオブジェクトに近いかを特定
+            // EN: Hit test: determine which object the ray is closer to
+            if (dTorus < dBoxObj) {
+                st = localTorusUV / (2.0 * PI) + 0.5;
+            } else {
+                // RU: Генерация сферической UV-проекции для куба на основе локальной позиции
+                // JP: ローカル座標に基づく立方体の球面UVプロジェクション生成
+                // EN: Generate spherical UV projection for the box based on local position
+                st = vec2(atan(pBox.x, pBox.z) / PI + 0.5, pBox.y + 0.5);
+            }
+
+            // RU: Многослойный рендеринг: создание эффекта глубины из 4 слоев
+            // JP: 多層レンダリング：4つのレイヤーによる奥行き感の演出
+            // EN: Multi-layer rendering: creating a depth effect using 4 layers
+            for(float layer = 0.0; layer < 1.0; layer += 0.25) {
+                // RU: Модуляция волны: амплитуда, частота и сдвиг фазы от времени
+                // JP: 波の変調：振幅、周波数、時間による位相シフト
+                // EN: Wave modulation: amplitude, frequency, and phase shift over time
+                float amp = 0.15 * sin(iTime + layer);
+                float freq = 8.0;
+                float phase = iTime * (1.0 - layer);
+                
+                // RU: Искажение текстурных координат для создания эффекта волны
+                // JP: 波の効果を作るためのテクスチャ座標の歪み処理
+                // EN: Distorting texture coordinates to create a wave effect
+                float waveY = st.y + amp * sin(freq * st.y - phase);
+                float linePattern = fraction(waveY * 5.0) - 0.5; 
+                
+                // RU: Расчет яркости линий сетки с учетом толщины слоя
+                // JP: レイヤーの厚みを考慮したグリッド線の輝度計算
+                // EN: Grid line brightness calculation considering layer thickness
+                float thick = 0.02 + 0.01 * layer;
+                float lineBright = smoothstep(thick, 0.0, abs(linePattern));
+                
+                // RU: Эффект бегущих точек (частиц), привязанных к линиям сетки
+                // JP: グリッド線に沿って動く点（パーティクル）の効果
+                // EN: Moving points (particles) effect aligned with the grid lines
+                float particleSpeed = iTime * 1.5 + layer * 10.0;
+                float particleTrig = cos(st.x * 40.0 - particleSpeed);
+                float particleMask = pow(max(0.0, particleTrig), 64.0); // RU: Сужение маски для резкости точек | JP: 点を鋭くするためのマスク絞り込み | EN: Sharpening the mask for crisp dots
+                
+                float particleBright = lineBright * particleMask * 8.0; 
+
+                // RU: Вычисление цвета слоя из палитры и затухание в зависимости от расстояния
+                // JP: パレットからのレイヤー色計算と距離に応じた減衰
+                // EN: Color calculation from the palette and depth fading based on distance
+                vec3 hue = palette(st.x + layer - iTime * 0.2);
+                float depthFade = (1.0 - dO / MAX_DIST) * 0.15;
+                
+                // RU: Накопление финального светящегося цвета пикселя
+                // JP: ピクセルの最終発光色の蓄積
+                // EN: Accumulating the final emissive color for the pixel
+                finalColor += (lineBright * 0.3 + particleBright) * hue * depthFade;
+            }
+        }
+    }
+
+    // RU: Запись итогового цвета в выходной буфер кадра
+    // JP: 最終的なカラーを出力フレームバッファに書き込み
+    // EN: Write the final color into the output frame buffer
+    fragColor = vec4(finalColor, 1.0);
+}
+`,
+
     "Blueprint (needs work)": `#define SPEED .1
 #define FOV 3.
 

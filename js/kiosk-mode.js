@@ -141,11 +141,12 @@ const kioskHtmlContent = `<!DOCTYPE html>
                 // Store shader prefixes
                 shaderPrefixes = message.shaderPrefixes;
                 
-                // Initialize WebGL
+                // Initialize WebGL once; later inits are reconnects after the
+                // opener reloaded and need a fresh shader, not a new context.
                 initGL();
                 
                 // Send ready message
-                window.opener.postMessage({ type: 'kiosk-ready' }, '*');
+                if (window.opener) window.opener.postMessage({ type: 'kiosk-ready' }, '*');
             } else if (message.type === 'shader-update') {
                 iResolutionIsVec2 = /uniform\\s+vec2\\s+iResolution/.test(message.fragmentShader);
                 updateShaderProgram(message.vertexShader, message.fragmentShader);
@@ -157,6 +158,8 @@ const kioskHtmlContent = `<!DOCTYPE html>
         
         // Initialize WebGL
         function initGL() {
+            if (gl) return;
+
             // Try to get WebGL2 context first, then fall back to WebGL
             gl = canvas.getContext('webgl2') || canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
             isWebGL2 = gl instanceof WebGL2RenderingContext;
@@ -197,29 +200,30 @@ const kioskHtmlContent = `<!DOCTYPE html>
         // Update shader program
         function updateShaderProgram(vertexSource, fragmentSource) {
             if (!gl) return;
-            
-            // Clean up previous program
-            if (currentProgram) {
-                gl.deleteProgram(currentProgram);
-            }
-            
-            // Create shaders
+
             const vertexShader = createShader(gl.VERTEX_SHADER, vertexSource);
             const fragmentShader = createShader(gl.FRAGMENT_SHADER, fragmentSource);
-            
-            if (!vertexShader || !fragmentShader) return;
-            
-            // Create program
-            currentProgram = gl.createProgram();
-            gl.attachShader(currentProgram, vertexShader);
-            gl.attachShader(currentProgram, fragmentShader);
-            gl.linkProgram(currentProgram);
-            
-            if (!gl.getProgramParameter(currentProgram, gl.LINK_STATUS)) {
-                console.error('Could not link program', gl.getProgramInfoLog(currentProgram));
+            if (!vertexShader || !fragmentShader) {
+                if (vertexShader) gl.deleteShader(vertexShader);
+                if (fragmentShader) gl.deleteShader(fragmentShader);
                 return;
             }
-            
+
+            const program = gl.createProgram();
+            gl.attachShader(program, vertexShader);
+            gl.attachShader(program, fragmentShader);
+            gl.linkProgram(program);
+
+            if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+                console.error('Could not link program', gl.getProgramInfoLog(program));
+                gl.deleteProgram(program);
+                gl.deleteShader(vertexShader);
+                gl.deleteShader(fragmentShader);
+                return;
+            }
+
+            if (currentProgram) gl.deleteProgram(currentProgram);
+            currentProgram = program;
             gl.useProgram(currentProgram);
             
             // Set up geometry (full-screen quad)
@@ -300,11 +304,35 @@ const kioskHtmlContent = `<!DOCTYPE html>
                     element: element,
                     width: size.width,
                     height: size.height,
-                    fitMode: controller.getFitMode()
+                    fitMode: controller.getFitMode(),
+                    mirror: controller.getMirror()
                 };
             } catch (e) {
                 return null;
             }
+        }
+
+        // This window uploads its own copy of each frame, so it dedupes them
+        // independently of the opener rather than sharing a flag.
+        let watchedVideoElement = null;
+        let videoUsesFrameCallback = false;
+        let videoHasNewFrame = true;
+
+        function watchOpenerFrames(element) {
+            if (watchedVideoElement === element) return;
+
+            watchedVideoElement = element;
+            videoHasNewFrame = true;
+            videoUsesFrameCallback = typeof element.requestVideoFrameCallback === 'function';
+            if (!videoUsesFrameCallback) return;
+
+            const onFrame = () => {
+                videoHasNewFrame = true;
+                if (watchedVideoElement === element) {
+                    element.requestVideoFrameCallback(onFrame);
+                }
+            };
+            element.requestVideoFrameCallback(onFrame);
         }
         
         // Animation loop
@@ -352,12 +380,23 @@ const kioskHtmlContent = `<!DOCTYPE html>
                 const videoState = getOpenerVideoState();
                 
                 if (videoState) {
-                    gl.activeTexture(gl.TEXTURE0);
-                    gl.bindTexture(gl.TEXTURE_2D, videoTexture);
-                    
-                    if (videoState.element.readyState >= 2) {
-                        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, videoState.element);
+                    try {
+                        watchOpenerFrames(videoState.element);
+
+                        gl.activeTexture(gl.TEXTURE1);
+                        gl.bindTexture(gl.TEXTURE_2D, videoTexture);
+
+                        if (videoState.element.readyState >= 2 &&
+                            (!videoUsesFrameCallback || videoHasNewFrame)) {
+                            videoHasNewFrame = false;
+                            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, videoState.element);
+                        }
+                    } catch (e) {
+                        videoHasNewFrame = true;
                     }
+                    
+                    const iChannel1 = gl.getUniformLocation(currentProgram, 'iChannel1');
+                    if (iChannel1) gl.uniform1i(iChannel1, 1);
                     
                     // The fit is computed against this window's own resolution, so
                     // the kiosk display crops or letterboxes independently.
@@ -366,12 +405,16 @@ const kioskHtmlContent = `<!DOCTYPE html>
                     
                     const iFitMode = gl.getUniformLocation(currentProgram, 'iFitMode');
                     if (iFitMode) gl.uniform1f(iFitMode, videoState.fitMode);
+                    
+                    const iVideoMirror = gl.getUniformLocation(currentProgram, 'iVideoMirror');
+                    if (iVideoMirror) gl.uniform1f(iVideoMirror, videoState.mirror);
                 }
                 
+                // Audio holds iChannel0 in both modes so video effects stay reactive.
                 const iChannel0 = gl.getUniformLocation(currentProgram, 'iChannel0');
                 if (iChannel0) {
                     gl.activeTexture(gl.TEXTURE0);
-                    gl.bindTexture(gl.TEXTURE_2D, videoState ? videoTexture : audioTexture);
+                    gl.bindTexture(gl.TEXTURE_2D, audioTexture);
                     gl.uniform1i(iChannel0, 0);
                 }
                 
@@ -395,8 +438,23 @@ const kioskHtmlContent = `<!DOCTYPE html>
             }
         }
         
-        // Notify parent that we're ready to initialize
-        window.opener.postMessage({ type: 'kiosk-loaded' }, '*');
+        function announceToOpener() {
+            if (!window.opener || window.opener.closed) return;
+            try {
+                window.opener.postMessage({ type: 'kiosk-loaded' }, '*');
+            } catch (e) {}
+        }
+
+        announceToOpener();
+
+        // The opener's message listener dies on reload. Keep offering a
+        // handshake until the new page claims this window again.
+        setInterval(function() {
+            if (!window.opener || window.opener.closed) return;
+            try {
+                if (window.opener.kioskWindow !== window) announceToOpener();
+            } catch (e) {}
+        }, 500);
     </script>
 </body>
 </html>`;
@@ -412,8 +470,30 @@ function createKioskHtmlFile() {
     return url;
 }
 
+function handleKioskMessage(event) {
+    const message = event.data;
+    if (!message || typeof message !== 'object') return;
+
+    if (message.type === 'kiosk-loaded') {
+        window.kioskWindow = event.source;
+        event.source.postMessage({
+            type: 'init',
+            shaderPrefixes: ShaderPrefixes
+        }, '*');
+    } else if (message.type === 'kiosk-ready') {
+        if (window.kioskWindow && event.source !== window.kioskWindow) return;
+        sendCurrentShaderToKiosk();
+    }
+}
+
 // Function to open the kiosk mode window
 function openKioskMode() {
+    if (window.kioskWindow && !window.kioskWindow.closed) {
+        window.kioskWindow.focus();
+        sendCurrentShaderToKiosk();
+        return;
+    }
+
     // Create and get a URL for the kiosk.html file
     const kioskUrl = createKioskHtmlFile();
     
@@ -437,30 +517,6 @@ function openKioskMode() {
     } catch (e) {
         console.log('Could not position on second screen', e);
     }
-    
-    // Listen for messages from the kiosk window
-    function handleKioskMessage(event) {
-        if (event.source !== kioskWindow) return;
-
-        const message = event.data;
-        
-        if (message.type === 'kiosk-loaded') {
-            kioskWindow.postMessage({ 
-                type: 'init',
-                shaderPrefixes: ShaderPrefixes
-            }, '*');
-        } else if (message.type === 'kiosk-ready') {
-            sendCurrentShaderToKiosk();
-        }
-    }
-
-    window.addEventListener('message', handleKioskMessage);
-    
-    // Clean up when kiosk window is closed
-    kioskWindow.addEventListener('beforeunload', function() {
-        window.removeEventListener('message', handleKioskMessage);
-        window.kioskWindow = null;
-    });
 }
 
 // Function to send the current shader to the kiosk window
@@ -568,6 +624,8 @@ document.addEventListener('DOMContentLoaded', function() {
         kioskButton.addEventListener('click', openKioskMode);
         buttonContainer.appendChild(kioskButton);
     }
+
+    window.addEventListener('message', handleKioskMessage);
     
     // Set up audio sync when the page is loaded
     setupAudioSync();

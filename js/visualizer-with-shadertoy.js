@@ -390,57 +390,37 @@ function clearFeedbackTextures(gl, state) {
 
 function setupShaderProgram(vertexSource, fragmentSource) {
 
-    // Clean up previous program if it exists
+    const newVertexShader = createShader(gl, gl.VERTEX_SHADER, vertexSource);
 
-    if (currentProgram) {
+    if (!newVertexShader) return false;
 
-        gl.deleteProgram(currentProgram);
+    const newFragmentShader = createShader(gl, gl.FRAGMENT_SHADER, fragmentSource);
 
+    if (!newFragmentShader) {
+        gl.deleteShader(newVertexShader);
+        return false;
     }
 
-    if (currentVertexShader) {
+    const newProgram = createProgram(gl, newVertexShader, newFragmentShader);
 
-        gl.deleteShader(currentVertexShader);
-
+    if (!newProgram) {
+        gl.deleteShader(newVertexShader);
+        gl.deleteShader(newFragmentShader);
+        return false;
     }
 
-    if (currentFragmentShader) {
+    if (currentProgram) gl.deleteProgram(currentProgram);
+    if (currentVertexShader) gl.deleteShader(currentVertexShader);
+    if (currentFragmentShader) gl.deleteShader(currentFragmentShader);
 
-        gl.deleteShader(currentFragmentShader);
-
-    }
-
-    
-
-    // Create new shaders
-
-    currentVertexShader = createShader(gl, gl.VERTEX_SHADER, vertexSource);
-
-    if (!currentVertexShader) return false;
-
-    
-
-    currentFragmentShader = createShader(gl, gl.FRAGMENT_SHADER, fragmentSource);
-
-    if (!currentFragmentShader) return false;
+    currentVertexShader = newVertexShader;
+    currentFragmentShader = newFragmentShader;
+    currentProgram = newProgram;
 
     window.currentVertexShader = currentVertexShader;
-
     window.currentFragmentShader = currentFragmentShader;
-
     window.currentVertexShaderSource = vertexSource;
-
     window.currentFragmentShaderSource = fragmentSource;
-
-    
-
-    // Create and use program
-
-    currentProgram = createProgram(gl, currentVertexShader, currentFragmentShader);
-
-    if (!currentProgram) return false;
-
-    
 
     gl.useProgram(currentProgram);
 
@@ -535,7 +515,8 @@ function setupShaderProgram(vertexSource, fragmentSource) {
             iSampleRate: gl.getUniformLocation(currentProgram, 'iSampleRate'),
             iWriteFeedback: gl.getUniformLocation(currentProgram, 'iWriteFeedback'),
             iVideoResolution: gl.getUniformLocation(currentProgram, 'iVideoResolution'),
-            iFitMode: gl.getUniformLocation(currentProgram, 'iFitMode')
+            iFitMode: gl.getUniformLocation(currentProgram, 'iFitMode'),
+            iVideoMirror: gl.getUniformLocation(currentProgram, 'iVideoMirror')
         };
     }
     
@@ -702,18 +683,20 @@ function setupShaderProgram(vertexSource, fragmentSource) {
             return;
         }
 
-        if (isVideoMode && videoController) {
-            gl.activeTexture(gl.TEXTURE0);
+        // Audio keeps iChannel0 even in video mode so effects stay music-reactive;
+        // the frame goes to iChannel1, the channel left spare outside feedback.
+        updateAudioTexture();
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, audioTexture);
+        if (uniforms.iChannel0) gl.uniform1i(uniforms.iChannel0, 0);
+
+        if (isVideoMode && videoController && uniforms.iChannel1) {
+            gl.activeTexture(gl.TEXTURE1);
             gl.bindTexture(gl.TEXTURE_2D, videoController.getVideoTexture());
-            if (uniforms.iChannel0) gl.uniform1i(uniforms.iChannel0, 0);
-        } else {
-            updateAudioTexture();
-            gl.activeTexture(gl.TEXTURE0);
-            gl.bindTexture(gl.TEXTURE_2D, audioTexture);
-            if (uniforms.iChannel0) gl.uniform1i(uniforms.iChannel0, 0);
+            gl.uniform1i(uniforms.iChannel1, 1);
         }
 
-        for (let i = 1; i < 4; i++) {
+        for (let i = isVideoMode ? 2 : 1; i < 4; i++) {
             const channelUniform = uniforms['iChannel' + i];
             if (channelUniform) {
                 gl.activeTexture(gl.TEXTURE0 + i);
@@ -732,8 +715,8 @@ function setupShaderProgram(vertexSource, fragmentSource) {
             }
         }
 
-        // The source feeding iChannel0 changes shape between the audio strip and a
-        // video frame; shaders need its real size to sample it without distortion.
+        // Shaders need the real size of whatever feeds each channel so they can
+        // sample it without distortion.
         const videoSize = videoController ? videoController.getVideoSize() : { width: 1, height: 1 };
 
         if (uniforms.iVideoResolution) {
@@ -742,9 +725,12 @@ function setupShaderProgram(vertexSource, fragmentSource) {
         if (uniforms.iFitMode && videoController) {
             gl.uniform1f(uniforms.iFitMode, videoController.getFitMode());
         }
+        if (uniforms.iVideoMirror && videoController) {
+            gl.uniform1f(uniforms.iVideoMirror, videoController.getMirror());
+        }
         if (uniforms.iChannelResolution) {
-            channelResolutions[0] = isVideoMode ? videoSize.width : audioTexWidth;
-            channelResolutions[1] = isVideoMode ? videoSize.height : 1;
+            channelResolutions[3] = isVideoMode ? videoSize.width : 1;
+            channelResolutions[4] = isVideoMode ? videoSize.height : 1;
             gl.uniform3fv(uniforms.iChannelResolution, channelResolutions);
         }
         if (uniforms.iTime) gl.uniform1f(uniforms.iTime, currentTime);
@@ -900,7 +886,7 @@ function setupShaderProgram(vertexSource, fragmentSource) {
         // Check if we're in video mode
         const isVideoMode = videoController && videoController.isInVideoMode && videoController.isInVideoMode();
         
-        // Video mode swaps in a passthrough program. setupShaderProgram deletes
+        // Video mode swaps in an effect program. setupShaderProgram deletes
         // whatever program it replaces, so the previous shader is restored by
         // recompiling its source rather than by reusing a freed program handle.
         if (isVideoMode) {
@@ -908,12 +894,21 @@ function setupShaderProgram(vertexSource, fragmentSource) {
 
             if (!window.currentShaderIsVideoDisplay) {
                 savedFragmentSource = window.currentFragmentShaderSource;
-                setupShaderProgram(vertexShaderSource, videoController.getVideoDisplayShader());
-                window.currentShaderIsVideoDisplay = true;
+                if (setupShaderProgram(vertexShaderSource, videoController.getVideoDisplayShader())) {
+                    window.currentShaderIsVideoDisplay = true;
+                    videoController.clearEffectDirty();
+                }
+            } else if (videoController.isEffectDirty()) {
+                // Effect switched mid-playback: recompile without touching the
+                // saved shader we still owe the user on exit.
+                if (setupShaderProgram(vertexShaderSource, videoController.getVideoDisplayShader())) {
+                    videoController.clearEffectDirty();
+                }
             }
         } else if (window.currentShaderIsVideoDisplay) {
-            setupShaderProgram(vertexShaderSource, savedFragmentSource || fragmentShaderSource);
-            window.currentShaderIsVideoDisplay = false;
+            if (setupShaderProgram(vertexShaderSource, savedFragmentSource || fragmentShaderSource)) {
+                window.currentShaderIsVideoDisplay = false;
+            }
         }
         
         // Set uniform values for shader if program exists

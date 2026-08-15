@@ -20,47 +20,14 @@ class VideoController {
         this.thumbnailsRequested = new Set();
         this.isScrubbing = false;
 
-        // Samples the video with an aspect-aware remap of the screen UVs. Without
-        // this the 0..1 range maps straight onto the canvas and any clip whose
-        // shape differs from the window gets stretched.
-        this.videoDisplayShader = `
-            precision highp float;
+        // Playback is itself an effect ("None" is the identity pass), so there is
+        // one code path whether or not a treatment is applied.
+        this.effectName = 'None';
+        this.effectDirty = false;
 
-            uniform vec2 iResolution;
-            uniform vec2 iVideoResolution;
-            uniform float iFitMode;
-            uniform sampler2D iChannel0;
-
-            void main() {
-                vec2 uv = gl_FragCoord.xy / iResolution.xy;
-
-                float canvasAspect = iResolution.x / max(iResolution.y, 1.0);
-                float videoAspect = iVideoResolution.x / max(iVideoResolution.y, 1.0);
-
-                vec2 scale = vec2(1.0);
-                if (iFitMode < 0.5) {
-                    // Cover: fill the canvas and crop whichever axis overflows.
-                    scale = canvasAspect > videoAspect
-                        ? vec2(1.0, videoAspect / canvasAspect)
-                        : vec2(canvasAspect / videoAspect, 1.0);
-                } else if (iFitMode < 1.5) {
-                    // Contain: keep the whole frame and pad the shorter axis.
-                    scale = canvasAspect > videoAspect
-                        ? vec2(canvasAspect / videoAspect, 1.0)
-                        : vec2(1.0, videoAspect / canvasAspect);
-                }
-
-                uv = (uv - 0.5) * scale + 0.5;
-
-                float inside = step(0.0, uv.x) * step(uv.x, 1.0)
-                             * step(0.0, uv.y) * step(uv.y, 1.0);
-
-                uv.y = 1.0 - uv.y;
-                vec4 videoColor = texture2D(iChannel0, clamp(uv, 0.0, 1.0));
-
-                gl_FragColor = vec4(videoColor.rgb * inside, 1.0);
-            }
-        `;
+        // A camera feed reads as a mirror to whoever is in front of it.
+        this.isLiveSource = false;
+        this.mirror = false;
 
         this.setupVideoEventListeners();
     }
@@ -81,6 +48,9 @@ class VideoController {
                     </div>
                     <button class="vlib__icon-btn vlib__icon-btn--ghost" id="cache-all-btn" title="Download remote clips for offline playback">
                         <i class="fas fa-cloud-download-alt"></i>
+                    </button>
+                    <button class="vlib__icon-btn vlib__icon-btn--ghost" id="camera-btn" title="Use the camera as a live source">
+                        <i class="fas fa-video"></i>
                     </button>
                     <button class="vlib__icon-btn" id="local-video-btn" title="Upload a video">
                         <i class="fas fa-plus"></i>
@@ -103,7 +73,7 @@ class VideoController {
                         </button>
                     </div>
 
-                    <div class="vplayer__seek">
+                    <div class="vplayer__seek" id="video-seek-section">
                         <div class="vplayer__seek-track" id="video-seek-wrap">
                             <input type="range" id="seek-bar" min="0" max="100" value="0" step="0.1">
                             <div class="vplayer__preview" id="video-preview" hidden>
@@ -124,9 +94,19 @@ class VideoController {
                         <button id="loop-video" class="vplayer__icon is-on" title="Loop">
                             <i class="fas fa-redo"></i>
                         </button>
+                        <button id="mirror-video" class="vplayer__icon" title="Mirror horizontally">
+                            <i class="fas fa-arrows-alt-h"></i>
+                        </button>
                     </div>
 
-                    <div class="vplayer__row vplayer__row--selects">
+                    <div class="vplayer__row vplayer__row--effect">
+                        <label>
+                            Effect
+                            <select id="video-effect"></select>
+                        </label>
+                    </div>
+
+                    <div class="vplayer__row vplayer__row--selects" id="video-selects-row">
                         <label>
                             Fit
                             <select id="video-fit">
@@ -135,7 +115,7 @@ class VideoController {
                                 <option value="stretch">Stretch</option>
                             </select>
                         </label>
-                        <label>
+                        <label id="video-speed-label">
                             Speed
                             <select id="playback-speed">
                                 <option value="0.25">0.25x</option>
@@ -157,8 +137,17 @@ class VideoController {
 
         this.root = container.querySelector('.vlib');
         this.cacheUIElements();
+        this.populateEffects();
         this.bindUIEvents();
         this.loadLibrary();
+    }
+
+    populateEffects() {
+        if (!this.effectSelect) return;
+        this.effectSelect.innerHTML = window.VideoEffects.names()
+            .map((name) => `<option value="${name}">${name}</option>`)
+            .join('');
+        this.effectSelect.value = this.effectName;
     }
 
     cacheUIElements() {
@@ -168,6 +157,7 @@ class VideoController {
         this.statusEl = $('video-status');
         this.searchInput = $('video-search');
         this.localVideoBtn = $('local-video-btn');
+        this.cameraBtn = $('camera-btn');
         this.cacheAllBtn = $('cache-all-btn');
         this.videoFileInput = $('video-file-input');
         this.videoUrlInput = $('video-url-input');
@@ -188,12 +178,17 @@ class VideoController {
         this.muteBtn = $('mute-btn');
         this.volumeBar = $('volume-bar');
         this.loopBtn = $('loop-video');
+        this.mirrorBtn = $('mirror-video');
         this.fitSelect = $('video-fit');
         this.playbackSpeedSelect = $('playback-speed');
+        this.speedLabel = $('video-speed-label');
+        this.effectSelect = $('video-effect');
+        this.seekSection = $('video-seek-section');
     }
 
     bindUIEvents() {
         this.localVideoBtn.addEventListener('click', () => this.videoFileInput.click());
+        this.cameraBtn.addEventListener('click', () => this.startCamera());
 
         if (this.cacheAllBtn) {
             this.cacheAllBtn.hidden = !VideoCache.supported();
@@ -308,6 +303,12 @@ class VideoController {
         this.fitSelect.addEventListener('change', () => {
             this.fitMode = this.fitSelect.value;
         });
+
+        this.effectSelect.addEventListener('change', () => {
+            this.setEffect(this.effectSelect.value);
+        });
+
+        this.mirrorBtn.addEventListener('click', () => this.setMirror(!this.mirror));
 
         this.playbackSpeedSelect.addEventListener('change', () => {
             this.videoHandler.setPlaybackSpeed(parseFloat(this.playbackSpeedSelect.value));
@@ -568,10 +569,105 @@ class VideoController {
         }
     }
 
+    // === Camera ===
+
+    async startCamera() {
+        if (!window.isSecureContext) {
+            this.showCameraError('Camera needs https:// or localhost');
+            return;
+        }
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            this.showCameraError('This browser has no camera API');
+            return;
+        }
+
+        this.cameraBtn.classList.add('is-busy');
+        try {
+            // Video only. The FFT already owns the microphone, and grabbing it
+            // twice would fight over the device.
+            const stream = await navigator.mediaDevices.getUserMedia({
+                video: { width: { ideal: 1920 }, height: { ideal: 1080 } },
+                audio: false
+            });
+
+            this.activeSrc = 'camera:live';
+            this.videoHandler.loadStream(stream, 'camera:live');
+            this.setVideoMode(true);
+            this.setLiveUI(true);
+            this.setMirror(true);
+            this.showDock(this.cameraLabel(stream));
+            this.updateActiveCard();
+        } catch (err) {
+            // Leave any current clip/mode alone — the camera never attached.
+            this.showCameraError(this.cameraErrorMessage(err));
+        } finally {
+            this.cameraBtn.classList.remove('is-busy');
+        }
+    }
+
+    /** Surface a camera failure in the library status row without opening the dock. */
+    showCameraError(message) {
+        if (!this.statusEl) return;
+        this.statusEl.hidden = false;
+        this.statusEl.textContent = message;
+    }
+
+    cameraLabel(stream) {
+        const track = stream.getVideoTracks()[0];
+        return track && track.label ? `Camera — ${track.label}` : 'Camera';
+    }
+
+    cameraErrorMessage(err) {
+        switch (err && err.name) {
+            case 'NotAllowedError':
+            case 'SecurityError':
+                return 'Camera permission denied';
+            case 'NotFoundError':
+            case 'OverconstrainedError':
+                return 'No camera found';
+            case 'NotReadableError':
+                return 'Camera is in use by another app';
+            default:
+                return 'Could not start the camera';
+        }
+    }
+
+    stopCamera() {
+        this.videoHandler.releaseSource();
+        this.setLiveUI(false);
+        this.setMirror(false);
+        this.activeSrc = null;
+        this.updateActiveCard();
+    }
+
+    /**
+     * A live feed has no timeline, so the transport controls that imply one are
+     * hidden rather than left in place doing nothing.
+     */
+    setLiveUI(live) {
+        this.isLiveSource = live;
+        if (this.seekSection) this.seekSection.hidden = live;
+        if (this.loopBtn) this.loopBtn.hidden = live;
+        if (this.speedLabel) this.speedLabel.hidden = live;
+        if (this.root) this.root.classList.toggle('is-camera', live);
+    }
+
+    setMirror(enabled) {
+        this.mirror = enabled;
+        if (this.mirrorBtn) this.mirrorBtn.classList.toggle('is-on', enabled);
+    }
+
+    getMirror() {
+        return this.mirror ? 1 : 0;
+    }
+
     // === Playback ===
 
     async playSource(src, title) {
         this.activeSrc = src;
+        // loadVideo() releases any live stream itself; only the UI needs resetting.
+        this.setLiveUI(false);
+        this.setMirror(false);
         this.setVideoMode(true);
         this.showDock(title || VideoLibrary.titleFromSrc(src));
         this.updateActiveCard();
@@ -670,6 +766,8 @@ class VideoController {
         }
 
         this.activeSrc = `upload:${file.name}`;
+        this.setLiveUI(false);
+        this.setMirror(false);
         this.videoHandler.loadVideoFile(file);
         this.setVideoMode(true);
         this.showDock(file.name);
@@ -762,7 +860,25 @@ class VideoController {
     }
 
     getVideoDisplayShader() {
-        return this.videoDisplayShader;
+        return window.VideoEffects.build(this.effectName);
+    }
+
+    setEffect(name) {
+        if (!window.VideoEffects.has(name) || name === this.effectName) return;
+        this.effectName = name;
+        this.effectDirty = true;
+    }
+
+    getEffect() {
+        return this.effectName;
+    }
+
+    isEffectDirty() {
+        return this.effectDirty;
+    }
+
+    clearEffectDirty() {
+        this.effectDirty = false;
     }
 
     isInVideoMode() {
@@ -770,6 +886,12 @@ class VideoController {
     }
 
     setVideoMode(enabled) {
+        // Every exit route lands here — the dock's close button and any shader
+        // being applied — so the camera is released in one place.
+        if (!enabled && this.videoHandler.isLive()) {
+            this.stopCamera();
+        }
+
         this.isVideoMode = enabled;
         this.videoHandler.setVideoMode(enabled);
         if (this.root) {
