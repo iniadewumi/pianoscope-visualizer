@@ -388,6 +388,56 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
 
     fragColor = vec4(clamp(col, 0.0, 1.0), 1.0);
 }
+`,
+
+        "Sobel Outline": `
+/*
+Mode: chromatic Sobel edges over a dimmed frame
+Audio: bass = outline gain; mid = kernel radius; high = edge threshold
+*/
+#define EDGE_GAIN   1.45
+#define VIDEO_DIM   0.50
+#define EFFECT_MIX  0.90
+#define RADIUS_MAX  2.5
+
+vec3 sobelTap(vec2 v) {
+    float inside = step(0.0, v.x) * step(v.x, 1.0) * step(0.0, v.y) * step(v.y, 1.0);
+    return texture2D(iChannel1, clamp(v, 0.0, 1.0)).rgb * inside;
+}
+
+void mainImage(out vec4 fragColor, in vec2 fragCoord) {
+    vec2 uv = fragCoord / iResolution.xy;
+
+    float bass = audioBoost(safeAudio(getBass(), fallbackBass()));
+    float mid  = audioBoost(safeAudio(getMid(),  fallbackMid()));
+    float high = audioBoost(safeAudio(getHigh(), fallbackHigh()));
+
+    vec2 v = videoUV(uv);
+    vec2 texel = (1.0 / max(iVideoResolution, vec2(1.0))) * (1.0 + mid * (RADIUS_MAX - 1.0));
+
+    vec3 tl = sobelTap(v + vec2(-texel.x,  texel.y));
+    vec3 t  = sobelTap(v + vec2( 0.0,      texel.y));
+    vec3 tr = sobelTap(v + vec2( texel.x,  texel.y));
+    vec3 l  = sobelTap(v + vec2(-texel.x,  0.0));
+    vec3 r  = sobelTap(v + vec2( texel.x,  0.0));
+    vec3 bl = sobelTap(v + vec2(-texel.x, -texel.y));
+    vec3 b  = sobelTap(v + vec2( 0.0,     -texel.y));
+    vec3 br = sobelTap(v + vec2( texel.x, -texel.y));
+
+    vec3 gx = -tl + tr - 2.0 * l + 2.0 * r - bl + br;
+    vec3 gy = -tl - 2.0 * t - tr + bl + 2.0 * b + br;
+    vec3 grad = sqrt(gx * gx + gy * gy);
+
+    float mag = length(grad) / 1.7320508;
+    float spark = smoothstep(0.06, 0.10 + 0.40 * (1.0 - high), mag);
+    vec3 edges = mix(vec3(mag), grad, 0.70) * spark;
+
+    vec3 src = sobelTap(v);
+    vec3 treated = src * VIDEO_DIM + edges * EDGE_GAIN * (0.50 + bass * 1.15);
+    vec3 col = mix(src, treated, EFFECT_MIX) * videoInside(uv);
+
+    fragColor = vec4(clamp(col, 0.0, 1.0), 1.0);
+}
 `
     };
 

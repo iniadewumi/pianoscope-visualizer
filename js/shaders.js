@@ -1,6 +1,369 @@
 
 // Sample Shadertoy shaders to quickly test
 export const SHADERS = {
+
+    "Sounder": `// Hexagone by Martijn Steinrucken aka BigWings - 2019
+// countfrolic@gmail.com
+// License Creative Commons Attribution-NonCommercial-ShareAlike 3.0 Unported License.
+// 
+// This started as an idea to do the effect below, but with hexagons:
+// https://www.shadertoy.com/view/wdlGRM
+//
+// Turns out that really doesn't look very nice so I just made it
+// into a dance party instead ;)
+//
+// Music: https://soundcloud.com/buku/front-to-back
+
+
+#define R3 1.732051
+
+vec4 HexCoords(vec2 uv) {
+    vec2 s = vec2(1, R3);
+    vec2 h = .5*s;
+
+    vec2 gv = s*uv;
+    
+    vec2 a = mod(gv, s)-h;
+    vec2 b = mod(gv+h, s)-h;
+    
+    vec2 ab = dot(a,a)<dot(b,b) ? a : b;
+    vec2 st = ab;
+    vec2 id = gv-ab;
+    
+   // ab = abs(ab);
+    //st.x = .5-max(dot(ab, normalize(s)), ab.x);
+	st = ab;
+    return vec4(st, id);
+}
+
+float GetSize(vec2 id, float seed) {
+    float d = length(id);
+    float t = iTime*.5;
+    float a = sin(d*seed+t)+sin(d*seed*seed*10.+t*2.);
+    return a/2. +.5;
+}
+
+mat2 Rot(float a) {
+    float s = sin(a);
+    float c = cos(a);
+    return mat2(c, -s, s, c);
+}
+
+float Hexagon(vec2 uv, float r, vec2 offs) {
+    
+    uv *= Rot(mix(0., 3.1415, r));
+    
+    r /= 1./sqrt(2.);
+    uv = vec2(-uv.y, uv.x);
+    uv.x *= R3;
+    uv = abs(uv);
+    
+    vec2 n = normalize(vec2(1,1));
+    float d = dot(uv, n)-r;
+    d = max(d, uv.y-r*.707);
+    
+    d = smoothstep(.06, .02, abs(d));
+    
+    d += smoothstep(.1, .09, abs(r-.5))*sin(iTime);
+    return d;
+}
+
+float Xor(float a, float b) {
+	return a+b;
+    //return a*(1.-b) + b*(1.-a);
+}
+
+float Layer(vec2 uv, float s) {
+    vec4 hu = HexCoords(uv*2.);
+
+    float d = Hexagon(hu.xy, GetSize(hu.zw, s), vec2(0));
+    vec2 offs = vec2(1,0);
+    d = Xor(d, Hexagon(hu.xy-offs, GetSize(hu.zw+offs, s), offs));
+    d = Xor(d, Hexagon(hu.xy+offs, GetSize(hu.zw-offs, s), -offs));
+    offs = vec2(.5,.8725);
+    d = Xor(d, Hexagon(hu.xy-offs, GetSize(hu.zw+offs, s), offs));
+    d = Xor(d, Hexagon(hu.xy+offs, GetSize(hu.zw-offs, s), -offs));
+    offs = vec2(-.5,.8725);
+    d = Xor(d, Hexagon(hu.xy-offs, GetSize(hu.zw+offs, s), offs));
+    d = Xor(d, Hexagon(hu.xy+offs, GetSize(hu.zw-offs, s), -offs));
+    
+    return d;
+}
+
+float N(float p) {
+    return fract(sin(p*123.34)*345.456);
+}
+
+vec3 Col(float p, float offs) {
+    float n = N(p)*1234.34;
+    
+    return sin(n*vec3(12.23,45.23,56.2)+offs*3.)*.5+.5;
+}
+
+vec3 GetRayDir(vec2 uv, vec3 p, vec3 lookat, float zoom) {
+    vec3 f = normalize(lookat-p),
+        r = normalize(cross(vec3(0,1,0), f)),
+        u = cross(f, r),
+        c = p+f*zoom,
+        i = c + uv.x*r + uv.y*u,
+        d = normalize(i-p);
+    return d;
+}
+
+void mainImage( out vec4 fragColor, in vec2 fragCoord )
+{
+    vec2 uv = (fragCoord-.5*iResolution.xy)/iResolution.y;
+	vec2 UV = fragCoord.xy/iResolution.xy-.5;
+    float duv= dot(UV, UV);
+    vec2 m = iMouse.xy/iResolution.xy-.5;
+    
+    float t = iTime*.2+m.x*10.+5.;
+    
+    float y = sin(t*.5);//+sin(1.5*t)/3.;
+    vec3 ro = vec3(0, 20.*y, -5);
+    vec3 lookat = vec3(0,0,-10);
+    vec3 rd = GetRayDir(uv, ro, lookat, 1.);
+    
+    vec3 col = vec3(0);
+    
+    vec3 p = ro+rd*(ro.y/rd.y);
+    float dp = length(p.xz);
+    
+    if((ro.y/rd.y)>0.)
+    	col *= 0.;
+    else {
+        uv = p.xz*.1;
+
+        uv *= mix(1., 5., sin(t*.5)*.5+.5);
+
+        uv *= Rot(t);
+        m *= Rot(t);
+
+        uv.x *= R3;
+        
+
+        for(float i=0.; i<1.; i+=1./3.) {
+            float id = floor(i+t);
+            float t = fract(i+t);
+            float z = mix(5., .1, t);
+            float fade = smoothstep(0., .3, t)*smoothstep(1., .7, t);
+
+            col += fade*t*Layer(uv*z, N(i+id))*Col(id,duv);
+        }
+    }
+    col *= 2.;
+    
+    if(ro.y<0.) col = 1.-col;
+    
+    col *= smoothstep(18., 5., dp);
+    col *= 1.-duv*2.;
+    fragColor = vec4(col,1.0);
+}`,
+
+    "Sounder Reactive": `/*
+Sound-reactive variation of "Sounder" (Hexagone by Martijn Steinrucken / BigWings, 2019)
+License: CC BY-NC-SA 3.0 Unported (inherited from the original)
+
+Audio: deliberately subtle — the base shader is already highly active, so audio
+modulates existing amplitudes rather than adding new motion or new time bases.
+  Bass = camera sway depth, hex-field zoom push, layer intensity, vignette breath
+  Mid  = hex swell (GetSize amplitude) + slight rotation wobble
+  High = flash lift on half-size hexes, edge shimmer, faint hue drift
+
+Untouched on purpose: iTime scaling anywhere (audio on time causes jitter),
+and the sign of ro.y (it gates the color inversion, so flip timing stays steady).
+*/
+
+#define R3 1.732051
+
+#define CAM_BASS_GAIN    0.26
+#define ZOOM_BASS_GAIN   0.14
+#define LEVEL_BASS_GAIN  0.18
+#define VIGNETTE_BASS    0.16
+#define SIZE_MID_GAIN    0.17
+#define ROT_MID_GAIN     0.16
+#define FLASH_HIGH_GAIN  0.20
+#define EDGE_HIGH_GAIN   0.09
+#define HUE_HIGH_GAIN    0.4
+
+float gBass;
+float gMid;
+float gHigh;
+
+float fft(float x) {
+    return texture(iChannel0, vec2(clamp(x, 0.0, 1.0), 0.0)).x;
+}
+
+float getBass() {
+    return (fft(0.01) + fft(0.03) + fft(0.05) + fft(0.07)) * 0.25;
+}
+
+float getMid() {
+    return (fft(0.15) + fft(0.25) + fft(0.35) + fft(0.45)) * 0.25;
+}
+
+float getHigh() {
+    return (fft(0.55) + fft(0.70) + fft(0.85) + fft(0.95)) * 0.25;
+}
+
+float fallbackBass() { return 0.30 + 0.12 * sin(iTime * 0.9); }
+float fallbackMid()  { return 0.24 + 0.09 * sin(iTime * 0.5 + 1.0); }
+float fallbackHigh() { return 0.15 + 0.07 * sin(iTime * 1.7 + 2.0); }
+
+float safeAudio(float value, float fallback) {
+    return max(value, fallback * 0.35);
+}
+
+// Softer than audioBoost() — FFT spikes would fight the existing motion here
+float softAudio(float v) {
+    return pow(clamp(v, 0.0, 1.0), 1.4);
+}
+
+vec4 HexCoords(vec2 uv) {
+    vec2 s = vec2(1, R3);
+    vec2 h = .5*s;
+
+    vec2 gv = s*uv;
+
+    vec2 a = mod(gv, s)-h;
+    vec2 b = mod(gv+h, s)-h;
+
+    vec2 ab = dot(a,a)<dot(b,b) ? a : b;
+    vec2 id = gv-ab;
+
+    return vec4(ab, id);
+}
+
+float GetSize(vec2 id, float seed) {
+    float d = length(id);
+    float t = iTime*.5;
+    float a = sin(d*seed+t)+sin(d*seed*seed*10.+t*2.);
+    return (a/2. +.5) * (1. + gMid*SIZE_MID_GAIN);
+}
+
+mat2 Rot(float a) {
+    float s = sin(a);
+    float c = cos(a);
+    return mat2(c, -s, s, c);
+}
+
+float Hexagon(vec2 uv, float r, vec2 offs) {
+
+    uv *= Rot(mix(0., 3.1415, r));
+
+    r /= 1./sqrt(2.);
+    uv = vec2(-uv.y, uv.x);
+    uv.x *= R3;
+    uv = abs(uv);
+
+    vec2 n = normalize(vec2(1,1));
+    float d = dot(uv, n)-r;
+    d = max(d, uv.y-r*.707);
+
+    d = smoothstep(.06, .02, abs(d)) * (1. + gHigh*EDGE_HIGH_GAIN);
+
+    d += smoothstep(.1, .09, abs(r-.5))*sin(iTime)*(1. + gHigh*FLASH_HIGH_GAIN);
+    return d;
+}
+
+float Xor(float a, float b) {
+    return a+b;
+}
+
+float Layer(vec2 uv, float s) {
+    vec4 hu = HexCoords(uv*2.);
+
+    float d = Hexagon(hu.xy, GetSize(hu.zw, s), vec2(0));
+    vec2 offs = vec2(1,0);
+    d = Xor(d, Hexagon(hu.xy-offs, GetSize(hu.zw+offs, s), offs));
+    d = Xor(d, Hexagon(hu.xy+offs, GetSize(hu.zw-offs, s), -offs));
+    offs = vec2(.5,.8725);
+    d = Xor(d, Hexagon(hu.xy-offs, GetSize(hu.zw+offs, s), offs));
+    d = Xor(d, Hexagon(hu.xy+offs, GetSize(hu.zw-offs, s), -offs));
+    offs = vec2(-.5,.8725);
+    d = Xor(d, Hexagon(hu.xy-offs, GetSize(hu.zw+offs, s), offs));
+    d = Xor(d, Hexagon(hu.xy+offs, GetSize(hu.zw-offs, s), -offs));
+
+    return d;
+}
+
+float N(float p) {
+    return fract(sin(p*123.34)*345.456);
+}
+
+vec3 Col(float p, float offs) {
+    float n = N(p)*1234.34;
+
+    return sin(n*vec3(12.23,45.23,56.2)+offs*3.)*.5+.5;
+}
+
+vec3 GetRayDir(vec2 uv, vec3 p, vec3 lookat, float zoom) {
+    vec3 f = normalize(lookat-p),
+        r = normalize(cross(vec3(0,1,0), f)),
+        u = cross(f, r),
+        c = p+f*zoom,
+        i = c + uv.x*r + uv.y*u,
+        d = normalize(i-p);
+    return d;
+}
+
+void mainImage( out vec4 fragColor, in vec2 fragCoord )
+{
+    gBass = softAudio(safeAudio(getBass(), fallbackBass()));
+    gMid  = softAudio(safeAudio(getMid(),  fallbackMid()));
+    gHigh = softAudio(safeAudio(getHigh(), fallbackHigh()));
+
+    vec2 uv = (fragCoord-.5*iResolution.xy)/iResolution.y;
+    vec2 UV = fragCoord.xy/iResolution.xy-.5;
+    float duv= dot(UV, UV);
+    vec2 m = iMouse.xy/iResolution.xy-.5;
+
+    float t = iTime*.2+m.x*10.+5.;
+
+    // Amplitude only — sin() zero crossings stay put, so the invert flip below
+    // keeps its original rhythm
+    float y = sin(t*.5) * (1. + gBass*CAM_BASS_GAIN);
+    vec3 ro = vec3(0, 20.*y, -5);
+    vec3 lookat = vec3(0,0,-10);
+    vec3 rd = GetRayDir(uv, ro, lookat, 1.);
+
+    vec3 col = vec3(0);
+
+    vec3 p = ro+rd*(ro.y/rd.y);
+    float dp = length(p.xz);
+
+    if((ro.y/rd.y)>0.)
+        col *= 0.;
+    else {
+        uv = p.xz*.1;
+
+        uv *= mix(1., 5., sin(t*.5)*.5+.5) + gBass*ZOOM_BASS_GAIN;
+
+        uv *= Rot(t + gMid*ROT_MID_GAIN);
+        m *= Rot(t);
+
+        uv.x *= R3;
+
+        float level = 1. + gBass*LEVEL_BASS_GAIN;
+        float hue = duv + gHigh*HUE_HIGH_GAIN;
+
+        for(float i=0.; i<1.; i+=1./3.) {
+            float id = floor(i+t);
+            float t = fract(i+t);
+            float z = mix(5., .1, t);
+            float fade = smoothstep(0., .3, t)*smoothstep(1., .7, t);
+
+            col += fade*t*Layer(uv*z, N(i+id))*Col(id,hue)*level;
+        }
+    }
+    col *= 2.;
+
+    if(ro.y<0.) col = 1.-col;
+
+    col *= smoothstep(18., 5., dp);
+    col *= 1.-duv*(2. - gBass*VIGNETTE_BASS);
+    fragColor = vec4(col,1.0);
+}`,
     "Neon":`// Original shader: https://glslsandbox.com/e#50965.0
 // Neon glowing LED style text (but without the inappropriate language)
 
