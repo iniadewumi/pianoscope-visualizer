@@ -221,6 +221,89 @@
     transition: all 0.3s ease;
 }
 
+.display-text-panel {
+    margin-bottom: 16px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid rgba(212, 175, 55, 0.22);
+}
+
+.display-text-label {
+    display: block;
+    font-size: 12px;
+    letter-spacing: 0.4px;
+    color: #D4AF37;
+    margin-bottom: 8px;
+    font-weight: 500;
+}
+
+.display-text-row {
+    display: flex;
+    gap: 8px;
+    align-items: stretch;
+}
+
+.display-text-input {
+    flex: 1;
+    min-width: 0;
+    min-height: 58px;
+    resize: vertical;
+    background: rgba(18, 18, 18, 0.8);
+    color: #e0e0e0;
+    border: 1px solid rgba(123, 44, 191, 0.3);
+    border-radius: 6px;
+    padding: 10px 12px;
+    font-size: 14px;
+    font-family: Inter, "Segoe UI", sans-serif;
+    letter-spacing: 0.06em;
+    line-height: 1.35;
+    box-sizing: border-box;
+}
+
+.display-text-input:focus {
+    border-color: rgba(123, 44, 191, 0.7);
+    outline: none;
+}
+
+.display-text-hint {
+    margin-top: 6px;
+    font-size: 11px;
+    color: rgba(224, 224, 224, 0.42);
+}
+
+.display-text-meta {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 8px;
+}
+
+.display-text-font {
+    flex: 1;
+    min-width: 0;
+    background: rgba(18, 18, 18, 0.8);
+    color: #e0e0e0;
+    border: 1px solid rgba(123, 44, 191, 0.3);
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-size: 13px;
+    font-family: Inter, "Segoe UI", sans-serif;
+}
+
+.display-text-overlay-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: rgba(224, 224, 224, 0.75);
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.display-text-apply {
+    flex-grow: 0;
+    min-width: 88px;
+}
+
 /* Make sure the canvas isn't affected by the sidebar */
 #visualizer {
     z-index: 1;
@@ -236,4 +319,55 @@
     .shader-editor-textarea {
         min-height: 200px;
     }
+}
+/* Sequencer transport inside the display-text panel */
+.seq-transport {
+    display: flex;
+    align-items: stretch;
+    gap: 6px;
+    margin-top: 8px;
+}
+
+.seq-btn {
+    flex: 1 1 auto;
+    min-width: 0;
+    padding: 8px 6px;
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+.seq-btn.seq-live {
+    background: rgba(212, 175, 55, 0.18);
+    border-color: rgba(212, 175, 55, 0.75);
+    color: #D4AF37;
+}
+
+.seq-num {
+    flex: 0 0 56px;
+    width: 56px;
+    min-width: 0;
+    background: rgba(18, 18, 18, 0.8);
+    color: #e0e0e0;
+    border: 1px solid rgba(123, 44, 191, 0.3);
+    border-radius: 6px;
+    padding: 8px 6px;
+    font-size: 12px;
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+}
+
+.seq-num:focus,
+#seq-artist:focus,
+#display-text-transition:focus {
+    border-color: rgba(123, 44, 191, 0.7);
+    outline: none;
+}
+
+.seq-readout {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 10.5px;
+    letter-spacing: 0.02em;
+    color: rgba(224, 224, 224, 0.55);
+    margin-top: 6px;
 }

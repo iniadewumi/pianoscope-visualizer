@@ -18,6 +18,7 @@ You are working in **pianoscope-visualizer**: Shadertoy-style GLSL fragments, mi
 2. [`howto/01-repo-and-workflow.md`](howto/01-repo-and-workflow.md) — Where to put code.
 3. [`howto/02-audio-reactivity.md`](howto/02-audio-reactivity.md) — **Critical:** this repo’s FFT layout is *not* classic Shadertoy.
 4. [`howto/07-anti-patterns-and-failures.md`](howto/07-anti-patterns-and-failures.md) — Avoid known failures.
+5. [`howto/10-display-text-and-sequencer.md`](howto/10-display-text-and-sequencer.md) — **Required if the task touches display text, transitions or the sequencer.**
 5. **Technique docs** (pick by task):
    - Grid / textile / woven → [`howto/04-pattern-tiling-truchet.md`](howto/04-pattern-tiling-truchet.md)
    - Organic / mudcloth / noise → [`howto/05-iquilez-sdf-noise-warp.md`](howto/05-iquilez-sdf-noise-warp.md)
@@ -34,9 +35,12 @@ You are working in **pianoscope-visualizer**: Shadertoy-style GLSL fragments, mi
 |-----------------------------|--------|------|
 | `PIANOSCOPE Afrohouse Mudcloth Bloom` | **Shipped (v1)** | `js/test-shaders.js` |
 | `PIANOSCOPE Afrotech Fractal Settlement` | **Documented** — architecture in learnings; re-add to `test-shaders.js` if missing | see learnings doc |
-| `PIANOSCOPE Amapiano Kente Loom` | **Shipped (v1)** | `js/test-shaders.js` (first in picker) |
+| `PIANOSCOPE Amapiano Kente Loom` | **Shipped (v1)** | `js/test-shaders.js` |
 | `PIANOSCOPE 3-Step Cornrow Curves` | **Not built** | recipe in `howto/06-genre-shader-recipes.md` |
 | `PIANOSCOPE Adinkra Symbol Field Abstract` | Optional | brief only |
+| `PIANOSCOPE Word Ladder` | **Built, uncommitted** (branch `feat/kinetic-text`) | `js/test-shaders.js` — first in picker; see [`howto/10`](howto/10-display-text-and-sequencer.md) |
+| `PIANOSCOPE Kick Afterglow` | **Sequencer via `SEQ_COVER`** — original size, shared `seqSample` | `js/test-shaders.js` |
+| `PIANOSCOPE Chrome Stage` | **Removed** | — |
 
 **Implementation order (from brief):** Afrotech → Mudcloth → Kente → Cornrow → visual approval between each.
 

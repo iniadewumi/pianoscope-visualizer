@@ -8,6 +8,7 @@
 import { SHADERS } from './shaders.js';
 import { SHADERS2 } from './shaders2.js';
 import { TEST_SHADERS } from './test-shaders.js';
+import { SEQ_GLSL } from './text-seq-glsl.js';
 
 // Combine the shader objects (TEST_SHADERS first for picker / keyboard cycle)
 const SAMPLE_SHADERS = { ...TEST_SHADERS, ...SHADERS, ...SHADERS2 };
@@ -46,6 +47,28 @@ uniform sampler2D iChannel1;
 uniform sampler2D iChannel2;
 uniform sampler2D iChannel3;
 uniform vec3 iChannelResolution[4];
+
+// Display text.
+//   iChannel3  - legacy 2048x512 sheet, R = sharp, G = soft. Unchanged contract.
+//   iTextSheet - sheet fitted to the copy: R = slot A sharp, G = slot A soft,
+//                B = slot B sharp (the incoming word during a swap).
+// iTextMorph runs 0 -> 1 across a swap. iTextLineH (one line as a fraction of the
+// fitted sheet) lets a shader hold cap height constant while copy length changes.
+// iTextExtent is the glyph block as a fraction of that sheet, for frame fitting.
+// iTextLegacyExtent is that same block as a fraction of the 2048x512 strip, so a
+// SEQ_COVER shader can keep Kick Afterglow's original on-screen size.
+// iTextWords carries per-word rects in sheet UV so type can be animated word by
+// word rather than only as one block.
+uniform sampler2D iTextSheet;
+uniform vec2 iTextSheetRes;
+uniform float iTextMorph;
+uniform float iTextLineH;
+uniform vec2 iTextExtent;
+uniform vec2 iTextExtentB;
+uniform vec2 iTextLegacyExtent;
+uniform float iTextTransition;
+uniform vec4 iTextWords[8];
+uniform float iTextWordCount;
 `;
 
     // Shadertoy's image pass renders opaque and discards whatever mainImage writes
@@ -86,6 +109,17 @@ void main() {
         // Check if it's a Shadertoy shader (should have mainImage function)
         if (!shadertoyCode.includes("void mainImage(")) {
             throw new Error("Not a valid Shadertoy shader (missing mainImage function)");
+        }
+
+        // Shared sequencer helpers. A shader opts in with #define SEQ_LINE or
+        // #define SEQ_COVER; the GLSL is injected before mainImage so the
+        // shader's own fieldValue (if any) is already declared.
+        if (/#define\s+SEQ_(LINE|COVER)\b/.test(shadertoyCode) &&
+            !/vec3\s+seqSample\s*\(/.test(shadertoyCode)) {
+            const idx = shadertoyCode.search(/void\s+mainImage\s*\(/);
+            if (idx >= 0) {
+                shadertoyCode = shadertoyCode.slice(0, idx) + SEQ_GLSL + '\n' + shadertoyCode.slice(idx);
+            }
         }
 
         // Replace texture with texture2D which is needed for WebGL 1.0
@@ -228,8 +262,163 @@ void main() {
         });
 
         // Assemble the dropdown
+        const displayTextPanel = document.createElement('div');
+        displayTextPanel.className = 'display-text-panel';
+        const displayTextLabel = document.createElement('label');
+        displayTextLabel.className = 'display-text-label';
+        displayTextLabel.htmlFor = 'display-text-input';
+        displayTextLabel.textContent = 'Display text';
+        const displayTextRow = document.createElement('div');
+        displayTextRow.className = 'display-text-row';
+        const displayTextInput = document.createElement('textarea');
+        displayTextInput.id = 'display-text-input';
+        displayTextInput.className = 'display-text-input';
+        displayTextInput.rows = 2;
+        displayTextInput.placeholder = 'LET THE MUSIC\nDO THE TALKING';
+        displayTextInput.autocomplete = 'off';
+        displayTextInput.spellcheck = false;
+        const displayTextApply = document.createElement('button');
+        displayTextApply.type = 'button';
+        displayTextApply.className = 'shader-editor-button apply-button display-text-apply';
+        displayTextApply.innerHTML = '<i class="fa fa-check"></i> Apply';
+        displayTextRow.appendChild(displayTextInput);
+        displayTextRow.appendChild(displayTextApply);
+        displayTextPanel.appendChild(displayTextLabel);
+        displayTextPanel.appendChild(displayTextRow);
+        const displayTextMeta = document.createElement('div');
+        displayTextMeta.className = 'display-text-meta';
+        const displayFontSelect = document.createElement('select');
+        displayFontSelect.id = 'display-text-font';
+        displayFontSelect.className = 'display-text-font';
+        displayFontSelect.title = 'Overlay font';
+        const fonts = (window.PianoscopeDisplayText && window.PianoscopeDisplayText.FONTS) || [];
+        for (let i = 0; i < fonts.length; i++) {
+            const opt = document.createElement('option');
+            opt.value = fonts[i].id;
+            opt.textContent = fonts[i].name;
+            displayFontSelect.appendChild(opt);
+        }
+        const overlayToggle = document.createElement('label');
+        overlayToggle.className = 'display-text-overlay-toggle';
+        const overlayCheck = document.createElement('input');
+        overlayCheck.type = 'checkbox';
+        overlayCheck.id = 'display-text-overlay-enabled';
+        overlayToggle.appendChild(overlayCheck);
+        overlayToggle.appendChild(document.createTextNode(' JS overlay'));
+        displayTextMeta.appendChild(displayFontSelect);
+        displayTextMeta.appendChild(overlayToggle);
+        displayTextPanel.appendChild(displayTextMeta);
+
+        // ---- transition picker ----
+        const transitionRow = document.createElement('div');
+        transitionRow.className = 'display-text-meta';
+        const transitionSelect = document.createElement('select');
+        transitionSelect.id = 'display-text-transition';
+        transitionSelect.className = 'display-text-font';
+        transitionSelect.title = 'Transition used for every text change, including sequencer playback';
+        const transitions = (window.PianoscopeDisplayText && window.PianoscopeDisplayText.TRANSITIONS) || [];
+        for (let i = 0; i < transitions.length; i++) {
+            const opt = document.createElement('option');
+            opt.value = transitions[i].id;
+            opt.textContent = transitions[i].name;
+            transitionSelect.appendChild(opt);
+        }
+        const previewBtn = document.createElement('button');
+        previewBtn.type = 'button';
+        previewBtn.className = 'shader-editor-button seq-btn';
+        previewBtn.textContent = 'Preview';
+        previewBtn.title = 'Re-apply the current text using the selected transition';
+        transitionRow.appendChild(transitionSelect);
+        transitionRow.appendChild(previewBtn);
+        displayTextPanel.appendChild(transitionRow);
+
+        // ---- sequencer transport ----
+        const seqLabel = document.createElement('label');
+        seqLabel.className = 'display-text-label';
+        seqLabel.textContent = 'Sequence';
+        displayTextPanel.appendChild(seqLabel);
+
+        const seqRow = document.createElement('div');
+        seqRow.className = 'display-text-meta';
+        const seqSelect = document.createElement('select');
+        seqSelect.id = 'seq-name';
+        seqSelect.className = 'display-text-font';
+        const seqNames = (window.PianoscopeTextSequencer && window.PianoscopeTextSequencer.names()) || [];
+        for (let i = 0; i < seqNames.length; i++) {
+            const opt = document.createElement('option');
+            opt.value = seqNames[i];
+            opt.textContent = seqNames[i];
+            seqSelect.appendChild(opt);
+        }
+        const artistInput = document.createElement('input');
+        artistInput.type = 'text';
+        artistInput.id = 'seq-artist';
+        artistInput.className = 'display-text-font';
+        artistInput.placeholder = 'Artist name';
+        artistInput.autocomplete = 'off';
+        seqRow.appendChild(seqSelect);
+        seqRow.appendChild(artistInput);
+        displayTextPanel.appendChild(seqRow);
+
+        const transportRow = document.createElement('div');
+        transportRow.className = 'seq-transport';
+        const playBtn = document.createElement('button');
+        playBtn.type = 'button';
+        playBtn.className = 'shader-editor-button seq-btn';
+        playBtn.textContent = 'Play';
+        playBtn.title = 'Run the sequence (P)';
+        const stepBtn = document.createElement('button');
+        stepBtn.type = 'button';
+        stepBtn.className = 'shader-editor-button seq-btn';
+        stepBtn.textContent = 'Step';
+        stepBtn.title = 'Advance one state (Space)';
+        const tapBtn = document.createElement('button');
+        tapBtn.type = 'button';
+        tapBtn.className = 'shader-editor-button seq-btn';
+        tapBtn.textContent = 'Tap';
+        tapBtn.title = 'Tap four beats to lock tempo (T)';
+        const bpmInput = document.createElement('input');
+        bpmInput.type = 'number';
+        bpmInput.min = '20';
+        bpmInput.max = '300';
+        bpmInput.className = 'seq-num';
+        bpmInput.title = 'BPM';
+        const barsInput = document.createElement('input');
+        barsInput.type = 'number';
+        barsInput.min = '1';
+        barsInput.max = '32';
+        barsInput.className = 'seq-num';
+        barsInput.title = 'Bars per state';
+        transportRow.appendChild(playBtn);
+        transportRow.appendChild(stepBtn);
+        transportRow.appendChild(tapBtn);
+        transportRow.appendChild(bpmInput);
+        transportRow.appendChild(barsInput);
+        displayTextPanel.appendChild(transportRow);
+
+        const seqReadout = document.createElement('div');
+        seqReadout.className = 'display-text-hint seq-readout';
+        displayTextPanel.appendChild(seqReadout);
+        if (window.PianoscopeDisplayText) {
+            displayTextInput.value = window.PianoscopeDisplayText.toDisplayValue(
+                window.PianoscopeDisplayText.getText()
+            );
+            displayFontSelect.value = window.PianoscopeDisplayText.getFont();
+            overlayCheck.checked = window.PianoscopeDisplayText.isOverlayEnabled();
+            window.PianoscopeDisplayText.onChange(function (text) {
+                if (document.activeElement !== displayTextInput) {
+                    displayTextInput.value = window.PianoscopeDisplayText.toDisplayValue(text);
+                }
+            });
+        }
+        const displayTextHint = document.createElement('div');
+        displayTextHint.className = 'display-text-hint';
+        displayTextHint.textContent = 'Pipe or newline stacks a line. Space steps, P plays, T taps tempo. The transition above applies to every state in the sequence. Word Ladder and Kick Afterglow honour transitions (Kick Afterglow keeps its original size). Kente Loom uses the legacy sheet and always hard-cuts.';
+        displayTextPanel.appendChild(displayTextHint);
+
         dropdownContainer.appendChild(searchInput);
         dropdownContainer.appendChild(optionsContainer);
+        shaderTabContent.appendChild(displayTextPanel);
         shaderTabContent.appendChild(dropdownContainer);
         const shaderTextarea = document.createElement('textarea');
         shaderTextarea.className = 'shader-editor-textarea';
@@ -320,6 +509,97 @@ void main() {
                 setTimeout(() => { errorDisplay.style.display = 'none'; }, 300); // Wait for fade out transition
             }, 3000);
         }
+
+        function commitDisplayText() {
+            if (!window.PianoscopeDisplayText) return;
+            const next = window.PianoscopeDisplayText.applyText(displayTextInput.value);
+            displayTextInput.value = window.PianoscopeDisplayText.toDisplayValue(next);
+            showMessage(next ? ('Display text: ' + next.replace(/\|/g, ' / ')) : 'Display text cleared', 'success');
+        }
+
+        displayTextApply.addEventListener('click', commitDisplayText);
+        displayTextInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                e.preventDefault();
+                commitDisplayText();
+            }
+        });
+        displayFontSelect.addEventListener('change', () => {
+            if (!window.PianoscopeDisplayText) return;
+            window.PianoscopeDisplayText.setFont(displayFontSelect.value);
+            const label = displayFontSelect.options[displayFontSelect.selectedIndex].text;
+            showMessage('Font: ' + label, 'success');
+        });
+        const SEQ = window.PianoscopeTextSequencer || null;
+
+        if (window.PianoscopeDisplayText) {
+            transitionSelect.value = window.PianoscopeDisplayText.getTransition();
+        }
+        // A cut has no duration, so there is nothing for Preview to play. Left
+        // enabled it reads as a dead button - the click genuinely does nothing.
+        function syncPreviewEnabled() {
+            const isCut = transitionSelect.value === 'cut';
+            previewBtn.disabled = isCut;
+            previewBtn.title = isCut
+                ? 'A cut is instant - pick a timed transition to preview it'
+                : 'Re-apply the current text using the selected transition';
+        }
+        transitionSelect.addEventListener('change', () => {
+            if (!window.PianoscopeDisplayText) return;
+            window.PianoscopeDisplayText.setTransition(transitionSelect.value);
+            syncPreviewEnabled();
+            showMessage('Transition: ' + transitionSelect.options[transitionSelect.selectedIndex].text, 'success');
+        });
+        syncPreviewEnabled();
+        previewBtn.addEventListener('click', () => {
+            const d = window.PianoscopeDisplayText;
+            if (!d) return;
+            // Re-applying the same string DOES play the transition - both slots just
+            // hold the same words. The old bounce through a blank state defeated it,
+            // because applyText hard-cuts whenever the outgoing text is empty, and it
+            // briefly persisted an empty string to storage.
+            d.applyText(d.getText(), { transition: transitionSelect.value });
+        });
+
+        function renderSeqStatus(st) {
+            if (!st) return;
+            if (seqSelect.value !== st.sequence) seqSelect.value = st.sequence;
+            if (document.activeElement !== bpmInput) bpmInput.value = st.bpm;
+            if (document.activeElement !== barsInput) barsInput.value = st.bars;
+            if (document.activeElement !== artistInput && st.artist !== '[ARTIST]') {
+                artistInput.value = st.artist;
+            }
+            playBtn.textContent = st.running ? 'Pause' : 'Play';
+            playBtn.classList.toggle('seq-live', st.running);
+            seqReadout.textContent =
+                'State ' + (st.index + 1) + ' of ' + st.total +
+                '  ·  ' + st.bpm + ' bpm  ·  ' + st.bars + ' bar' + (st.bars === 1 ? '' : 's') +
+                '  ·  ' + (st.stepMs / 1000).toFixed(1) + 's per state';
+        }
+
+        if (SEQ) {
+            SEQ.onChange(renderSeqStatus);
+            seqSelect.addEventListener('change', () => { SEQ.setSequence(seqSelect.value); });
+            artistInput.addEventListener('input', () => { SEQ.setArtist(artistInput.value); });
+            playBtn.addEventListener('click', () => { SEQ.toggle(); });
+            stepBtn.addEventListener('click', () => { SEQ.step(1); });
+            tapBtn.addEventListener('click', () => {
+                const r = SEQ.tap();
+                showMessage(r.taps < 2 ? 'Keep tapping…' : 'Tempo: ' + r.bpm + ' bpm', 'info');
+            });
+            bpmInput.addEventListener('change', () => { SEQ.setBpm(parseInt(bpmInput.value, 10)); });
+            barsInput.addEventListener('change', () => { SEQ.setBars(parseInt(barsInput.value, 10)); });
+            SEQ.init();
+            renderSeqStatus(SEQ.status());
+        } else {
+            seqReadout.textContent = 'Sequencer not loaded.';
+        }
+
+        overlayCheck.addEventListener('change', () => {
+            if (!window.PianoscopeDisplayText) return;
+            window.PianoscopeDisplayText.setOverlayEnabled(overlayCheck.checked);
+            showMessage(overlayCheck.checked ? 'JS overlay on — shader will not chrome the type' : 'Shader chromes the JS font', 'info');
+        });
 
         // Add event listener for toggle button
         toggleButton.addEventListener('click', () => {

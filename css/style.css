@@ -18,6 +18,12 @@ canvas {
     padding: 0;
     margin: 0;
     position: absolute;
+    image-rendering: auto;
+}
+
+#display-text-overlay {
+    z-index: 2;
+    pointer-events: none;
 }
 
 h1 {

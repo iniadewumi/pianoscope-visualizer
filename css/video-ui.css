@@ -522,7 +522,7 @@
     background: rgba(123, 44, 191, 0.3);
     color: #e0e0e0;
     border: none;
-    border-radius: 50%;
+    border-radius: 125px;
     cursor: pointer;
     transition: background 0.2s ease, transform 0.15s ease;
 }

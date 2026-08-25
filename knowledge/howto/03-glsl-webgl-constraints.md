@@ -1,8 +1,8 @@
 # GLSL & WebGL Constraints
 
-**Keywords:** WebGL 1, compile, iResolution, vec3, preamble, texture2D, loops
+**Keywords:** WebGL 1, compile, iResolution, vec3, preamble, texture2D, loops, feedback
 
-**Use when:** Shader fails to compile; porting from Shadertoy; mixed vec2/vec3 errors.
+**Use when:** Shader fails to compile; porting from Shadertoy (including multi-buffer ones); mixed vec2/vec3 errors.
 
 ---
 
@@ -63,6 +63,55 @@ Final fragment source = **runtime prefix** + **WEBGL_PREAMBLE** + **shader body*
 ## Shaders with existing `void main()`
 
 `convertShaderToyToWebGL` returns them **as-is** (no preamble). Examples in library: `"Black Hole"`, `"DULL AMAP"`. PIANOSCOPE shaders should **not** use this pattern.
+
+---
+
+## Frame feedback (porting Shadertoy multi-buffer shaders)
+
+There are no Buffer A/B/C passes here. There is **one** ping-pong buffer, and a
+shader opts into it by mentioning `iWriteFeedback` anywhere in its source. The
+visualizer then draws it twice per frame:
+
+| Pass | `iWriteFeedback` | Target | Reads last frame from |
+|------|------------------|--------|-----------------------|
+| write | `1.0` | ping-pong buffer, canvas size | `iFeedback` (and `iChannel1` in shader mode) |
+| display | `0.0` | canvas | same |
+
+```glsl
+uniform float iWriteFeedback;
+uniform sampler2D iFeedback;   // last frame, 1:1 with fragCoord
+
+void mainImage(out vec4 O, in vec2 U) {
+    vec2 uv = U / iResolution.xy;
+    if (iWriteFeedback > 0.5) { O = accumulate(uv); return; }
+    O = display(texture2D(iFeedback, uv));
+}
+```
+
+Porting rule of thumb: a Shadertoy buffer that only transforms the current frame
+is per-frame arithmetic — inline it. Only a buffer that reads **itself** needs
+the ping-pong. Fabrice Neyret's four-buffer video-statistics shader folds to one
+pass this way; see `"Temporal Moments"` in `js/video-effects.js`.
+
+Things that bite:
+
+- **The display pass is one frame behind the write pass.** Both draws sample the
+  same read texture, so the first frame after a switch shows the cleared buffer
+  (black). Everything after is 16 ms stale, which nobody sees.
+- **Channels differ by mode.** Shader mode: noise on `iChannel0`, feedback on
+  `iChannel1`, audio on `iChannel2`. Video mode keeps audio on `iChannel0` and
+  the frame on `iChannel1`, so feedback is only on `iFeedback` — new code should
+  read `iFeedback` in both modes.
+- **The buffer is RGBA8 unless you ask.** Add `#define FEEDBACK_HDR` and the
+  visualizer allocates RGBA32F (or RGBA16F) where the driver can render to it.
+  Required for anything storing a statistic rather than a colour: in 8 bits the
+  per-frame update rounds to zero and the accumulator *freezes* instead of
+  converging. A console warning names the fallback when it happens.
+- **Video effects declare nothing.** `VideoEffects.build()` adds the feedback
+  uniforms and a write-pass-aware `main()` only to effects that mention
+  `iFeedback`, so the second draw is not charged to the whole effect list.
+- **Avoid `E[x²] − E[x]²`.** Two nearly equal terms, and the difference is what
+  you wanted to keep. Use a running update instead.
 
 ---
 

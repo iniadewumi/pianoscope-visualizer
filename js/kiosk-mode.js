@@ -38,6 +38,7 @@ const kioskHtmlContent = `<!DOCTYPE html>
             margin: 0;
             background-color: #121212;
             overflow: hidden;
+            position: relative;
         }
         
         #kiosk-canvas {
@@ -46,11 +47,23 @@ const kioskHtmlContent = `<!DOCTYPE html>
             height: 100%;
             padding: 0;
             margin: 0;
+            image-rendering: auto;
+        }
+
+        #kiosk-text-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 2;
         }
     </style>
 </head>
 <body>
     <canvas id="kiosk-canvas"></canvas>
+    <canvas id="kiosk-text-overlay"></canvas>
     
     <script>
         // Will be filled by the parent window
@@ -59,32 +72,200 @@ const kioskHtmlContent = `<!DOCTYPE html>
         let currentProgram = null;
         let audioTexture = null;
         let videoTexture = null;
+        let displayTextTexture = null;
+        let fittedTextTexture = null;
+        let fittedTextW = 1;
+        let fittedTextH = 1;
+        let lastFittedVersion = -1;
         let audioData = null;
         let animationFrameId = null;
         let startTime = performance.now() / 1000;
         let lastTime = startTime;
         let frameCount = 0;
         let iResolutionIsVec2 = false;
+        let usesFeedbackPass = false;
+        let feedbackWantsHDR = false;
+        let feedbackState = null;
+        let hdrFeedbackFormat;
+        let displayTextW = 1;
+        let displayTextH = 1;
+        let lastDisplayTextVersion = -1;
         
         // Shader prefix constants passed from parent window
         let shaderPrefixes = null;
+        let kioskUniforms = {};
+        let quadBuffer = null;
         
         // Set up the canvas
         const canvas = document.getElementById('kiosk-canvas');
+        const overlayCanvas = document.getElementById('kiosk-text-overlay');
+        const overlayCtx = overlayCanvas ? overlayCanvas.getContext('2d') : null;
+        let lastOverlayVersion = -1;
+        const MAX_PIXEL_COUNT = 2560 * 1440;
+        const DPR_CAP = 1.75;
 
-        function resizeKioskCanvas() {
-            const dpr = window.devicePixelRatio || 1;
+        function desiredKioskSize() {
             const displayWidth = canvas.clientWidth;
             const displayHeight = canvas.clientHeight;
-            if (displayWidth === 0 || displayHeight === 0) return;
+            if (displayWidth === 0 || displayHeight === 0) {
+                return { width: 1, height: 1 };
+            }
+            try {
+                if (window.opener && !window.opener.closed && window.opener.PianoscopePerf) {
+                    return window.opener.PianoscopePerf.bufferSize(displayWidth, displayHeight);
+                }
+            } catch (e) {}
+            const ratio = Math.min(window.devicePixelRatio || 1, DPR_CAP);
+            let width = Math.max(1, Math.round(displayWidth * ratio));
+            let height = Math.max(1, Math.round(displayHeight * ratio));
+            if (width * height > MAX_PIXEL_COUNT) {
+                const shrink = Math.sqrt(MAX_PIXEL_COUNT / (width * height));
+                width = Math.max(1, Math.round(width * shrink));
+                height = Math.max(1, Math.round(height * shrink));
+            }
+            return { width: width, height: height };
+        }
 
-            const bufferWidth = Math.round(displayWidth * dpr);
-            const bufferHeight = Math.round(displayHeight * dpr);
-            canvas.width = bufferWidth;
-            canvas.height = bufferHeight;
+        // --- Frame feedback ---------------------------------------------
+        // Same contract as the opener: a shader carrying iWriteFeedback is drawn
+        // into a ping-pong buffer first and to the canvas second, reading last
+        // frame back through iFeedback. Without this the projector window shows
+        // black for every accumulating shader while the operator's screen is fine.
+        function feedbackFormat(wantsHDR) {
+            const rgba8 = {
+                label: 'rgba8',
+                internalFormat: isWebGL2 ? gl.RGBA8 : gl.RGBA,
+                format: gl.RGBA,
+                type: gl.UNSIGNED_BYTE,
+                filter: gl.LINEAR
+            };
+            if (!wantsHDR) return rgba8;
+            if (hdrFeedbackFormat !== undefined) return hdrFeedbackFormat || rgba8;
 
+            hdrFeedbackFormat = null;
+            if (isWebGL2) {
+                const renderFloat = gl.getExtension('EXT_color_buffer_float');
+                if (renderFloat && gl.getExtension('OES_texture_float_linear')) {
+                    hdrFeedbackFormat = {
+                        label: 'rgba32f',
+                        internalFormat: gl.RGBA32F,
+                        format: gl.RGBA,
+                        type: gl.FLOAT,
+                        filter: gl.LINEAR
+                    };
+                } else if (renderFloat || gl.getExtension('EXT_color_buffer_half_float')) {
+                    hdrFeedbackFormat = {
+                        label: 'rgba16f',
+                        internalFormat: gl.RGBA16F,
+                        format: gl.RGBA,
+                        type: gl.HALF_FLOAT,
+                        filter: gl.LINEAR
+                    };
+                }
+            } else {
+                const halfTexture = gl.getExtension('OES_texture_half_float');
+                if (halfTexture && gl.getExtension('EXT_color_buffer_half_float')) {
+                    hdrFeedbackFormat = {
+                        label: 'rgba16f',
+                        internalFormat: gl.RGBA,
+                        format: gl.RGBA,
+                        type: halfTexture.HALF_FLOAT_OES,
+                        filter: gl.getExtension('OES_texture_half_float_linear') ? gl.LINEAR : gl.NEAREST
+                    };
+                }
+            }
+            return hdrFeedbackFormat || rgba8;
+        }
+
+        function destroyFeedbackState(state) {
+            if (!state) return;
+            state.fbos.forEach(function (fbo) { gl.deleteFramebuffer(fbo); });
+            state.textures.forEach(function (texture) { gl.deleteTexture(texture); });
+        }
+
+        function createFeedbackState(width, height, desc) {
+            const textures = [gl.createTexture(), gl.createTexture()];
+            textures.forEach(function (texture) {
+                gl.bindTexture(gl.TEXTURE_2D, texture);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, desc.filter);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, desc.filter);
+                if (isWebGL2) {
+                    gl.texStorage2D(gl.TEXTURE_2D, 1, desc.internalFormat, width, height);
+                } else {
+                    gl.texImage2D(gl.TEXTURE_2D, 0, desc.internalFormat, width, height, 0,
+                        desc.format, desc.type, null);
+                }
+            });
+
+            const fbos = [gl.createFramebuffer(), gl.createFramebuffer()];
+            let complete = true;
+            fbos.forEach(function (fbo, index) {
+                gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+                gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, textures[index], 0);
+                if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) complete = false;
+            });
+            gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
+            if (!complete) {
+                destroyFeedbackState({ textures: textures, fbos: fbos });
+                return null;
+            }
+
+            gl.viewport(0, 0, width, height);
+            gl.clearColor(0, 0, 0, 0);
+            fbos.forEach(function (fbo) {
+                gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+                gl.clear(gl.COLOR_BUFFER_BIT);
+            });
+            gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+            gl.viewport(0, 0, canvas.width, canvas.height);
+
+            return { textures: textures, fbos: fbos, readIndex: 0, width: width, height: height };
+        }
+
+        function setupFeedbackBuffers(width, height) {
+            const wanted = feedbackWantsHDR ? 'hdr' : 'ldr';
+            if (feedbackState && feedbackState.width === width
+                && feedbackState.height === height && feedbackState.request === wanted) {
+                return;
+            }
+
+            destroyFeedbackState(feedbackState);
+
+            const desc = feedbackFormat(feedbackWantsHDR);
+            let state = createFeedbackState(width, height, desc);
+            if (!state && desc.label !== 'rgba8') {
+                state = createFeedbackState(width, height, feedbackFormat(false));
+            }
+
+            feedbackState = state;
+            if (feedbackState) feedbackState.request = wanted;
+        }
+
+        function configureFeedbackPass(fragmentSource) {
+            usesFeedbackPass = fragmentSource.indexOf('iWriteFeedback') !== -1;
+            feedbackWantsHDR = fragmentSource.indexOf('FEEDBACK_HDR') !== -1;
+            if (usesFeedbackPass) {
+                setupFeedbackBuffers(canvas.width, canvas.height);
+            } else {
+                destroyFeedbackState(feedbackState);
+                feedbackState = null;
+            }
+        }
+
+        function resizeKioskCanvas() {
+            const size = desiredKioskSize();
+            if (canvas.width === size.width && canvas.height === size.height) {
+                if (gl) gl.viewport(0, 0, size.width, size.height);
+                return;
+            }
+            canvas.width = size.width;
+            canvas.height = size.height;
             if (gl) {
-                gl.viewport(0, 0, bufferWidth, bufferHeight);
+                gl.viewport(0, 0, size.width, size.height);
+                if (usesFeedbackPass) setupFeedbackBuffers(size.width, size.height);
             }
         }
         
@@ -161,13 +342,33 @@ const kioskHtmlContent = `<!DOCTYPE html>
             if (gl) return;
 
             // Try to get WebGL2 context first, then fall back to WebGL
-            gl = canvas.getContext('webgl2') || canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+            const kioskGlAttrs = {
+                alpha: true,
+                depth: false,
+                stencil: false,
+                antialias: false,
+                premultipliedAlpha: false,
+                preserveDrawingBuffer: false,
+                powerPreference: 'high-performance'
+            };
+            gl = canvas.getContext('webgl2', kioskGlAttrs)
+                || canvas.getContext('webgl', kioskGlAttrs)
+                || canvas.getContext('experimental-webgl', kioskGlAttrs);
             isWebGL2 = gl instanceof WebGL2RenderingContext;
             
             if (!gl) {
                 console.error('WebGL not supported in kiosk mode');
                 return;
             }
+
+            quadBuffer = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, quadBuffer);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+                -1.0, -1.0,
+                 1.0, -1.0,
+                -1.0,  1.0,
+                 1.0,  1.0
+            ]), gl.STATIC_DRAW);
             
             // Set up audio texture
             audioTexture = gl.createTexture();
@@ -185,6 +386,23 @@ const kioskHtmlContent = `<!DOCTYPE html>
             // Receives frames from the opener's video element in video mode
             videoTexture = gl.createTexture();
             gl.bindTexture(gl.TEXTURE_2D, videoTexture);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 0, 255]));
+
+            fittedTextTexture = gl.createTexture();
+            gl.bindTexture(gl.TEXTURE_2D, fittedTextTexture);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE,
+                new Uint8Array([0, 0, 0, 255]));
+
+            displayTextTexture = gl.createTexture();
+            gl.bindTexture(gl.TEXTURE_2D, displayTextTexture);
             gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
             gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
             gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
@@ -225,20 +443,41 @@ const kioskHtmlContent = `<!DOCTYPE html>
             if (currentProgram) gl.deleteProgram(currentProgram);
             currentProgram = program;
             gl.useProgram(currentProgram);
-            
-            // Set up geometry (full-screen quad)
-            const positionBuffer = gl.createBuffer();
-            gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
-            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
-                -1.0, -1.0,
-                 1.0, -1.0,
-                -1.0,  1.0,
-                 1.0,  1.0
-            ]), gl.STATIC_DRAW);
-            
+            cacheKioskUniforms();
+            configureFeedbackPass(fragmentSource);
+
+            gl.bindBuffer(gl.ARRAY_BUFFER, quadBuffer);
             const positionLocation = gl.getAttribLocation(currentProgram, 'position');
             gl.enableVertexAttribArray(positionLocation);
             gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
+        }
+
+        function cacheKioskUniforms() {
+            kioskUniforms = {
+                iResolution: gl.getUniformLocation(currentProgram, 'iResolution'),
+                iTime: gl.getUniformLocation(currentProgram, 'iTime'),
+                iTimeDelta: gl.getUniformLocation(currentProgram, 'iTimeDelta'),
+                iFrame: gl.getUniformLocation(currentProgram, 'iFrame'),
+                iChannel0: gl.getUniformLocation(currentProgram, 'iChannel0'),
+                iChannel1: gl.getUniformLocation(currentProgram, 'iChannel1'),
+                iChannel3: gl.getUniformLocation(currentProgram, 'iChannel3'),
+                iWriteFeedback: gl.getUniformLocation(currentProgram, 'iWriteFeedback'),
+                iFeedback: gl.getUniformLocation(currentProgram, 'iFeedback'),
+                iChannelResolution: gl.getUniformLocation(currentProgram, 'iChannelResolution[0]'),
+                iVideoResolution: gl.getUniformLocation(currentProgram, 'iVideoResolution'),
+                iFitMode: gl.getUniformLocation(currentProgram, 'iFitMode'),
+                iVideoMirror: gl.getUniformLocation(currentProgram, 'iVideoMirror'),
+                iTextMorph: gl.getUniformLocation(currentProgram, 'iTextMorph'),
+                iTextLineH: gl.getUniformLocation(currentProgram, 'iTextLineH'),
+                iTextExtent: gl.getUniformLocation(currentProgram, 'iTextExtent'),
+                iTextExtentB: gl.getUniformLocation(currentProgram, 'iTextExtentB'),
+                iTextLegacyExtent: gl.getUniformLocation(currentProgram, 'iTextLegacyExtent'),
+                iTextTransition: gl.getUniformLocation(currentProgram, 'iTextTransition'),
+                iTextSheet: gl.getUniformLocation(currentProgram, 'iTextSheet'),
+                iTextSheetRes: gl.getUniformLocation(currentProgram, 'iTextSheetRes'),
+                iTextWords: gl.getUniformLocation(currentProgram, 'iTextWords[0]'),
+                iTextWordCount: gl.getUniformLocation(currentProgram, 'iTextWordCount')
+            };
         }
         
         // Create shader using prefixes passed from parent window
@@ -279,16 +518,52 @@ const kioskHtmlContent = `<!DOCTYPE html>
         function updateAudioData(newAudioData) {
             if (!gl || !audioTexture || !audioData) return;
             
-            // Copy new audio data
-            for (let i = 0; i < audioData.length && i < newAudioData.length; i++) {
-                audioData[i] = newAudioData[i];
+            const n = Math.min(audioData.length, newAudioData.length);
+            if (newAudioData.subarray) {
+                audioData.set(newAudioData.subarray(0, n));
+            } else {
+                for (let i = 0; i < n; i++) audioData[i] = newAudioData[i];
             }
             
             // Update texture
+            // Pin the unit: this runs from a postMessage handler, so the active unit
+            // is whatever the render loop happened to leave behind.
+            gl.activeTexture(gl.TEXTURE7);
             gl.bindTexture(gl.TEXTURE_2D, audioTexture);
             gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, audioData.length, 1, gl.LUMINANCE, gl.UNSIGNED_BYTE, audioData);
         }
         
+        function getOpenerDisplayText() {
+            try {
+                const dt = window.opener && window.opener.PianoscopeDisplayText;
+                if (!dt) return null;
+                const size = dt.getSize();
+                // morph advances every frame while a swap is in flight but does
+                // not bump version - the baked texture is unchanged, only the
+                // blend between its two slots moves - so it is read per frame and
+                // the upload stays gated on version.
+                return {
+                    canvas: dt.getPackedCanvas(),
+                    width: size.width,
+                    height: size.height,
+                    version: dt.getVersion(),
+                    morph: dt.getMorph(),
+                    lineFrac: dt.getLineFrac(),
+                    sheetVersion: dt.getSheetVersion ? dt.getSheetVersion() : dt.getVersion(),
+                    extent: dt.getExtent(),
+                    extentB: dt.getExtentB ? dt.getExtentB() : dt.getExtent(),
+                    legacyExtent: dt.getLegacyExtent ? dt.getLegacyExtent() : { width: 0.386, height: 0.670 },
+                    transition: dt.getTransitionIndex(),
+                    fittedCanvas: dt.getFittedCanvas ? dt.getFittedCanvas() : null,
+                    fittedSize: dt.getFittedSize ? dt.getFittedSize() : { width: 1, height: 1 },
+                    wordRects: dt.getWordRects ? dt.getWordRects() : null,
+                    wordCount: dt.getWordCount ? dt.getWordCount() : 0
+                };
+            } catch (e) {
+                return null;
+            }
+        }
+
         // Video state lives in the opener. Guarded because the opener can be
         // closed or navigating while this loop is still running.
         function getOpenerVideoState() {
@@ -343,6 +618,9 @@ const kioskHtmlContent = `<!DOCTYPE html>
             
             function render(now) {
                 animationFrameId = requestAnimationFrame(render);
+
+                if (document.hidden) return;
+                resizeKioskCanvas();
                 
                 if (!gl || !currentProgram) return;
                 
@@ -354,25 +632,18 @@ const kioskHtmlContent = `<!DOCTYPE html>
                 frameCount++;
                 
                 gl.useProgram(currentProgram);
-                
-                // Set common uniforms if they exist
-                const iResolution = gl.getUniformLocation(currentProgram, 'iResolution');
-                if (iResolution) {
+
+                if (kioskUniforms.iResolution) {
                     if (iResolutionIsVec2) {
-                        gl.uniform2f(iResolution, canvas.width, canvas.height);
+                        gl.uniform2f(kioskUniforms.iResolution, canvas.width, canvas.height);
                     } else {
-                        gl.uniform3f(iResolution, canvas.width, canvas.height, 1.0);
+                        gl.uniform3f(kioskUniforms.iResolution, canvas.width, canvas.height, 1.0);
                     }
                 }
-                
-                const iTime = gl.getUniformLocation(currentProgram, 'iTime');
-                if (iTime) gl.uniform1f(iTime, currentTime);
-                
-                const iTimeDelta = gl.getUniformLocation(currentProgram, 'iTimeDelta');
-                if (iTimeDelta) gl.uniform1f(iTimeDelta, deltaTime);
 
-                const iFrame = gl.getUniformLocation(currentProgram, 'iFrame');
-                if (iFrame) gl.uniform1f(iFrame, frameCount);
+                if (kioskUniforms.iTime) gl.uniform1f(kioskUniforms.iTime, currentTime);
+                if (kioskUniforms.iTimeDelta) gl.uniform1f(kioskUniforms.iTimeDelta, deltaTime);
+                if (kioskUniforms.iFrame) gl.uniform1f(kioskUniforms.iFrame, frameCount);
                 
                 // Both windows share an origin, so the opener's <video> element can
                 // be uploaded straight into this context instead of shipping pixels
@@ -395,31 +666,160 @@ const kioskHtmlContent = `<!DOCTYPE html>
                         videoHasNewFrame = true;
                     }
                     
-                    const iChannel1 = gl.getUniformLocation(currentProgram, 'iChannel1');
-                    if (iChannel1) gl.uniform1i(iChannel1, 1);
-                    
-                    // The fit is computed against this window's own resolution, so
-                    // the kiosk display crops or letterboxes independently.
-                    const iVideoResolution = gl.getUniformLocation(currentProgram, 'iVideoResolution');
-                    if (iVideoResolution) gl.uniform2f(iVideoResolution, videoState.width, videoState.height);
-                    
-                    const iFitMode = gl.getUniformLocation(currentProgram, 'iFitMode');
-                    if (iFitMode) gl.uniform1f(iFitMode, videoState.fitMode);
-                    
-                    const iVideoMirror = gl.getUniformLocation(currentProgram, 'iVideoMirror');
-                    if (iVideoMirror) gl.uniform1f(iVideoMirror, videoState.mirror);
+                    if (kioskUniforms.iChannel1) gl.uniform1i(kioskUniforms.iChannel1, 1);
+
+                    if (kioskUniforms.iVideoResolution) {
+                        gl.uniform2f(kioskUniforms.iVideoResolution, videoState.width, videoState.height);
+                    }
+                    if (kioskUniforms.iFitMode) gl.uniform1f(kioskUniforms.iFitMode, videoState.fitMode);
+                    if (kioskUniforms.iVideoMirror) gl.uniform1f(kioskUniforms.iVideoMirror, videoState.mirror);
                 }
                 
                 // Audio holds iChannel0 in both modes so video effects stay reactive.
-                const iChannel0 = gl.getUniformLocation(currentProgram, 'iChannel0');
-                if (iChannel0) {
+                if (kioskUniforms.iChannel0) {
                     gl.activeTexture(gl.TEXTURE0);
                     gl.bindTexture(gl.TEXTURE_2D, audioTexture);
-                    gl.uniform1i(iChannel0, 0);
+                    gl.uniform1i(kioskUniforms.iChannel0, 0);
+                }
+
+                const textState = getOpenerDisplayText();
+                if (displayTextTexture) {
+                    gl.activeTexture(gl.TEXTURE3);
+                    gl.bindTexture(gl.TEXTURE_2D, displayTextTexture);
+
+                    if (textState && textState.canvas && textState.version !== lastDisplayTextVersion) {
+                        lastDisplayTextVersion = textState.version;
+                        displayTextW = textState.width;
+                        displayTextH = textState.height;
+                        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 1);
+                        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, textState.canvas);
+                        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 0);
+                    } else if ((!textState || !textState.canvas) && lastDisplayTextVersion !== -2) {
+                        lastDisplayTextVersion = -2;
+                        displayTextW = 1;
+                        displayTextH = 1;
+                        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 0, 255]));
+                    }
+
+                    if (kioskUniforms.iChannel3) gl.uniform1i(kioskUniforms.iChannel3, 3);
+                }
+
+                if (kioskUniforms.iTextMorph) {
+                    gl.uniform1f(kioskUniforms.iTextMorph, textState ? textState.morph : 0);
+                }
+                if (kioskUniforms.iTextLineH) {
+                    gl.uniform1f(kioskUniforms.iTextLineH, textState ? textState.lineFrac : 0.5);
+                }
+                if (kioskUniforms.iTextExtent) {
+                    const ext = (textState && textState.extent) || { width: 0.5, height: 0.5 };
+                    gl.uniform2f(kioskUniforms.iTextExtent, ext.width, ext.height);
+                }
+                if (kioskUniforms.iTextExtentB) {
+                    const extB = (textState && textState.extentB)
+                        || (textState && textState.extent) || { width: 0.5, height: 0.5 };
+                    gl.uniform2f(kioskUniforms.iTextExtentB, extB.width, extB.height);
+                }
+                if (kioskUniforms.iTextLegacyExtent) {
+                    const leg = (textState && textState.legacyExtent) || { width: 0.386, height: 0.670 };
+                    gl.uniform2f(kioskUniforms.iTextLegacyExtent, leg.width, leg.height);
+                }
+                if (kioskUniforms.iTextTransition) {
+                    gl.uniform1f(kioskUniforms.iTextTransition, textState ? textState.transition : 0);
+                }
+
+                if (kioskUniforms.iTextSheet && fittedTextTexture) {
+                    gl.activeTexture(gl.TEXTURE4);
+                    gl.bindTexture(gl.TEXTURE_2D, fittedTextTexture);
+                    // Gated on sheetVersion, not version: a scramble redraws the sheet
+                    // many times inside one string change, and version only ticks when
+                    // the string itself changes.
+                    if (textState && textState.fittedCanvas && textState.sheetVersion !== lastFittedVersion) {
+                        lastFittedVersion = textState.sheetVersion;
+                        fittedTextW = textState.fittedSize.width;
+                        fittedTextH = textState.fittedSize.height;
+                        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 1);
+                        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE,
+                            textState.fittedCanvas);
+                        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 0);
+                    }
+                    gl.uniform1i(kioskUniforms.iTextSheet, 4);
+                }
+                if (kioskUniforms.iTextSheetRes) {
+                    gl.uniform2f(kioskUniforms.iTextSheetRes, fittedTextW, fittedTextH);
+                }
+                if (kioskUniforms.iTextWords && textState && textState.wordRects) {
+                    gl.uniform4fv(kioskUniforms.iTextWords, textState.wordRects);
+                }
+                if (kioskUniforms.iTextWordCount) {
+                    gl.uniform1f(kioskUniforms.iTextWordCount, textState ? textState.wordCount : 0);
+                }
+
+                if (kioskUniforms.iChannelResolution) {
+                    const videoW = videoState ? videoState.width : 1;
+                    const videoH = videoState ? videoState.height : 1;
+                    gl.uniform3fv(kioskUniforms.iChannelResolution, new Float32Array([
+                        256, 1, 1,
+                        videoW, videoH, 1,
+                        1, 1, 1,
+                        displayTextW, displayTextH, 1
+                    ]));
                 }
                 
-                // Draw fullscreen quad
-                gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+                if (usesFeedbackPass && feedbackState) {
+                    const readTexture = feedbackState.textures[feedbackState.readIndex];
+                    const writeIndex = 1 - feedbackState.readIndex;
+
+                    gl.activeTexture(gl.TEXTURE5);
+                    gl.bindTexture(gl.TEXTURE_2D, readTexture);
+                    if (kioskUniforms.iFeedback) gl.uniform1i(kioskUniforms.iFeedback, 5);
+                    // Outside video mode iChannel1 is spare, and that is where
+                    // shader-mode feedback reads its previous frame from.
+                    if (!videoState && kioskUniforms.iChannel1) {
+                        gl.activeTexture(gl.TEXTURE1);
+                        gl.bindTexture(gl.TEXTURE_2D, readTexture);
+                        gl.uniform1i(kioskUniforms.iChannel1, 1);
+                    }
+
+                    gl.bindFramebuffer(gl.FRAMEBUFFER, feedbackState.fbos[writeIndex]);
+                    gl.viewport(0, 0, feedbackState.width, feedbackState.height);
+                    if (kioskUniforms.iWriteFeedback) gl.uniform1f(kioskUniforms.iWriteFeedback, 1.0);
+                    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+                    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+                    gl.viewport(0, 0, canvas.width, canvas.height);
+                    if (kioskUniforms.iWriteFeedback) gl.uniform1f(kioskUniforms.iWriteFeedback, 0.0);
+                    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+                    feedbackState.readIndex = writeIndex;
+                } else {
+                    // Draw fullscreen quad
+                    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+                }
+
+                if (overlayCtx && overlayCanvas) {
+                    try {
+                        const dt = window.opener && window.opener.PianoscopeDisplayText;
+                        if (!dt || !dt.isOverlayEnabled()) {
+                            overlayCanvas.style.display = 'none';
+                        } else {
+                            overlayCanvas.style.display = 'block';
+                            const src = dt.getOverlayCanvas();
+                            const dpr = Math.min(window.devicePixelRatio || 1, 2);
+                            const ow = Math.max(1, Math.round(overlayCanvas.clientWidth * dpr));
+                            const oh = Math.max(1, Math.round(overlayCanvas.clientHeight * dpr));
+                            if (overlayCanvas.width !== ow || overlayCanvas.height !== oh) {
+                                overlayCanvas.width = ow;
+                                overlayCanvas.height = oh;
+                                lastOverlayVersion = -1;
+                            }
+                            if (src && dt.getVersion() !== lastOverlayVersion) {
+                                lastOverlayVersion = dt.getVersion();
+                                overlayCtx.clearRect(0, 0, ow, oh);
+                                overlayCtx.drawImage(src, 0, 0, ow, oh);
+                            }
+                        }
+                    } catch (e) {}
+                }
             }
             
             animationFrameId = requestAnimationFrame(render);
@@ -587,7 +987,7 @@ function sendAudioDataToKiosk() {
     // Send the audio data to the kiosk window
     window.kioskWindow.postMessage({
         type: 'audio-data',
-        audioData: Array.from(audioData) // Convert to regular array for transfer
+        audioData: audioData
     }, '*');
 }
 
