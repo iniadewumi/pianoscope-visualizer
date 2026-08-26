@@ -34,6 +34,10 @@ Grep this file or search by tag. Format: `keyword → knowledge/howto/NN-file.md
 | compile error, line number, preamble | `howto/03-glsl-webgl-constraints.md` | Error line mapping |
 | vec2 vec3 mismatch, smoothstep noise | `howto/03-glsl-webgl-constraints.md` | Common compile fixes |
 | loop bounds, iFrame float | `howto/03-glsl-webgl-constraints.md` | Loops |
+| iWriteFeedback, iFeedback, ping-pong | `howto/03-glsl-webgl-constraints.md` | Frame feedback |
+| Buffer A B C, multi-buffer, multipass | `howto/03-glsl-webgl-constraints.md` | Frame feedback |
+| FEEDBACK_HDR, float buffer, RGBA32F | `howto/03-glsl-webgl-constraints.md` | Frame feedback |
+| accumulator frozen, quantised feedback | `howto/03-glsl-webgl-constraints.md` | Frame feedback |
 | porting, Murakami, library shader | `PIANOSCOPE_SHADER_LEARNINGS.md` | Porting Shadertoy library shaders |
 
 ## Patterns — Book of Shaders
@@ -104,3 +108,12 @@ Grep this file or search by tag. Format: `keyword → knowledge/howto/NN-file.md
 | IQ domain repetition | https://iquilezles.org/articles/sdfrepetition/ |
 | IQ smoothsteps | https://iquilezles.org/articles/smoothsteps/ |
 | IQ Voronoi lines | https://iquilezles.org/articles/voronoilines/ |
+
+## Display text / sequencer
+
+`display-text`, `text`, `typography`, `iTextSheet`, `iChannel3`, `slot A`, `slot B`,
+`iTextMorph`, `iTextLineH`, `iTextExtent`, `iTextLegacyExtent`, `iTextWords`, `sequencer`, `word ladder`,
+`seqSample`, `SEQ_LINE`, `SEQ_COVER`,
+`anadiplosis`, `promote`, `transitions`, `roll`, `reveal`, `knockout`, `scramble`,
+`tap tempo`, `kiosk`, `sheetVersion`, `Akira Expanded`, `enamel`, `Syne`, `Bodoni Moda`
+-> [`howto/10-display-text-and-sequencer.md`](howto/10-display-text-and-sequencer.md)

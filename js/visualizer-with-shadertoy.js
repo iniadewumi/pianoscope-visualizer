@@ -7,82 +7,6 @@
 
 document.addEventListener('DOMContentLoaded', () => {
     "use strict";
-// Add this at the top where other global variables are declared
-let globalTextures = [];
-
-// Use a CORS-friendly URL for textures
-const DEFAULT_TEXTURE_URL = "https://picsum.photos/800/600";
-
-// Add this function to your visualizer-with-shadertoy.js
-function setupTextures(gl, program) {
-    // Create texture objects for iChannel0 and iChannel1
-    // We'll use the same texture for both for simplicity
-    const textures = [];
-    const textureCount = 4; // Shadertoy supports up to 4 texture channels
-    
-    for (let i = 0; i < textureCount; i++) {
-        textures[i] = gl.createTexture();
-        gl.activeTexture(gl[`TEXTURE${i}`]);
-        gl.bindTexture(gl.TEXTURE_2D, textures[i]);
-        
-        // Set up temporary pixel while we load
-        const pixel = new Uint8Array([128, 128, 128, 255]); // mid-gray
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
-        
-        // Set texture parameters for proper sampling
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-        
-        // Set texture uniform
-        const location = gl.getUniformLocation(program, `iChannel${i}`);
-        if (location) {
-            gl.uniform1i(location, i);
-        }
-    }
-    
-    // Load the texture into all channels
-    loadTextureIntoChannels(gl, textures, DEFAULT_TEXTURE_URL);
-    
-    // Save textures globally for use in render loop
-    globalTextures = textures;
-    
-    return textures;
-}
-
-function loadTextureIntoChannels(gl, textures, url) {
-    const image = new Image();
-    image.crossOrigin = "anonymous"; // Important for CORS
-    
-    image.onload = function() {
-        for (let i = 0; i < textures.length; i++) {
-            gl.activeTexture(gl[`TEXTURE${i}`]);
-            gl.bindTexture(gl.TEXTURE_2D, textures[i]);
-            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
-            
-            if (isPowerOf2(image.width) && isPowerOf2(image.height)) {
-                gl.generateMipmap(gl.TEXTURE_2D);
-                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
-            } else {
-                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-            }
-        }
-    };
-    
-    image.onerror = function() {
-        console.error(`Failed to load texture from ${url}`);
-    };
-    
-    image.src = url;
-}
-
-function isPowerOf2(value) {
-    return (value & (value - 1)) === 0;
-}
-
 function createNoiseTexture(gl) {
     const size = 512;
     const data = new Uint8Array(size * size * 4);
@@ -102,19 +26,120 @@ function createNoiseTexture(gl) {
 
 function destroyFeedbackState(gl, state) {
     if (!state) return;
-    gl.deleteFramebuffer(state.fbo);
+    state.fbos.forEach((fbo) => gl.deleteFramebuffer(fbo));
     state.textures.forEach((texture) => gl.deleteTexture(texture));
 }
 
 function clearFeedbackTextures(gl, state) {
-    gl.bindFramebuffer(gl.FRAMEBUFFER, state.fbo);
     gl.viewport(0, 0, state.width, state.height);
     gl.clearColor(0, 0, 0, 0);
-    state.textures.forEach((texture) => {
-        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
+    state.fbos.forEach((fbo) => {
+        gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
         gl.clear(gl.COLOR_BUFFER_BIT);
     });
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+}
+
+// Feedback buffers are RGBA8 by default, which is the right storage for a shader
+// that accumulates colour. A shader that accumulates *numbers* — a running mean,
+// a variance — has neither the range (8 bits clamp at 1.0) nor the resolution
+// (1/255 swamps a small variance) for that, and says so with FEEDBACK_HDR in its
+// source. Probing costs driver round-trips, so the answer is cached per context.
+let hdrFeedbackFormat;
+function feedbackFormat(gl, isWebGL2, wantsHDR) {
+    const rgba8 = {
+        label: 'rgba8',
+        internalFormat: isWebGL2 ? gl.RGBA8 : gl.RGBA,
+        format: gl.RGBA,
+        type: gl.UNSIGNED_BYTE,
+        filter: gl.LINEAR
+    };
+    if (!wantsHDR) return rgba8;
+    if (hdrFeedbackFormat !== undefined) return hdrFeedbackFormat || rgba8;
+
+    hdrFeedbackFormat = null;
+    if (isWebGL2) {
+        const renderFloat = gl.getExtension('EXT_color_buffer_float');
+        if (renderFloat && gl.getExtension('OES_texture_float_linear')) {
+            hdrFeedbackFormat = {
+                label: 'rgba32f',
+                internalFormat: gl.RGBA32F,
+                format: gl.RGBA,
+                type: gl.FLOAT,
+                filter: gl.LINEAR
+            };
+        } else if (renderFloat || gl.getExtension('EXT_color_buffer_half_float')) {
+            // Half float is filterable in core WebGL 2, so LINEAR needs no extension.
+            hdrFeedbackFormat = {
+                label: 'rgba16f',
+                internalFormat: gl.RGBA16F,
+                format: gl.RGBA,
+                type: gl.HALF_FLOAT,
+                filter: gl.LINEAR
+            };
+        }
+    } else {
+        const halfTexture = gl.getExtension('OES_texture_half_float');
+        if (halfTexture && gl.getExtension('EXT_color_buffer_half_float')) {
+            hdrFeedbackFormat = {
+                label: 'rgba16f',
+                internalFormat: gl.RGBA,
+                format: gl.RGBA,
+                type: halfTexture.HALF_FLOAT_OES,
+                filter: gl.getExtension('OES_texture_half_float_linear') ? gl.LINEAR : gl.NEAREST
+            };
+        }
+    }
+
+    if (!hdrFeedbackFormat) {
+        // Worth saying out loud: a statistic accumulated in 8 bits does not just
+        // lose detail, it stops converging — the update per frame rounds to zero
+        // and whatever the buffer holds freezes there.
+        console.warn('Feedback buffer: no renderable float format here, so FEEDBACK_HDR '
+            + 'shaders fall back to rgba8 and their accumulation will quantise.');
+    }
+    return hdrFeedbackFormat || rgba8;
+}
+
+// Returns null rather than a broken state when the driver accepts the texture
+// format but refuses to render to it, which is the usual way float support fails.
+function createFeedbackState(gl, isWebGL2, width, height, desc) {
+    const textures = [gl.createTexture(), gl.createTexture()];
+    textures.forEach((texture) => {
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, desc.filter);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, desc.filter);
+        if (isWebGL2) {
+            // Immutable storage lets the driver lay the texture out in GPU
+            // memory immediately, and levels=1 avoids allocating a mip chain
+            // we never sample.
+            gl.texStorage2D(gl.TEXTURE_2D, 1, desc.internalFormat, width, height);
+        } else {
+            gl.texImage2D(gl.TEXTURE_2D, 0, desc.internalFormat, width, height, 0,
+                desc.format, desc.type, null);
+        }
+    });
+
+    // One framebuffer per texture with a permanent attachment. Swapping an
+    // attachment every frame instead would invalidate framebuffer completeness
+    // and force the driver to revalidate on each ping-pong.
+    const fbos = [gl.createFramebuffer(), gl.createFramebuffer()];
+    let complete = true;
+    fbos.forEach((fbo, index) => {
+        gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, textures[index], 0);
+        if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) complete = false;
+    });
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
+    if (!complete) {
+        destroyFeedbackState(gl, { textures, fbos });
+        return null;
+    }
+
+    return { textures, fbos, readIndex: 0, width, height, format: desc.label };
 }
     // === CONFIGURATION ===
     // Easy to modify settings
@@ -155,6 +180,9 @@ function clearFeedbackTextures(gl, state) {
     let seconds = 0;
     const loud_volume_threshold = 30;
     let frequencyArray;
+    let currentDb = 0;
+    let lastRenderedDb = -1;
+    let nextVolumeReadoutMs = 0;
     
     // === SHADER SOURCES === 
     // Default vertex shader
@@ -264,9 +292,47 @@ function clearFeedbackTextures(gl, state) {
     `;
     
     // === WEBGL SETUP ===
-    const gl = canvas.getContext('webgl2') || canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+    // The defaults are all wrong for a fullscreen-quad shader. MSAA only
+    // supersamples primitive edges, and our only primitive edges are the four
+    // screen borders, so it buys nothing and costs a multisampled surface plus a
+    // resolve every frame. The depth and stencil buffers are never read. Chrome
+    // 80+ and Safari pick the integrated GPU unless asked otherwise, which is
+    // exactly wrong for 30-iteration raymarchers on a dual-GPU laptop.
+    //
+    // `alpha` deliberately stays true: asking for an opaque RGB surface makes
+    // some drivers emulate it on top of RGBA, which costs more than just writing
+    // 1.0 to the alpha channel from the shader.
+    const GL_ATTRIBUTES = {
+        alpha: true,
+        depth: false,
+        stencil: false,
+        antialias: false,
+        premultipliedAlpha: false,
+        preserveDrawingBuffer: false,
+        powerPreference: 'high-performance'
+    };
+
+    const gl = canvas.getContext('webgl2', GL_ATTRIBUTES)
+        || canvas.getContext('webgl', GL_ATTRIBUTES)
+        || canvas.getContext('experimental-webgl', GL_ATTRIBUTES);
     const isWebGL2 = gl instanceof WebGL2RenderingContext;
     const glslVersion = isWebGL2 ? '300 es' : '100';
+
+    // Asking for the discrete GPU makes context loss meaningfully more likely,
+    // because switching GPUs drops the context. Without a handler that is a black
+    // screen until the operator reloads, which is unacceptable mid-performance.
+    canvas.addEventListener('webglcontextlost', (event) => {
+        event.preventDefault();
+        animationRunning = false;
+        if (statusEl) statusEl.textContent = 'GPU context lost — restoring…';
+    });
+
+    canvas.addEventListener('webglcontextrestored', () => {
+        if (statusEl) statusEl.textContent = 'GPU context restored — reloading shader';
+        // Every GL object belonged to the dead context. Reloading is far more
+        // reliable than trying to rebuild the whole graph by hand.
+        window.location.reload();
+    });
     
     // Initialize video controller after GL context is created
     let videoController = null;
@@ -297,35 +363,76 @@ function clearFeedbackTextures(gl, state) {
     }
 
     let usesFeedbackPass = false;
+    let feedbackWantsHDR = false;
     let iResolutionIsVec2 = false;
     let noiseTexture = null;
     let feedbackState = null;
     
-    // Resize canvas to match its displayed size at native device pixel ratio
+    // Performance manager owns the render resolution. It is optional so the
+    // visualizer still runs if perf.js fails to load.
+    const perf = window.PianoscopePerf
+        ? window.PianoscopePerf.attach(gl, canvas, () => resizeCanvas())
+        : null;
+
+    /**
+     * Size the drawing buffer.
+     *
+     * The CSS box stays put and the compositor upscales for us, so this is the
+     * cheapest possible quality dial: shader cost is linear in fragment count,
+     * and iResolution follows the buffer so resolution-dependent shaders get
+     * cheaper too. Rendering at native DPR on a 4K Retina panel is ~8.3M
+     * fragments of raymarching per frame, which is what makes heavy shaders lag.
+     */
     function resizeCanvas() {
-        const dpr = window.devicePixelRatio || 1;
         const displayWidth = canvas.clientWidth;
         const displayHeight = canvas.clientHeight;
         if (displayWidth === 0 || displayHeight === 0) return;
 
-        const bufferWidth = Math.round(displayWidth * dpr);
-        const bufferHeight = Math.round(displayHeight * dpr);
+        let bufferWidth;
+        let bufferHeight;
+        if (perf) {
+            const size = perf.bufferSize(displayWidth, displayHeight);
+            bufferWidth = size.width;
+            bufferHeight = size.height;
+        } else {
+            const ratio = Math.min(window.devicePixelRatio || 1, 1.75);
+            bufferWidth = Math.max(1, Math.round(displayWidth * ratio));
+            bufferHeight = Math.max(1, Math.round(displayHeight * ratio));
+            const maxPx = 2560 * 1440;
+            if (bufferWidth * bufferHeight > maxPx) {
+                const shrink = Math.sqrt(maxPx / (bufferWidth * bufferHeight));
+                bufferWidth = Math.max(1, Math.round(bufferWidth * shrink));
+                bufferHeight = Math.max(1, Math.round(bufferHeight * shrink));
+            }
+        }
 
         if (canvas.width !== bufferWidth || canvas.height !== bufferHeight) {
             canvas.width = bufferWidth;
             canvas.height = bufferHeight;
 
             if (usesFeedbackPass) {
-                setupFeedbackBuffers(canvas.width, canvas.height, true);
+                setupFeedbackBuffers(canvas.width, canvas.height);
             }
         }
 
         gl.viewport(0, 0, canvas.width, canvas.height);
+        if (window.PianoscopeDisplayText && window.PianoscopeDisplayText.syncOverlay) {
+            window.PianoscopeDisplayText.syncOverlay();
+        }
     }
 
-    window.addEventListener('resize', resizeCanvas);
+    // Reallocating the drawing buffer is a heavyweight GPU operation, and a
+    // window drag fires resize observations continuously. Coalesce them onto a
+    // frame boundary so a drag costs one reallocation, not dozens.
+    let resizePending = true;
+    function requestResize() {
+        resizePending = true;
+        if (perf) perf.invalidate();
+    }
+
+    window.addEventListener('resize', requestResize);
     if (typeof ResizeObserver !== 'undefined') {
-        new ResizeObserver(resizeCanvas).observe(canvas);
+        new ResizeObserver(requestResize).observe(canvas);
     }
     resizeCanvas();
     
@@ -338,7 +445,30 @@ function clearFeedbackTextures(gl, state) {
     let deltaTime = 0;
     let uniforms = {};
     
-    // Compile shader with error detection
+    // Lets us poll link completion instead of blocking on it. Broadly available
+    // in Chrome, Edge and Safari; Firefox is the notable gap and takes the
+    // one-frame deferral fallback in pollShaderProgram below.
+    const parallelCompileExt = gl.getExtension('KHR_parallel_shader_compile');
+
+    // The quad never changes, so its buffer and attribute state are configured
+    // once here and then left alone. Every program binds `position` to location 0
+    // before linking, which avoids the expensive desktop-GL emulation path for a
+    // disabled attrib 0 and stops ANGLE from re-specializing a program the first
+    // time it meets a vertex layout it did not see at link time.
+    const quadVao = isWebGL2 ? gl.createVertexArray() : null;
+    if (quadVao) gl.bindVertexArray(quadVao);
+
+    const quadBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, quadBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+        -1.0, -1.0,
+         1.0, -1.0,
+        -1.0,  1.0,
+         1.0,  1.0
+    ]), gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(0);
+    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+
     function createShader(gl, type, source) {
         const shader = gl.createShader(type);
         const isWebGL2 = gl instanceof WebGL2RenderingContext;
@@ -354,146 +484,154 @@ function clearFeedbackTextures(gl, state) {
         if (type === gl.FRAGMENT_SHADER && isWebGL2) {
             source = source.replace(/gl_FragColor/g, 'fragColor');
         }
-        
+
         const fullSource = prefix + source;
-        
+
         gl.shaderSource(shader, fullSource);
         gl.compileShader(shader);
-        
-        if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-            const error = gl.getShaderInfoLog(shader);
-            if (statusEl) statusEl.textContent = 'Shader Error: ' + error.substring(0, 100) + '...';
-            console.error('Shader compile error:', error);
-            gl.deleteShader(shader);
-            return null;
-        }
+
+        // Deliberately no COMPILE_STATUS query. It forces a synchronous
+        // round-trip to the GPU process and defeats ANGLE's compile cache (which
+        // does not store compile status, so asking makes it compile again just to
+        // answer). Nearly every real error surfaces at link time instead, and the
+        // info logs are still read there if linking fails.
         return shader;
     }
-    
-    // Create and link a program with given shaders
-    function createProgram(gl, vertexShader, fragmentShader) {
+
+    // A build in flight. The previous program keeps rendering until this one is
+    // ready, so switching shaders never shows a black frame or blocks the loop.
+    let pendingProgram = null;
+    let currentShaderLabel = 'default';
+
+    function destroyBuild(build) {
+        gl.deleteProgram(build.program);
+        gl.deleteShader(build.vertexShader);
+        gl.deleteShader(build.fragmentShader);
+    }
+
+    /**
+     * Kick off a shader switch. Returns immediately without touching the new
+     * program again, because any query against a program that is still linking
+     * (including getUniformLocation) stalls until it finishes.
+     *
+     * @param {Function} [onDone] called with (success, detail) once the result is
+     *   known, which is at least one frame later.
+     * @returns {boolean} whether the request was accepted, not whether it linked.
+     */
+    function queueFragmentShader(fragShaderSource, label) {
+        if (label) currentShaderLabel = label;
+        return requestShaderProgram(vertexShaderSource, fragShaderSource);
+    }
+
+    function requestShaderProgram(vertexSource, fragmentSource, onDone) {
+        // Holding down the arrow key can easily outrun compilation, and only the
+        // most recent request is of any interest.
+        if (pendingProgram) {
+            const superseded = pendingProgram.onDone;
+            destroyBuild(pendingProgram);
+            pendingProgram = null;
+            if (superseded) superseded(false, 'superseded');
+        }
+
+        const vertexShader = createShader(gl, gl.VERTEX_SHADER, vertexSource);
+        const fragmentShader = createShader(gl, gl.FRAGMENT_SHADER, fragmentSource);
+
         const program = gl.createProgram();
         gl.attachShader(program, vertexShader);
         gl.attachShader(program, fragmentShader);
+        gl.bindAttribLocation(program, 0, 'position');
         gl.linkProgram(program);
-        
-        if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-            const error = gl.getProgramInfoLog(program);
-            if (statusEl) statusEl.textContent = 'Program Error: ' + error.substring(0, 100) + '...';
-            console.error('Program link error:', error);
-            return null;
+
+        pendingProgram = {
+            program,
+            vertexShader,
+            fragmentShader,
+            vertexSource,
+            fragmentSource,
+            onDone,
+            startMs: performance.now()
+        };
+
+        return true;
+    }
+
+    function adoptProgram(build, compileMs) {
+        const previousProgram = currentProgram;
+        const previousVertexShader = currentVertexShader;
+        const previousFragmentShader = currentFragmentShader;
+
+        currentProgram = build.program;
+        currentVertexShader = build.vertexShader;
+        currentFragmentShader = build.fragmentShader;
+
+        window.currentVertexShader = currentVertexShader;
+        window.currentFragmentShader = currentFragmentShader;
+        window.currentVertexShaderSource = build.vertexSource;
+        window.currentFragmentShaderSource = build.fragmentSource;
+
+        gl.useProgram(currentProgram);
+        uniforms = getShaderUniforms();
+        configureFeedbackPass(build.fragmentSource);
+        frameCount = 0;
+
+        // Linking is not the last of the driver's work: the first draw with a
+        // program can trigger ANGLE specialization and, on WebKit, a walk of every
+        // active uniform to cache its location. A one-pixel scissored draw pays
+        // that cost here rather than in the first full-resolution frame.
+        gl.enable(gl.SCISSOR_TEST);
+        gl.scissor(0, 0, 1, 1);
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+        gl.disable(gl.SCISSOR_TEST);
+
+        if (previousProgram) gl.deleteProgram(previousProgram);
+        if (previousVertexShader) gl.deleteShader(previousVertexShader);
+        if (previousFragmentShader) gl.deleteShader(previousFragmentShader);
+
+        if (perf) perf.noteShader(currentShaderLabel, compileMs, build.fragmentSource);
+
+        if (window.kioskWindow && !window.kioskWindow.closed) {
+            window.kioskWindow.postMessage({
+                type: 'shader-update',
+                vertexShader: build.vertexSource,
+                fragmentShader: build.fragmentSource
+            }, '*');
         }
-        
-        return program;
-    }
-    // Modified setupShaderProgram function
-
-function setupShaderProgram(vertexSource, fragmentSource) {
-
-    const newVertexShader = createShader(gl, gl.VERTEX_SHADER, vertexSource);
-
-    if (!newVertexShader) return false;
-
-    const newFragmentShader = createShader(gl, gl.FRAGMENT_SHADER, fragmentSource);
-
-    if (!newFragmentShader) {
-        gl.deleteShader(newVertexShader);
-        return false;
     }
 
-    const newProgram = createProgram(gl, newVertexShader, newFragmentShader);
+    /** Called once per frame, before drawing. Never blocks. */
+    function pollShaderProgram() {
+        if (!pendingProgram) return;
 
-    if (!newProgram) {
-        gl.deleteShader(newVertexShader);
-        gl.deleteShader(newFragmentShader);
-        return false;
+        if (parallelCompileExt) {
+            const done = gl.getProgramParameter(pendingProgram.program, parallelCompileExt.COMPLETION_STATUS_KHR);
+            if (!done) return;
+        } else if (performance.now() - pendingProgram.startMs < 24) {
+            // Without the extension, LINK_STATUS blocks. Giving the driver a frame
+            // of wall clock to finish in the background shortens the stall even
+            // though it cannot remove it.
+            return;
+        }
+
+        const build = pendingProgram;
+        pendingProgram = null;
+
+        const compileMs = performance.now() - build.startMs;
+
+        if (!gl.getProgramParameter(build.program, gl.LINK_STATUS)) {
+            const detail = gl.getShaderInfoLog(build.fragmentShader)
+                || gl.getShaderInfoLog(build.vertexShader)
+                || gl.getProgramInfoLog(build.program)
+                || 'unknown link failure';
+            console.error('Shader link error:', detail);
+            if (statusEl) statusEl.textContent = 'Shader Error: ' + detail.substring(0, 100) + '...';
+            destroyBuild(build);
+            if (build.onDone) build.onDone(false, detail);
+            return;
+        }
+
+        adoptProgram(build, compileMs);
+        if (build.onDone) build.onDone(true);
     }
-
-    if (currentProgram) gl.deleteProgram(currentProgram);
-    if (currentVertexShader) gl.deleteShader(currentVertexShader);
-    if (currentFragmentShader) gl.deleteShader(currentFragmentShader);
-
-    currentVertexShader = newVertexShader;
-    currentFragmentShader = newFragmentShader;
-    currentProgram = newProgram;
-
-    window.currentVertexShader = currentVertexShader;
-    window.currentFragmentShader = currentFragmentShader;
-    window.currentVertexShaderSource = vertexSource;
-    window.currentFragmentShaderSource = fragmentSource;
-
-    gl.useProgram(currentProgram);
-
-    
-
-    // Set up vertex attributes
-
-    const positions = new Float32Array([
-
-        -1.0, -1.0,
-
-         1.0, -1.0,
-
-        -1.0,  1.0,
-
-         1.0,  1.0
-
-    ]);
-
-    
-
-    const positionBuffer = gl.createBuffer();
-
-    gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
-
-    gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
-
-    
-
-    const positionLocation = gl.getAttribLocation(currentProgram, 'position');
-
-    gl.enableVertexAttribArray(positionLocation);
-
-    gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
-
-    
-
-    // *** ADD TEXTURE SETUP HERE ***
-
-    setupTextures(gl, currentProgram);
-
-    
-
-    // Reset frame counter
-
-    frameCount = 0;
-
-    
-
-    // Get all uniforms after successful program setup
-
-    uniforms = getShaderUniforms();
-    configureFeedbackPass(fragmentSource);
-
-    
-
-    if (window.kioskWindow && !window.kioskWindow.closed) {
-
-        window.kioskWindow.postMessage({
-
-            type: 'shader-update',
-
-            vertexShader: vertexSource,
-
-            fragmentShader: fragmentSource
-
-        }, '*');
-
-    }
-
-    return true;
-
-}
 
     
     // Get all shader uniforms to be updated each frame
@@ -514,9 +652,20 @@ function setupShaderProgram(vertexSource, fragmentSource) {
             iDate: gl.getUniformLocation(currentProgram, 'iDate'),
             iSampleRate: gl.getUniformLocation(currentProgram, 'iSampleRate'),
             iWriteFeedback: gl.getUniformLocation(currentProgram, 'iWriteFeedback'),
+            iFeedback: gl.getUniformLocation(currentProgram, 'iFeedback'),
             iVideoResolution: gl.getUniformLocation(currentProgram, 'iVideoResolution'),
             iFitMode: gl.getUniformLocation(currentProgram, 'iFitMode'),
-            iVideoMirror: gl.getUniformLocation(currentProgram, 'iVideoMirror')
+            iVideoMirror: gl.getUniformLocation(currentProgram, 'iVideoMirror'),
+            iTextMorph: gl.getUniformLocation(currentProgram, 'iTextMorph'),
+            iTextLineH: gl.getUniformLocation(currentProgram, 'iTextLineH'),
+            iTextExtent: gl.getUniformLocation(currentProgram, 'iTextExtent'),
+            iTextExtentB: gl.getUniformLocation(currentProgram, 'iTextExtentB'),
+            iTextLegacyExtent: gl.getUniformLocation(currentProgram, 'iTextLegacyExtent'),
+            iTextTransition: gl.getUniformLocation(currentProgram, 'iTextTransition'),
+            iTextSheet: gl.getUniformLocation(currentProgram, 'iTextSheet'),
+            iTextSheetRes: gl.getUniformLocation(currentProgram, 'iTextSheetRes'),
+            iTextWords: gl.getUniformLocation(currentProgram, 'iTextWords[0]'),
+            iTextWordCount: gl.getUniformLocation(currentProgram, 'iTextWordCount')
         };
     }
     
@@ -598,12 +747,14 @@ function setupShaderProgram(vertexSource, fragmentSource) {
     audioData = new Uint8Array(audioTexWidth);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE, audioTexWidth, 1, 0, gl.LUMINANCE, gl.UNSIGNED_BYTE, audioData);
     
-    // Initialize with default shader
-    const initSuccess = setupShaderProgram(vertexShaderSource, fragmentShaderSource);
-    if (!initSuccess) {
-        if (statusEl) statusEl.textContent = 'Failed to initialize default shader';
-        console.error('Failed to initialize default shader');
-    }
+    // Initialize with default shader. Result arrives via pollShaderProgram on a
+    // later frame; the loop simply draws nothing until then.
+    requestShaderProgram(vertexShaderSource, fragmentShaderSource, (ok, detail) => {
+        if (!ok && detail !== 'superseded') {
+            if (statusEl) statusEl.textContent = 'Failed to initialize default shader';
+            console.error('Failed to initialize default shader:', detail);
+        }
+    });
     
     // Create additional channels/textures (initialize with null data)
     const dummyTexture = new Uint8Array([0, 0, 0, 255]);
@@ -620,47 +771,92 @@ function setupShaderProgram(vertexSource, fragmentSource) {
         extraTextures.push(texture);
     }
 
-    function setupFeedbackBuffers(width, height, preserveOnResize) {
-        if (feedbackState && feedbackState.width === width && feedbackState.height === height) {
+    if (window.PianoscopeDisplayText) {
+        window.PianoscopeDisplayText.init(gl);
+    }
+
+    function displayTextTexture() {
+        if (window.PianoscopeDisplayText && window.PianoscopeDisplayText.getTexture()) {
+            return window.PianoscopeDisplayText.getTexture();
+        }
+        return extraTextures[2];
+    }
+
+    /**
+     * The fitted sheet lives on its own texture unit so iChannel3 can keep the
+     * legacy layout the existing text shaders were tuned against.
+     */
+    function bindFittedTextSheet() {
+        if (!uniforms.iTextSheet) return;
+        const dt = window.PianoscopeDisplayText;
+        const tex = dt && dt.getFittedTexture ? dt.getFittedTexture() : null;
+        if (!tex) return;
+        gl.activeTexture(gl.TEXTURE4);
+        gl.bindTexture(gl.TEXTURE_2D, tex);
+        gl.uniform1i(uniforms.iTextSheet, 4);
+    }
+
+    function bindDisplayTextChannel() {
+        gl.activeTexture(gl.TEXTURE3);
+        gl.bindTexture(gl.TEXTURE_2D, displayTextTexture());
+        if (uniforms.iChannel3) gl.uniform1i(uniforms.iChannel3, 3);
+    }
+
+    function setupFeedbackBuffers(width, height) {
+        const wanted = feedbackWantsHDR ? 'hdr' : 'ldr';
+        if (feedbackState && feedbackState.width === width
+            && feedbackState.height === height && feedbackState.request === wanted) {
             return;
         }
 
         destroyFeedbackState(gl, feedbackState);
 
-        const textures = [gl.createTexture(), gl.createTexture()];
-        textures.forEach((texture) => {
-            gl.bindTexture(gl.TEXTURE_2D, texture);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
-        });
-
-        const fbo = gl.createFramebuffer();
-        feedbackState = { textures, fbo, readIndex: 0, width, height };
-
-        if (!preserveOnResize) {
-            clearFeedbackTextures(gl, feedbackState);
+        const desc = feedbackFormat(gl, isWebGL2, feedbackWantsHDR);
+        let state = createFeedbackState(gl, isWebGL2, width, height, desc);
+        if (!state && desc.label !== 'rgba8') {
+            console.warn('Feedback buffer: ' + desc.label + ' is not renderable here, using rgba8');
+            state = createFeedbackState(gl, isWebGL2, width, height,
+                feedbackFormat(gl, isWebGL2, false));
         }
+
+        feedbackState = state;
+        if (!feedbackState) return;
+
+        feedbackState.request = wanted;
+        // New storage always starts undefined, resize included, so this clear is
+        // what keeps an accumulator from reading garbage on its first frame.
+        clearFeedbackTextures(gl, feedbackState);
     }
 
     function configureFeedbackPass(fragmentSource) {
         usesFeedbackPass = fragmentSource.includes('iWriteFeedback');
+        feedbackWantsHDR = fragmentSource.includes('FEEDBACK_HDR');
         iResolutionIsVec2 = /uniform\s+vec2\s+iResolution/.test(fragmentSource);
         if (usesFeedbackPass) {
             if (!noiseTexture) {
                 noiseTexture = createNoiseTexture(gl);
             }
-            setupFeedbackBuffers(canvas.width, canvas.height, false);
+            setupFeedbackBuffers(canvas.width, canvas.height);
         } else {
             destroyFeedbackState(gl, feedbackState);
             feedbackState = null;
         }
     }
 
+    // The previous frame also has a channel of its own, off the iChannel0..3 run.
+    // Video mode needs iChannel1 for the frame, so a feedback effect there has no
+    // spare channel to borrow; unit 5 is free in every mode.
+    function bindFeedbackChannel(feedbackReadTexture) {
+        if (!uniforms.iFeedback) return;
+        gl.activeTexture(gl.TEXTURE5);
+        gl.bindTexture(gl.TEXTURE_2D, feedbackReadTexture || extraTextures[0]);
+        gl.uniform1i(uniforms.iFeedback, 5);
+    }
+
     function bindTextureChannels(isVideoMode, feedbackReadTexture) {
-        if (usesFeedbackPass && noiseTexture) {
+        // Shader-mode feedback keeps its original layout: noise on 0, the previous
+        // frame on 1, audio on 2.
+        if (usesFeedbackPass && !isVideoMode && noiseTexture) {
             gl.activeTexture(gl.TEXTURE0);
             gl.bindTexture(gl.TEXTURE_2D, noiseTexture);
             if (uniforms.iChannel0) gl.uniform1i(uniforms.iChannel0, 0);
@@ -669,23 +865,18 @@ function setupShaderProgram(vertexSource, fragmentSource) {
             gl.bindTexture(gl.TEXTURE_2D, feedbackReadTexture || extraTextures[0]);
             if (uniforms.iChannel1) gl.uniform1i(uniforms.iChannel1, 1);
 
-            updateAudioTexture();
             gl.activeTexture(gl.TEXTURE2);
             gl.bindTexture(gl.TEXTURE_2D, audioTexture);
             if (uniforms.iChannel2) gl.uniform1i(uniforms.iChannel2, 2);
 
-            const channel3Uniform = uniforms.iChannel3;
-            if (channel3Uniform) {
-                gl.activeTexture(gl.TEXTURE3);
-                gl.bindTexture(gl.TEXTURE_2D, extraTextures[2]);
-                gl.uniform1i(channel3Uniform, 3);
-            }
+            bindFeedbackChannel(feedbackReadTexture);
+            bindDisplayTextChannel();
+        bindFittedTextSheet();
             return;
         }
 
         // Audio keeps iChannel0 even in video mode so effects stay music-reactive;
         // the frame goes to iChannel1, the channel left spare outside feedback.
-        updateAudioTexture();
         gl.activeTexture(gl.TEXTURE0);
         gl.bindTexture(gl.TEXTURE_2D, audioTexture);
         if (uniforms.iChannel0) gl.uniform1i(uniforms.iChannel0, 0);
@@ -696,7 +887,7 @@ function setupShaderProgram(vertexSource, fragmentSource) {
             gl.uniform1i(uniforms.iChannel1, 1);
         }
 
-        for (let i = isVideoMode ? 2 : 1; i < 4; i++) {
+        for (let i = isVideoMode ? 2 : 1; i < 3; i++) {
             const channelUniform = uniforms['iChannel' + i];
             if (channelUniform) {
                 gl.activeTexture(gl.TEXTURE0 + i);
@@ -704,6 +895,10 @@ function setupShaderProgram(vertexSource, fragmentSource) {
                 gl.uniform1i(channelUniform, i);
             }
         }
+
+        bindFeedbackChannel(feedbackReadTexture);
+        bindDisplayTextChannel();
+        bindFittedTextSheet();
     }
 
     function setShaderUniforms(currentTime, isVideoMode) {
@@ -731,7 +926,51 @@ function setupShaderProgram(vertexSource, fragmentSource) {
         if (uniforms.iChannelResolution) {
             channelResolutions[3] = isVideoMode ? videoSize.width : 1;
             channelResolutions[4] = isVideoMode ? videoSize.height : 1;
+            const textSize = window.PianoscopeDisplayText
+                ? window.PianoscopeDisplayText.getSize()
+                : { width: 1, height: 1 };
+            channelResolutions[9] = textSize.width;
+            channelResolutions[10] = textSize.height;
+            channelResolutions[11] = 1;
             gl.uniform3fv(uniforms.iChannelResolution, channelResolutions);
+        }
+        if (uniforms.iTextMorph || uniforms.iTextLineH || uniforms.iTextExtent || uniforms.iTextTransition) {
+            const dt = window.PianoscopeDisplayText;
+            if (uniforms.iTextMorph) {
+                gl.uniform1f(uniforms.iTextMorph, dt ? dt.getMorph() : 0);
+            }
+            if (uniforms.iTextLineH) {
+                gl.uniform1f(uniforms.iTextLineH, dt ? dt.getLineFrac() : 0.5);
+            }
+            if (uniforms.iTextExtent) {
+                const ext = dt ? dt.getExtent() : { width: 0.5, height: 0.5 };
+                gl.uniform2f(uniforms.iTextExtent, ext.width, ext.height);
+            }
+            if (uniforms.iTextExtentB) {
+                const extB = dt && dt.getExtentB
+                    ? dt.getExtentB()
+                    : (dt ? dt.getExtent() : { width: 0.5, height: 0.5 });
+                gl.uniform2f(uniforms.iTextExtentB, extB.width, extB.height);
+            }
+            if (uniforms.iTextLegacyExtent) {
+                const leg = dt && dt.getLegacyExtent
+                    ? dt.getLegacyExtent()
+                    : { width: 0.386, height: 0.670 };
+                gl.uniform2f(uniforms.iTextLegacyExtent, leg.width, leg.height);
+            }
+            if (uniforms.iTextTransition) {
+                gl.uniform1f(uniforms.iTextTransition, dt ? dt.getTransitionIndex() : 0);
+            }
+            if (uniforms.iTextSheetRes) {
+                const fs = dt ? dt.getFittedSize() : { width: 1, height: 1 };
+                gl.uniform2f(uniforms.iTextSheetRes, fs.width, fs.height);
+            }
+            if (uniforms.iTextWords && dt) {
+                gl.uniform4fv(uniforms.iTextWords, dt.getWordRects());
+            }
+            if (uniforms.iTextWordCount) {
+                gl.uniform1f(uniforms.iTextWordCount, dt ? dt.getWordCount() : 0);
+            }
         }
         if (uniforms.iTime) gl.uniform1f(uniforms.iTime, currentTime);
         if (uniforms.iTimeDelta) gl.uniform1f(uniforms.iTimeDelta, deltaTime);
@@ -775,9 +1014,6 @@ function setupShaderProgram(vertexSource, fragmentSource) {
             micToggle.innerHTML = '<i class="fas fa-microphone-slash"></i><span>Stop Listen</span>';
             micToggle.className = "red-button";
 
-            // Start volume monitoring
-            showVolume();
-            
             // Start animation if not already running
             if (!animationRunning) {
                 startTime = performance.now() / 1000;
@@ -808,62 +1044,89 @@ function setupShaderProgram(vertexSource, fragmentSource) {
         
         // Clear audio data
         audioData.fill(0);
-        updateAudioTexture();
+        currentDb = 0;
+        uploadAudioTexture();
     }
-    
-    function updateAudioTexture() {
-        if (isListening && analyser) {
-            analyser.getByteFrequencyData(frequencyArray);
-            
-            // Copy and apply sensitivity
-            for (let i = 0; i < audioData.length; i++) {
-                if (i < frequencyArray.length) {
-                    audioData[i] = Math.min(255, frequencyArray[i] * audioSensitivity);
-                } else {
-                    audioData[i] = 0;
-                }
-            }
+
+    /**
+     * Read the analyser once per frame.
+     *
+     * Previously the FFT was read from inside the texture-binding helper, which
+     * runs twice per frame for feedback shaders, and again on a separate 500ms
+     * timer for the dB readout. One read per frame feeds every consumer.
+     */
+    function sampleAudio() {
+        if (!isListening || !analyser) return;
+
+        analyser.getByteFrequencyData(frequencyArray);
+
+        const count = Math.min(audioData.length, frequencyArray.length);
+        let sumOfSquares = 0;
+
+        for (let i = 0; i < count; i++) {
+            const raw = frequencyArray[i];
+            sumOfSquares += raw * raw;
+            const boosted = raw * audioSensitivity;
+            audioData[i] = boosted > 255 ? 255 : boosted;
         }
-        
+        for (let i = count; i < audioData.length; i++) {
+            audioData[i] = 0;
+        }
+
+        const rms = Math.sqrt(sumOfSquares / count);
+        currentDb = rms > 0 ? Math.max(20 * Math.log10(rms), 0) : 0;
+    }
+
+    function uploadAudioTexture() {
         gl.activeTexture(gl.TEXTURE0);
         gl.bindTexture(gl.TEXTURE_2D, audioTexture);
         gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, audioTexWidth, 1, gl.LUMINANCE, gl.UNSIGNED_BYTE, audioData);
         window.audioData = audioData;
     }
-    
-    function showVolume() {
-        if (!isListening) return;
-        
-        if (analyser) {
-            analyser.getByteFrequencyData(frequencyArray);
-            let total = 0;
-            
-            for(let i = 0; i < frequencyArray.length; i++) {
-                const x = frequencyArray[i];
-                total += x * x;
-            }
-            
-            const rms = Math.sqrt(total / frequencyArray.length);
-            const db = 20 * (Math.log(rms) / Math.log(10));
-            const dbValue = Math.max(db, 0); // sanity check
-            
-            
-            if (h) h.innerHTML = Math.floor(dbValue) + " <span style='color:#FFD700;'>dB</span>";
 
-            
-            if (dbValue >= loud_volume_threshold) {
-                seconds += 0.5;
-                if (seconds >= 5) {
-                    // if (hSub) hSub.innerHTML = "You've been in loud environment for<span> " + Math.floor(seconds) + " </span>seconds.";
-                }
-            } else {
-                seconds = 0;
-                if (hSub) hSub.innerHTML = "";
+    // The readout markup is built once so each update is a single text-node
+    // mutation rather than an innerHTML reparse. Other code writes plain text into
+    // the same heading, so the structure is rebuilt whenever it goes missing.
+    let dbTextNode = null;
+
+    function ensureVolumeReadout() {
+        if (!h || (dbTextNode && dbTextNode.parentNode === h)) return;
+
+        const unit = document.createElement('span');
+        unit.style.color = '#FFD700';
+        unit.textContent = ' dB';
+
+        dbTextNode = document.createTextNode('0');
+        h.textContent = '';
+        h.appendChild(dbTextNode);
+        h.appendChild(unit);
+        lastRenderedDb = -1;
+    }
+
+    /**
+     * Writing to the DOM invalidates style and layout, so this is throttled hard
+     * and driven from the render loop: the 500ms setTimeout it replaces landed in
+     * the middle of arbitrary frames and showed up as a periodic hitch.
+     */
+    function updateVolumeReadout(nowMs) {
+        if (!isListening || nowMs < nextVolumeReadoutMs) return;
+        nextVolumeReadoutMs = nowMs + 250;
+
+        const dbValue = Math.floor(currentDb);
+        if (dbValue !== lastRenderedDb) {
+            ensureVolumeReadout();
+            if (dbTextNode) {
+                lastRenderedDb = dbValue;
+                dbTextNode.nodeValue = String(dbValue);
             }
         }
-        
-        // Continue monitoring volume every 500ms
-        setTimeout(showVolume, 500);
+
+        if (currentDb >= loud_volume_threshold) {
+            seconds += 0.25;
+        } else if (seconds !== 0) {
+            seconds = 0;
+            if (hSub && hSub.textContent) hSub.textContent = '';
+        }
     }
     
     // === RENDER LOOP ===
@@ -875,62 +1138,80 @@ function setupShaderProgram(vertexSource, fragmentSource) {
         if (!animationRunning) return;
         
         requestAnimationFrame(render);
-        
+
+        if (perf && !perf.beginFrame(now)) return;
+
         // Calculate time values
         const nowSec = now / 1000;
         const currentTime = nowSec - startTime;
         deltaTime = nowSec - lastTime;
         lastTime = nowSec;
         frameCount++;
-        
+
+        // Promote a finished shader build before doing anything else, so the rest
+        // of the frame draws with a single consistent program.
+        pollShaderProgram();
+
+        if (resizePending || (perf && perf.takeResolutionDirty())) {
+            resizePending = false;
+            resizeCanvas();
+        }
+
+        sampleAudio();
+        updateVolumeReadout(now);
+
         // Check if we're in video mode
         const isVideoMode = videoController && videoController.isInVideoMode && videoController.isInVideoMode();
-        
-        // Video mode swaps in an effect program. setupShaderProgram deletes
-        // whatever program it replaces, so the previous shader is restored by
-        // recompiling its source rather than by reusing a freed program handle.
-        if (isVideoMode) {
-            videoController.updateVideoTexture();
 
-            if (!window.currentShaderIsVideoDisplay) {
-                savedFragmentSource = window.currentFragmentShaderSource;
-                if (setupShaderProgram(vertexShaderSource, videoController.getVideoDisplayShader())) {
-                    window.currentShaderIsVideoDisplay = true;
-                    videoController.clearEffectDirty();
+        // Video mode swaps in an effect program. Adopting a new program deletes
+        // the one it replaces, so the previous shader is restored by recompiling
+        // its source rather than by reusing a freed program handle. The flags flip
+        // as soon as the request is queued, otherwise every frame until the
+        // compile lands would queue another identical request.
+        if (isVideoMode) {
+            const needsVideoProgram = !window.currentShaderIsVideoDisplay || videoController.isEffectDirty();
+            if (needsVideoProgram && !pendingProgram) {
+                if (!window.currentShaderIsVideoDisplay) {
+                    savedFragmentSource = window.currentFragmentShaderSource;
                 }
-            } else if (videoController.isEffectDirty()) {
-                // Effect switched mid-playback: recompile without touching the
-                // saved shader we still owe the user on exit.
-                if (setupShaderProgram(vertexShaderSource, videoController.getVideoDisplayShader())) {
-                    videoController.clearEffectDirty();
-                }
+                window.currentShaderIsVideoDisplay = true;
+                videoController.clearEffectDirty();
+                requestShaderProgram(vertexShaderSource, videoController.getVideoDisplayShader());
             }
-        } else if (window.currentShaderIsVideoDisplay) {
-            if (setupShaderProgram(vertexShaderSource, savedFragmentSource || fragmentShaderSource)) {
-                window.currentShaderIsVideoDisplay = false;
-            }
+        } else if (window.currentShaderIsVideoDisplay && !pendingProgram) {
+            window.currentShaderIsVideoDisplay = false;
+            requestShaderProgram(vertexShaderSource, savedFragmentSource || fragmentShaderSource);
         }
         
         // Set uniform values for shader if program exists
-        if (!currentProgram) return;
+        if (!currentProgram) {
+            if (perf) perf.endFrame();
+            return;
+        }
+
+        // Texture uploads temporarily switch programs and framebuffers inside the
+        // driver, so they belong before the draw setup rather than between state
+        // changes where they would flush the pipeline.
+        if (isVideoMode) videoController.updateVideoTexture();
+        uploadAudioTexture();
 
         setShaderUniforms(currentTime, isVideoMode);
+
+        if (perf) perf.beginGpuWork();
 
         if (usesFeedbackPass && feedbackState) {
             const readTexture = feedbackState.textures[feedbackState.readIndex];
             const writeIndex = 1 - feedbackState.readIndex;
-            const writeTexture = feedbackState.textures[writeIndex];
 
-            gl.bindFramebuffer(gl.FRAMEBUFFER, feedbackState.fbo);
-            gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, writeTexture, 0);
+            bindTextureChannels(isVideoMode, readTexture);
+
+            gl.bindFramebuffer(gl.FRAMEBUFFER, feedbackState.fbos[writeIndex]);
             gl.viewport(0, 0, feedbackState.width, feedbackState.height);
-            bindTextureChannels(false, readTexture);
             if (uniforms.iWriteFeedback) gl.uniform1f(uniforms.iWriteFeedback, 1.0);
             gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
             gl.bindFramebuffer(gl.FRAMEBUFFER, null);
             gl.viewport(0, 0, canvas.width, canvas.height);
-            bindTextureChannels(false, readTexture);
             if (uniforms.iWriteFeedback) gl.uniform1f(uniforms.iWriteFeedback, 0.0);
             gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
@@ -940,13 +1221,31 @@ function setupShaderProgram(vertexSource, fragmentSource) {
             if (uniforms.iWriteFeedback) gl.uniform1f(uniforms.iWriteFeedback, 0.0);
             gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
         }
+
+        if (perf) {
+            perf.endGpuWork();
+            perf.endFrame();
+        }
     }
     
-    // Start render loop immediately
-    animationRunning = true;
+    function ensureRenderLoop() {
+        if (animationRunning) return;
+        animationRunning = true;
+        lastTime = performance.now() / 1000;
+        requestAnimationFrame(render);
+    }
+
+    document.addEventListener('visibilitychange', () => {
+        if (document.hidden) {
+            animationRunning = false;
+        } else {
+            ensureRenderLoop();
+        }
+    });
+
     startTime = performance.now() / 1000;
     lastTime = startTime;
-    requestAnimationFrame(render);
+    ensureRenderLoop();
     
     // === EVENT HANDLERS ===
     micToggle.addEventListener('click', () => {
@@ -1031,7 +1330,7 @@ function applyDefaultShader() {
         if (shaderSource) {
             try {
                 const convertedShader = window.ShaderConverter.convertShaderToyToWebGL(shaderSource);
-                const success = window.visualizer.applyShader(convertedShader);
+                const success = window.visualizer.applyShader(convertedShader, DEFAULT_SHADER_NAME);
                 if (success) {
                     currentShaderIndex = -1;
                     logAppliedShader(DEFAULT_SHADER_NAME);
@@ -1045,8 +1344,7 @@ function applyDefaultShader() {
             }
         }
     }
-    if (setupShaderProgram(vertexShaderSource, fragmentShaderSource)) {
-        uniforms = getShaderUniforms();
+    if (queueFragmentShader(fragmentShaderSource, 'default')) {
         currentShaderIndex = -1;
         return true;
     }
@@ -1072,7 +1370,7 @@ function applyShaderAtIndex(newIndex) {
 
     try {
         const convertedShader = window.ShaderConverter.convertShaderToyToWebGL(shaderSource);
-        const success = window.visualizer.applyShader(convertedShader);
+        const success = window.visualizer.applyShader(convertedShader, shaderName);
 
         if (success) {
             logAppliedShader(shaderName);
@@ -1117,9 +1415,20 @@ function getNextShaderIndex(direction) {
 document.addEventListener('keydown', (e) => {
     if (shaderKeys.length === 0) return;
 
+    const active = document.activeElement;
+    if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable)) {
+        return;
+    }
+
     if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
         e.preventDefault();
         const direction = e.key === 'ArrowLeft' ? 'left' : 'right';
+
+        if (videoController && videoController.isInVideoMode()) {
+            videoController.cycleEffect(direction);
+            return;
+        }
+
         applyShaderAtIndex(getNextShaderIndex(direction));
     }
 });
@@ -1132,7 +1441,7 @@ window.setShaderByName = (shaderName) => {
         if (window.visualizer) {
             try {
                 const convertedShader = window.ShaderConverter.convertShaderToyToWebGL(shaderSource);
-                const success = window.visualizer.applyShader(convertedShader);
+                const success = window.visualizer.applyShader(convertedShader, shaderName);
                 if (success) {
                     currentShaderIndex = index;
                     logAppliedShader(shaderName);
@@ -1174,8 +1483,7 @@ window.getCurrentShaderInfo = () => {
         const shaderUI = window.ShaderConverter.createShaderTestUI(document.body, (newShaderSource) => {
             // When user applies a new shader, set it up
             leaveVideoMode();
-            if (setupShaderProgram(vertexShaderSource, newShaderSource)) {
-                uniforms = getShaderUniforms();
+            if (queueFragmentShader(newShaderSource, 'editor')) {
                 if (statusEl) statusEl.textContent = 'New shader applied successfully';
                 return true;
             }
@@ -1189,21 +1497,22 @@ window.getCurrentShaderInfo = () => {
         
         // Add helper functions to window for console testing
         window.visualizer = {
-            applyShader: (fragShaderSource) => {
+            applyShader: (fragShaderSource, label) => {
                 leaveVideoMode();
-                if (setupShaderProgram(vertexShaderSource, fragShaderSource)) {
-                    uniforms = getShaderUniforms();
-                    return true;
+                return queueFragmentShader(fragShaderSource, label || 'custom');
+            },
+            setDisplayText: (text) => {
+                if (window.PianoscopeDisplayText) {
+                    return window.PianoscopeDisplayText.applyText(text);
                 }
-                return false;
+                return '';
             },
             
             loadFromShadertoy: async (shaderCode) => {
                 try {
                     leaveVideoMode();
                     const convertedCode = window.ShaderConverter.convertShaderToyToWebGL(shaderCode);
-                    if (convertedCode && setupShaderProgram(vertexShaderSource, convertedCode)) {
-                        uniforms = getShaderUniforms();
+                    if (convertedCode && queueFragmentShader(convertedCode, 'shadertoy')) {
                         if (statusEl) statusEl.textContent = 'Shadertoy shader loaded successfully';
                         return true;
                     }
@@ -1223,7 +1532,18 @@ window.getCurrentShaderInfo = () => {
             }
         };
 
-        applyDefaultShader();
+        // Filter edits reload the page. Re-open the camera and last effect so
+        // the operator is not dumped back on the default shader each save.
+        // Must run *instead of* the default apply — that path persists
+        // videoMode:false and would erase the session we are about to restore.
+        const restoreVideo = videoController && videoController.hasRestorableSession();
+        if (restoreVideo) {
+            videoController.restoreSession().then((restored) => {
+                if (!restored) applyDefaultShader();
+            });
+        } else {
+            applyDefaultShader();
+        }
     } else {
         console.warn('ShaderConverter module not found. Shadertoy integration is disabled.');
     }

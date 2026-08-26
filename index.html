@@ -15,10 +15,23 @@
     <!-- Add Google Fonts for better typography -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+    <!-- Axis RANGES, not pinned instances. Asking for `wdth,wght@150,900` returns a
+         STATIC cut with no fvar table, so font-stretch and font-weight have nothing to
+         interpolate at runtime; `@50..150,100..900` returns the real variable file.
+         Verified by pulling the woff2 the API serves and checking for fvar. -->
+    <link href="https://fonts.googleapis.com/css2?family=Anybody:wdth,wght@50..150,100..900&family=Bricolage+Grotesque:opsz,wdth,wght@12..96,75..100,200..800&family=Inter:wght@300;400;500;600;700&family=Saira:wdth,wght@50..125,100..900&family=Syne:wght@400..800&family=Unbounded:wght@200..900&display=swap" rel="stylesheet">
 </head>
 <style>
-    
+@font-face {
+    font-family: 'Akira Expanded';
+    src: local('Akira Expanded'),
+         local('Akira Expanded Demo'),
+         url('fonts/AkiraExpanded.otf') format('opentype');
+    font-weight: 400;
+    font-style: normal;
+    font-display: block;
+}
+
 .logo{
     position: fixed;
     top: 15px;
@@ -53,6 +66,9 @@
     <!-- Load scripts in correct order -->
     <script type="module" src="js/shaders.js"></script>
     <script type="module" src="js/shadertoy-converter.js"></script>
+    <script src="js/perf.js"></script>
+    <script src="js/display-text.js"></script>
+    <script src="js/text-sequencer.js"></script>
     <script src="js/visualizer-with-shadertoy.js"></script>
 
     <!-- Add an error log display for debugging -->

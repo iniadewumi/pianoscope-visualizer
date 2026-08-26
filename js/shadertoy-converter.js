@@ -8,6 +8,7 @@
 import { SHADERS } from './shaders.js';
 import { SHADERS2 } from './shaders2.js';
 import { TEST_SHADERS } from './test-shaders.js';
+import { SEQ_GLSL } from './text-seq-glsl.js';
 
 // Combine the shader objects (TEST_SHADERS first for picker / keyboard cycle)
 const SAMPLE_SHADERS = { ...TEST_SHADERS, ...SHADERS, ...SHADERS2 };
@@ -46,6 +47,28 @@ uniform sampler2D iChannel1;
 uniform sampler2D iChannel2;
 uniform sampler2D iChannel3;
 uniform vec3 iChannelResolution[4];
+
+// Display text.
+//   iChannel3  - legacy 2048x512 sheet, R = sharp, G = soft. Unchanged contract.
+//   iTextSheet - sheet fitted to the copy: R = slot A sharp, G = slot A soft,
+//                B = slot B sharp (the incoming word during a swap).
+// iTextMorph runs 0 -> 1 across a swap. iTextLineH (one line as a fraction of the
+// fitted sheet) lets a shader hold cap height constant while copy length changes.
+// iTextExtent is the glyph block as a fraction of that sheet, for frame fitting.
+// iTextLegacyExtent is that same block as a fraction of the 2048x512 strip, so a
+// SEQ_COVER shader can keep Kick Afterglow's original on-screen size.
+// iTextWords carries per-word rects in sheet UV so type can be animated word by
+// word rather than only as one block.
+uniform sampler2D iTextSheet;
+uniform vec2 iTextSheetRes;
+uniform float iTextMorph;
+uniform float iTextLineH;
+uniform vec2 iTextExtent;
+uniform vec2 iTextExtentB;
+uniform vec2 iTextLegacyExtent;
+uniform float iTextTransition;
+uniform vec4 iTextWords[8];
+uniform float iTextWordCount;
 `;
 
     // Shadertoy's image pass renders opaque and discards whatever mainImage writes
@@ -88,6 +111,17 @@ void main() {
             throw new Error("Not a valid Shadertoy shader (missing mainImage function)");
         }
 
+        // Shared sequencer helpers. A shader opts in with #define SEQ_LINE or
+        // #define SEQ_COVER; the GLSL is injected before mainImage so the
+        // shader's own fieldValue (if any) is already declared.
+        if (/#define\s+SEQ_(LINE|COVER)\b/.test(shadertoyCode) &&
+            !/vec3\s+seqSample\s*\(/.test(shadertoyCode)) {
+            const idx = shadertoyCode.search(/void\s+mainImage\s*\(/);
+            if (idx >= 0) {
+                shadertoyCode = shadertoyCode.slice(0, idx) + SEQ_GLSL + '\n' + shadertoyCode.slice(idx);
+            }
+        }
+
         // Replace texture with texture2D which is needed for WebGL 1.0
         let convertedCode = shadertoyCode.replace(/\btexture\(/g, 'texture2D(');
 
@@ -117,23 +151,32 @@ void main() {
         header.className = 'shader-editor-header';
         const title = document.createElement('h3');
         title.textContent = 'Shader Editor';
+        const closeBtn = document.createElement('button');
+        closeBtn.type = 'button';
+        closeBtn.className = 'shader-editor-close';
+        closeBtn.title = 'Close editor';
+        closeBtn.setAttribute('aria-label', 'Close editor');
+        closeBtn.innerHTML = '<i class="fas fa-times"></i>';
         header.appendChild(title);
-        uiContainer.appendChild(header); // Header still belongs to main container
+        header.appendChild(closeBtn);
+        uiContainer.appendChild(header);
 
         // Create tab system
         const tabContainer = document.createElement('div');
         tabContainer.className = 'tab-container';
         const shaderTabBtn = document.createElement('button');
+        shaderTabBtn.type = 'button';
         shaderTabBtn.className = 'tab-button active';
         shaderTabBtn.dataset.tab = 'shader';
         shaderTabBtn.textContent = 'Shader';
         const videoTabBtn = document.createElement('button');
+        videoTabBtn.type = 'button';
         videoTabBtn.className = 'tab-button';
         videoTabBtn.dataset.tab = 'video';
         videoTabBtn.textContent = 'Video';
         tabContainer.appendChild(shaderTabBtn);
         tabContainer.appendChild(videoTabBtn);
-        uiContainer.appendChild(tabContainer); // Tabs belong to main container
+        uiContainer.appendChild(tabContainer);
 
         // Create tab content containers
         const shaderTabContent = document.createElement('div');
@@ -148,25 +191,29 @@ void main() {
         const controls = document.createElement('div');
         controls.className = 'shader-editor-controls';
         const applyButton = document.createElement('button');
-        applyButton.innerHTML = '<i class="fa fa-check"></i> Apply Shader';
+        applyButton.type = 'button';
+        applyButton.innerHTML = '<i class="fas fa-check"></i><span>Apply Shader</span>';
         applyButton.className = 'shader-editor-button apply-button';
         const resetButton = document.createElement('button');
-        resetButton.innerHTML = '<i class="fa fa-refresh"></i> Reset';
+        resetButton.type = 'button';
+        resetButton.innerHTML = '<i class="fas fa-undo"></i><span>Reset</span>';
         resetButton.className = 'shader-editor-button reset-button';
         controls.appendChild(applyButton);
         controls.appendChild(resetButton);
 
-        const sampleContainer = document.createElement('div');
-        sampleContainer.className = 'sample-container';
-        // Create a custom dropdown container
         const dropdownContainer = document.createElement('div');
-        dropdownContainer.className = 'custom-dropdown';
+        dropdownContainer.className = 'custom-dropdown shader-search';
+
+        const searchIcon = document.createElement('i');
+        searchIcon.className = 'fas fa-search';
+        searchIcon.setAttribute('aria-hidden', 'true');
 
         // Create the input field that will also act as the dropdown trigger
         const searchInput = document.createElement('input');
         searchInput.type = 'text';
         searchInput.className = 'dropdown-input';
         searchInput.placeholder = 'Search shaders...';
+        searchInput.setAttribute('aria-label', 'Search shaders');
 
         // Create the options container
         const optionsContainer = document.createElement('div');
@@ -228,12 +275,209 @@ void main() {
         });
 
         // Assemble the dropdown
+        const displayTextPanel = document.createElement('div');
+        displayTextPanel.className = 'display-text-panel ui-section';
+        const displayTextLabel = document.createElement('label');
+        displayTextLabel.className = 'display-text-label';
+        displayTextLabel.htmlFor = 'display-text-input';
+        displayTextLabel.textContent = 'Display text';
+        const displayTextRow = document.createElement('div');
+        displayTextRow.className = 'display-text-row';
+        const displayTextInput = document.createElement('textarea');
+        displayTextInput.id = 'display-text-input';
+        displayTextInput.className = 'display-text-input';
+        displayTextInput.rows = 2;
+        displayTextInput.placeholder = 'LET THE MUSIC\nDO THE TALKING';
+        displayTextInput.autocomplete = 'off';
+        displayTextInput.spellcheck = false;
+        const displayTextApply = document.createElement('button');
+        displayTextApply.type = 'button';
+        displayTextApply.className = 'shader-editor-button apply-button display-text-apply';
+        displayTextApply.innerHTML = '<i class="fas fa-check"></i><span>Apply</span>';
+        displayTextRow.appendChild(displayTextInput);
+        displayTextRow.appendChild(displayTextApply);
+        displayTextPanel.appendChild(displayTextLabel);
+        displayTextPanel.appendChild(displayTextRow);
+        const displayTextMeta = document.createElement('div');
+        displayTextMeta.className = 'display-text-meta';
+        const displayFontSelect = document.createElement('select');
+        displayFontSelect.id = 'display-text-font';
+        displayFontSelect.className = 'display-text-font';
+        displayFontSelect.title = 'Overlay font';
+        displayFontSelect.setAttribute('aria-label', 'Overlay font');
+        const fonts = (window.PianoscopeDisplayText && window.PianoscopeDisplayText.FONTS) || [];
+        for (let i = 0; i < fonts.length; i++) {
+            const opt = document.createElement('option');
+            opt.value = fonts[i].id;
+            opt.textContent = fonts[i].name;
+            displayFontSelect.appendChild(opt);
+        }
+        const overlayToggle = document.createElement('label');
+        overlayToggle.className = 'display-text-overlay-toggle';
+        const overlayCheck = document.createElement('input');
+        overlayCheck.type = 'checkbox';
+        overlayCheck.id = 'display-text-overlay-enabled';
+        overlayToggle.appendChild(overlayCheck);
+        overlayToggle.appendChild(document.createTextNode('JS overlay'));
+        displayTextMeta.appendChild(displayFontSelect);
+        displayTextMeta.appendChild(overlayToggle);
+        displayTextPanel.appendChild(displayTextMeta);
+
+        // ---- transition picker ----
+        const transitionRow = document.createElement('div');
+        transitionRow.className = 'display-text-meta';
+        const transitionSelect = document.createElement('select');
+        transitionSelect.id = 'display-text-transition';
+        transitionSelect.className = 'display-text-font';
+        transitionSelect.title = 'Transition used for every text change, including sequencer playback';
+        transitionSelect.setAttribute('aria-label', 'Text transition');
+        const transitions = (window.PianoscopeDisplayText && window.PianoscopeDisplayText.TRANSITIONS) || [];
+        for (let i = 0; i < transitions.length; i++) {
+            const opt = document.createElement('option');
+            opt.value = transitions[i].id;
+            opt.textContent = transitions[i].name;
+            transitionSelect.appendChild(opt);
+        }
+        const previewBtn = document.createElement('button');
+        previewBtn.type = 'button';
+        previewBtn.className = 'shader-editor-button seq-btn';
+        previewBtn.innerHTML = '<i class="fas fa-eye"></i><span>Preview</span>';
+        previewBtn.title = 'Re-apply the current text using the selected transition';
+        transitionRow.appendChild(transitionSelect);
+        transitionRow.appendChild(previewBtn);
+        displayTextPanel.appendChild(transitionRow);
+
+        // ---- sequencer transport ----
+        const seqSection = document.createElement('div');
+        seqSection.className = 'seq-section';
+        const seqLabel = document.createElement('label');
+        seqLabel.className = 'display-text-label';
+        seqLabel.textContent = 'Sequence';
+        seqSection.appendChild(seqLabel);
+
+        const seqRow = document.createElement('div');
+        seqRow.className = 'display-text-meta';
+        const seqSelect = document.createElement('select');
+        seqSelect.id = 'seq-name';
+        seqSelect.className = 'display-text-font';
+        seqSelect.setAttribute('aria-label', 'Sequence');
+        const seqNames = (window.PianoscopeTextSequencer && window.PianoscopeTextSequencer.names()) || [];
+        for (let i = 0; i < seqNames.length; i++) {
+            const opt = document.createElement('option');
+            opt.value = seqNames[i];
+            opt.textContent = seqNames[i];
+            seqSelect.appendChild(opt);
+        }
+        const artistInput = document.createElement('input');
+        artistInput.type = 'text';
+        artistInput.id = 'seq-artist';
+        artistInput.className = 'display-text-font';
+        artistInput.placeholder = 'Artist name';
+        artistInput.autocomplete = 'off';
+        artistInput.setAttribute('aria-label', 'Artist name');
+        seqRow.appendChild(seqSelect);
+        seqRow.appendChild(artistInput);
+        seqSection.appendChild(seqRow);
+
+        const transportRow = document.createElement('div');
+        transportRow.className = 'seq-transport';
+        const seqBtns = document.createElement('div');
+        seqBtns.className = 'seq-btns';
+        const playBtn = document.createElement('button');
+        playBtn.type = 'button';
+        playBtn.className = 'shader-editor-button seq-btn';
+        playBtn.innerHTML = '<i class="fas fa-play"></i><span>Play</span>';
+        playBtn.title = 'Run the sequence (P)';
+        const stepBtn = document.createElement('button');
+        stepBtn.type = 'button';
+        stepBtn.className = 'shader-editor-button seq-btn';
+        stepBtn.innerHTML = '<i class="fas fa-forward"></i><span>Step</span>';
+        stepBtn.title = 'Advance one state (Space)';
+        const tapBtn = document.createElement('button');
+        tapBtn.type = 'button';
+        tapBtn.className = 'shader-editor-button seq-btn';
+        tapBtn.innerHTML = '<i class="fas fa-drum"></i><span>Tap</span>';
+        tapBtn.title = 'Tap four beats to lock tempo (T)';
+        seqBtns.appendChild(playBtn);
+        seqBtns.appendChild(stepBtn);
+        seqBtns.appendChild(tapBtn);
+
+        const seqFields = document.createElement('div');
+        seqFields.className = 'seq-fields';
+        const bpmInput = document.createElement('input');
+        bpmInput.type = 'number';
+        bpmInput.min = '20';
+        bpmInput.max = '300';
+        bpmInput.className = 'seq-num';
+        bpmInput.title = 'BPM';
+        bpmInput.setAttribute('aria-label', 'BPM');
+        const barsInput = document.createElement('input');
+        barsInput.type = 'number';
+        barsInput.min = '1';
+        barsInput.max = '32';
+        barsInput.className = 'seq-num';
+        barsInput.title = 'Bars per state';
+        barsInput.setAttribute('aria-label', 'Bars per state');
+
+        function seqField(input, labelText) {
+            const wrap = document.createElement('label');
+            wrap.className = 'seq-field';
+            const cap = document.createElement('span');
+            cap.textContent = labelText;
+            wrap.appendChild(cap);
+            wrap.appendChild(input);
+            return wrap;
+        }
+        seqFields.appendChild(seqField(bpmInput, 'BPM'));
+        seqFields.appendChild(seqField(barsInput, 'Bars'));
+
+        transportRow.appendChild(seqBtns);
+        transportRow.appendChild(seqFields);
+        seqSection.appendChild(transportRow);
+
+        const seqReadout = document.createElement('div');
+        seqReadout.className = 'seq-readout';
+        seqSection.appendChild(seqReadout);
+
+        const displayTextHelp = document.createElement('details');
+        displayTextHelp.className = 'display-text-help';
+        const helpSummary = document.createElement('summary');
+        helpSummary.textContent = 'Shortcuts & notes';
+        const helpBody = document.createElement('p');
+        helpBody.textContent = 'Pipe or newline stacks a line. Space steps, P plays, T taps tempo. The transition above applies to every state. Word Ladder and Kick Afterglow honour transitions; Kente Loom always hard-cuts.';
+        displayTextHelp.appendChild(helpSummary);
+        displayTextHelp.appendChild(helpBody);
+        seqSection.appendChild(displayTextHelp);
+        displayTextPanel.appendChild(seqSection);
+        if (window.PianoscopeDisplayText) {
+            displayTextInput.value = window.PianoscopeDisplayText.toDisplayValue(
+                window.PianoscopeDisplayText.getText()
+            );
+            displayFontSelect.value = window.PianoscopeDisplayText.getFont();
+            overlayCheck.checked = window.PianoscopeDisplayText.isOverlayEnabled();
+            window.PianoscopeDisplayText.onChange(function (text) {
+                if (document.activeElement !== displayTextInput) {
+                    displayTextInput.value = window.PianoscopeDisplayText.toDisplayValue(text);
+                }
+            });
+        }
+        dropdownContainer.appendChild(searchIcon);
         dropdownContainer.appendChild(searchInput);
         dropdownContainer.appendChild(optionsContainer);
-        shaderTabContent.appendChild(dropdownContainer);
+
+        const shaderSection = document.createElement('div');
+        shaderSection.className = 'ui-section shader-code-section';
+        const shaderSectionLabel = document.createElement('label');
+        shaderSectionLabel.className = 'display-text-label';
+        shaderSectionLabel.textContent = 'Shader';
+        shaderSection.appendChild(shaderSectionLabel);
+        shaderSection.appendChild(dropdownContainer);
+        shaderSection.appendChild(controls);
+
         const shaderTextarea = document.createElement('textarea');
         shaderTextarea.className = 'shader-editor-textarea';
         shaderTextarea.placeholder = 'Paste Shadertoy shader code here...';
+        shaderTextarea.setAttribute('aria-label', 'Shader source');
         // Use a consistent default shader name, handle potential missing key
         const defaultShaderName = "Pianoscope Text";
         const defaultShader = SAMPLE_SHADERS[defaultShaderName] || Object.values(SAMPLE_SHADERS)[0] || ''; // Added fallback
@@ -241,13 +485,11 @@ void main() {
 
         const errorDisplay = document.createElement('div');
         errorDisplay.className = 'error-display';
-        // --- End elements for shaderTabContent ---
+        shaderSection.appendChild(shaderTextarea);
+        shaderSection.appendChild(errorDisplay);
 
-        // Append shader-specific elements to shaderTabContent (THIS IS THE FIX)
-        shaderTabContent.appendChild(controls);
-        shaderTabContent.appendChild(sampleContainer);
-        shaderTabContent.appendChild(shaderTextarea);
-        shaderTabContent.appendChild(errorDisplay);
+        shaderTabContent.appendChild(displayTextPanel);
+        shaderTabContent.appendChild(shaderSection);
 
         // Video tab is populated by VideoController.mountUI() once the catalog
         // has been probed, so the markup lives with the code that drives it.
@@ -256,11 +498,15 @@ void main() {
         uiContainer.appendChild(shaderTabContent);
         uiContainer.appendChild(videoTabContent);
 
-        // Create toggle button
+        // Create toggle button — hidden while the sidebar is open so it cannot
+        // overlay the header or the video toolbar.
         const toggleButton = document.createElement('button');
+        toggleButton.type = 'button';
         toggleButton.innerHTML = '<i class="fas fa-code"></i>';
         toggleButton.className = 'toggle-shader-ui';
-        toggleButton.title = "Toggle Shader Editor";
+        toggleButton.title = 'Open Shader Editor';
+        toggleButton.setAttribute('aria-label', 'Open Shader Editor');
+        toggleButton.setAttribute('aria-expanded', 'false');
 
         // Add the toggle button and the main UI container to the document body (or specified container)
         container.appendChild(toggleButton);
@@ -269,21 +515,30 @@ void main() {
         // --- Tab Switching Functionality ---
         const tabButtons = uiContainer.querySelectorAll('.tab-button');
         const tabContents = uiContainer.querySelectorAll('.tab-content');
+        const EDITOR_SESSION_KEY = 'pianoscope.editorSession';
+
+        function persistEditorSession() {
+            try {
+                const active = uiContainer.querySelector('.tab-button.active');
+                sessionStorage.setItem(EDITOR_SESSION_KEY, JSON.stringify({
+                    open: uiContainer.classList.contains('open'),
+                    tab: (active && active.dataset.tab) || 'shader'
+                }));
+            } catch (e) {}
+        }
+
+        function setActiveTab(tab) {
+            tabButtons.forEach((btn) => {
+                btn.classList.toggle('active', btn.dataset.tab === tab);
+            });
+            tabContents.forEach((content) => {
+                content.classList.toggle('hidden', content.id !== tab + '-tab');
+            });
+            persistEditorSession();
+        }
 
         tabButtons.forEach(button => {
-            button.addEventListener('click', () => {
-                // Deactivate all tabs
-                tabButtons.forEach(btn => btn.classList.remove('active'));
-                tabContents.forEach(content => content.classList.add('hidden'));
-
-                // Activate selected tab
-                button.classList.add('active');
-                const tabId = button.dataset.tab + '-tab';
-                const tabContent = document.getElementById(tabId);
-                if (tabContent) {
-                    tabContent.classList.remove('hidden');
-                }
-            });
+            button.addEventListener('click', () => setActiveTab(button.dataset.tab));
         });
 
         // Function to show status messages with animation
@@ -321,11 +576,120 @@ void main() {
             }, 3000);
         }
 
-        // Add event listener for toggle button
+        function commitDisplayText() {
+            if (!window.PianoscopeDisplayText) return;
+            const next = window.PianoscopeDisplayText.applyText(displayTextInput.value);
+            displayTextInput.value = window.PianoscopeDisplayText.toDisplayValue(next);
+            showMessage(next ? ('Display text: ' + next.replace(/\|/g, ' / ')) : 'Display text cleared', 'success');
+        }
+
+        displayTextApply.addEventListener('click', commitDisplayText);
+        displayTextInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                e.preventDefault();
+                commitDisplayText();
+            }
+        });
+        displayFontSelect.addEventListener('change', () => {
+            if (!window.PianoscopeDisplayText) return;
+            window.PianoscopeDisplayText.setFont(displayFontSelect.value);
+            const label = displayFontSelect.options[displayFontSelect.selectedIndex].text;
+            showMessage('Font: ' + label, 'success');
+        });
+        const SEQ = window.PianoscopeTextSequencer || null;
+
+        if (window.PianoscopeDisplayText) {
+            transitionSelect.value = window.PianoscopeDisplayText.getTransition();
+        }
+        // A cut has no duration, so there is nothing for Preview to play. Left
+        // enabled it reads as a dead button - the click genuinely does nothing.
+        function syncPreviewEnabled() {
+            const isCut = transitionSelect.value === 'cut';
+            previewBtn.disabled = isCut;
+            previewBtn.title = isCut
+                ? 'A cut is instant - pick a timed transition to preview it'
+                : 'Re-apply the current text using the selected transition';
+        }
+        transitionSelect.addEventListener('change', () => {
+            if (!window.PianoscopeDisplayText) return;
+            window.PianoscopeDisplayText.setTransition(transitionSelect.value);
+            syncPreviewEnabled();
+            showMessage('Transition: ' + transitionSelect.options[transitionSelect.selectedIndex].text, 'success');
+        });
+        syncPreviewEnabled();
+        previewBtn.addEventListener('click', () => {
+            const d = window.PianoscopeDisplayText;
+            if (!d) return;
+            // Re-applying the same string DOES play the transition - both slots just
+            // hold the same words. The old bounce through a blank state defeated it,
+            // because applyText hard-cuts whenever the outgoing text is empty, and it
+            // briefly persisted an empty string to storage.
+            d.applyText(d.getText(), { transition: transitionSelect.value });
+        });
+
+        function renderSeqStatus(st) {
+            if (!st) return;
+            if (seqSelect.value !== st.sequence) seqSelect.value = st.sequence;
+            if (document.activeElement !== bpmInput) bpmInput.value = st.bpm;
+            if (document.activeElement !== barsInput) barsInput.value = st.bars;
+            if (document.activeElement !== artistInput && st.artist !== '[ARTIST]') {
+                artistInput.value = st.artist;
+            }
+            playBtn.innerHTML = st.running
+                ? '<i class="fas fa-pause"></i><span>Pause</span>'
+                : '<i class="fas fa-play"></i><span>Play</span>';
+            playBtn.classList.toggle('seq-live', st.running);
+            seqReadout.textContent =
+                'State ' + (st.index + 1) + ' of ' + st.total +
+                '  ·  ' + st.bpm + ' bpm  ·  ' + st.bars + ' bar' + (st.bars === 1 ? '' : 's') +
+                '  ·  ' + (st.stepMs / 1000).toFixed(1) + 's per state';
+        }
+
+        if (SEQ) {
+            SEQ.onChange(renderSeqStatus);
+            seqSelect.addEventListener('change', () => { SEQ.setSequence(seqSelect.value); });
+            artistInput.addEventListener('input', () => { SEQ.setArtist(artistInput.value); });
+            playBtn.addEventListener('click', () => { SEQ.toggle(); });
+            stepBtn.addEventListener('click', () => { SEQ.step(1); });
+            tapBtn.addEventListener('click', () => {
+                const r = SEQ.tap();
+                showMessage(r.taps < 2 ? 'Keep tapping…' : 'Tempo: ' + r.bpm + ' bpm', 'info');
+            });
+            bpmInput.addEventListener('change', () => { SEQ.setBpm(parseInt(bpmInput.value, 10)); });
+            barsInput.addEventListener('change', () => { SEQ.setBars(parseInt(barsInput.value, 10)); });
+            SEQ.init();
+            renderSeqStatus(SEQ.status());
+        } else {
+            seqReadout.textContent = 'Sequencer not loaded.';
+        }
+
+        overlayCheck.addEventListener('change', () => {
+            if (!window.PianoscopeDisplayText) return;
+            window.PianoscopeDisplayText.setOverlayEnabled(overlayCheck.checked);
+            showMessage(overlayCheck.checked ? 'JS overlay on — shader will not chrome the type' : 'Shader chromes the JS font', 'info');
+        });
+
+        function setEditorOpen(open) {
+            uiContainer.classList.toggle('open', open);
+            toggleButton.classList.toggle('active', open);
+            toggleButton.hidden = open;
+            toggleButton.setAttribute('aria-expanded', open ? 'true' : 'false');
+            toggleButton.title = open ? 'Close Shader Editor' : 'Open Shader Editor';
+            persistEditorSession();
+        }
+
         toggleButton.addEventListener('click', () => {
-            uiContainer.classList.toggle('open');
-            toggleButton.classList.toggle('active');
-            toggleButton.innerHTML = uiContainer.classList.contains('open') ? '<i class="fas fa-times"></i>' : '<i class="fas fa-code"></i>';
+            setEditorOpen(!uiContainer.classList.contains('open'));
+        });
+        closeBtn.addEventListener('click', () => setEditorOpen(false));
+        document.addEventListener('keydown', (e) => {
+            if (e.key !== 'Escape' || !uiContainer.classList.contains('open')) return;
+            const active = document.activeElement;
+            if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.tagName === 'SELECT')) {
+                active.blur();
+                return;
+            }
+            setEditorOpen(false);
         });
 
         // Add event listener for apply button
@@ -383,6 +747,21 @@ void main() {
             }
         });
 
+        function restoreEditorSession() {
+            let session = null;
+            try {
+                session = JSON.parse(sessionStorage.getItem(EDITOR_SESSION_KEY) || 'null');
+            } catch (e) {}
+            if (!session) return;
+            if (session.tab === 'shader' || session.tab === 'video') {
+                setActiveTab(session.tab);
+            }
+            if (session.open) setEditorOpen(true);
+        }
+
+        restoreEditorSession();
+        window.addEventListener('pagehide', persistEditorSession);
+
         // Return UI elements for reference
         return {
             container: uiContainer,
@@ -392,10 +771,8 @@ void main() {
             errorDisplay: errorDisplay,
             toggle: toggleButton,
             showMessage: showMessage,
-            toggleVisibility: () => { // Expose toggle function if needed externally
-                uiContainer.classList.toggle('open');
-                toggleButton.classList.toggle('active');
-                toggleButton.innerHTML = uiContainer.classList.contains('open') ? '<i class="fas fa-times"></i>' : '<i class="fas fa-code"></i>';
+            toggleVisibility: () => {
+                setEditorOpen(!uiContainer.classList.contains('open'));
             }
         };
     }

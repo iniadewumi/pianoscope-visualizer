@@ -21,6 +21,7 @@
 | 7 | [`howto/07-anti-patterns-and-failures.md`](howto/07-anti-patterns-and-failures.md) | What failed in practice — do not repeat |
 | 8 | [`howto/08-steal-from-library.md`](howto/08-steal-from-library.md) | Which `shaders.js` entries to study and why |
 | 9 | [`howto/09-kente-loom-diagnosis.md`](howto/09-kente-loom-diagnosis.md) | **Kente v1/v2 failure analysis + v3 rebuild plan** |
+| 10 | [`howto/10-display-text-and-sequencer.md`](howto/10-display-text-and-sequencer.md) | **Display text, transitions, word-ladder sequencer — start here for text work** |
 
 ---
 

@@ -8,6 +8,26 @@
 
 const VIDEO_FIT_MODES = { cover: 0, contain: 1, stretch: 2 };
 
+// Filter edits reload the page (live server, or a refresh to pick up GLSL).
+// Session storage keeps the camera, clip, and selected effect across that
+// bounce without auto-starting the camera on a later visit.
+const VIDEO_SESSION_KEY = 'pianoscope.videoSession';
+
+function readVideoSession() {
+    try {
+        const raw = sessionStorage.getItem(VIDEO_SESSION_KEY);
+        return raw ? JSON.parse(raw) : null;
+    } catch (e) {
+        return null;
+    }
+}
+
+function writeVideoSession(data) {
+    try {
+        sessionStorage.setItem(VIDEO_SESSION_KEY, JSON.stringify(data));
+    } catch (e) {}
+}
+
 class VideoController {
 
     constructor(gl) {
@@ -28,6 +48,7 @@ class VideoController {
         // A camera feed reads as a mirror to whoever is in front of it.
         this.isLiveSource = false;
         this.mirror = false;
+        this._restoring = false;
 
         this.setupVideoEventListeners();
     }
@@ -137,9 +158,12 @@ class VideoController {
 
         this.root = container.querySelector('.vlib');
         this.cacheUIElements();
+        this.hydrateFromSession();
         this.populateEffects();
         this.bindUIEvents();
         this.loadLibrary();
+
+        window.addEventListener('pagehide', () => this.persistSession());
     }
 
     populateEffects() {
@@ -148,6 +172,76 @@ class VideoController {
             .map((name) => `<option value="${name}">${name}</option>`)
             .join('');
         this.effectSelect.value = this.effectName;
+    }
+
+    /**
+     * Last camera / clip / effect for this tab. Restored after a reload so
+     * editing a filter does not dump the operator back on the default shader.
+     */
+    persistSession() {
+        if (this._restoring) return;
+
+        const isUpload = !!(this.activeSrc && this.activeSrc.indexOf('upload:') === 0);
+        writeVideoSession({
+            videoMode: this.isVideoMode,
+            source: isUpload ? null : this.activeSrc,
+            title: this.nowPlayingEl ? this.nowPlayingEl.textContent : null,
+            effect: this.effectName,
+            fit: this.fitMode,
+            mirror: this.mirror
+        });
+    }
+
+    hydrateFromSession() {
+        const session = readVideoSession();
+        if (!session) return;
+
+        if (session.effect && window.VideoEffects && window.VideoEffects.has(session.effect)) {
+            this.effectName = session.effect;
+            this.effectDirty = true;
+        }
+        if (session.fit && Object.prototype.hasOwnProperty.call(VIDEO_FIT_MODES, session.fit)) {
+            this.fitMode = session.fit;
+        }
+        if (typeof session.mirror === 'boolean') {
+            this.mirror = session.mirror;
+        }
+
+        if (this.effectSelect) this.effectSelect.value = this.effectName;
+        if (this.fitSelect) this.fitSelect.value = this.fitMode;
+        if (this.mirrorBtn) this.mirrorBtn.classList.toggle('is-on', this.mirror);
+    }
+
+    hasRestorableSession() {
+        const session = readVideoSession();
+        return !!(session && session.videoMode && session.source);
+    }
+
+    /**
+     * Re-enter video mode after a reload. Camera permission is already granted
+     * for this origin, so getUserMedia does not need another click.
+     */
+    async restoreSession() {
+        const session = readVideoSession();
+        if (!session || !session.videoMode || !session.source) return false;
+
+        this._restoring = true;
+        try {
+            if (session.source === 'camera:live') {
+                await this.startCamera();
+            } else {
+                await this.playSource(session.source, session.title);
+            }
+            if (typeof session.mirror === 'boolean') {
+                this.setMirror(session.mirror);
+            }
+            return this.isVideoMode;
+        } catch (e) {
+            return false;
+        } finally {
+            this._restoring = false;
+            this.persistSession();
+        }
     }
 
     cacheUIElements() {
@@ -302,6 +396,7 @@ class VideoController {
 
         this.fitSelect.addEventListener('change', () => {
             this.fitMode = this.fitSelect.value;
+            this.persistSession();
         });
 
         this.effectSelect.addEventListener('change', () => {
@@ -515,7 +610,7 @@ class VideoController {
                 observer.unobserve(record.target);
                 this.fillThumbnail(record.target);
             });
-        }, { root: this.grid.closest('.shader-test-ui') || null, rootMargin: '200px' });
+        }, { root: this.grid.closest('.tab-content') || this.grid.closest('.shader-test-ui') || null, rootMargin: '200px' });
 
         cards.forEach((card) => this.thumbObserver.observe(card));
     }
@@ -655,6 +750,7 @@ class VideoController {
     setMirror(enabled) {
         this.mirror = enabled;
         if (this.mirrorBtn) this.mirrorBtn.classList.toggle('is-on', enabled);
+        this.persistSession();
     }
 
     getMirror() {
@@ -867,10 +963,21 @@ class VideoController {
         if (!window.VideoEffects.has(name) || name === this.effectName) return;
         this.effectName = name;
         this.effectDirty = true;
+        this.persistSession();
     }
 
     getEffect() {
         return this.effectName;
+    }
+
+    cycleEffect(direction) {
+        const names = window.VideoEffects.names();
+        if (!names.length) return;
+        const currentIndex = names.indexOf(this.effectName);
+        const delta = direction === 'left' ? -1 : 1;
+        const nextIndex = (currentIndex + delta + names.length) % names.length;
+        this.setEffect(names[nextIndex]);
+        if (this.effectSelect) this.effectSelect.value = this.effectName;
     }
 
     isEffectDirty() {
@@ -897,6 +1004,7 @@ class VideoController {
         if (this.root) {
             this.root.classList.toggle('is-live', enabled);
         }
+        this.persistSession();
     }
 
     dispose() {
