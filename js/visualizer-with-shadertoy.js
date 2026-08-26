@@ -1423,6 +1423,12 @@ document.addEventListener('keydown', (e) => {
     if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
         e.preventDefault();
         const direction = e.key === 'ArrowLeft' ? 'left' : 'right';
+
+        if (videoController && videoController.isInVideoMode()) {
+            videoController.cycleEffect(direction);
+            return;
+        }
+
         applyShaderAtIndex(getNextShaderIndex(direction));
     }
 });
@@ -1526,7 +1532,18 @@ window.getCurrentShaderInfo = () => {
             }
         };
 
-        applyDefaultShader();
+        // Filter edits reload the page. Re-open the camera and last effect so
+        // the operator is not dumped back on the default shader each save.
+        // Must run *instead of* the default apply — that path persists
+        // videoMode:false and would erase the session we are about to restore.
+        const restoreVideo = videoController && videoController.hasRestorableSession();
+        if (restoreVideo) {
+            videoController.restoreSession().then((restored) => {
+                if (!restored) applyDefaultShader();
+            });
+        } else {
+            applyDefaultShader();
+        }
     } else {
         console.warn('ShaderConverter module not found. Shadertoy integration is disabled.');
     }

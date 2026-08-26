@@ -303,6 +303,39 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
 }
 `,
 
+
+"Hash Dither": `
+/*
+Mode: 2-step max-channel posterize with diagonal spatial hash dither
+Audio: bass = step count; mid = dither frequency; high = pattern phase
+*/
+#define STEPS        2.0
+#define DITHER_BASE  345.678
+
+void mainImage(out vec4 fragColor, in vec2 fragCoord) {
+    vec2 uv = fragCoord / iResolution.xy;
+
+    float bass = audioBoost(safeAudio(getBass(), fallbackBass()));
+    float mid  = audioBoost(safeAudio(getMid(),  fallbackMid()));
+    float high = audioBoost(safeAudio(getHigh(), fallbackHigh()));
+
+    vec3 src = videoAt(uv);
+    float steps = mix(STEPS, 3.0, smoothstep(0.35, 0.85, bass));
+    float g = max(src.r, max(src.g, src.b)) * steps;
+
+    // Original used 345.678 + iMouse.x; mid drives the hash scale for projection.
+    float ditherScale = DITHER_BASE + mid * 180.0 + iMouse.x;
+    float phase = 500.0 + high * 40.0;
+    float f = mod((uv.x + uv.y + phase) * ditherScale, 1.0);
+
+    float q = (mod(g, 1.0) > f) ? ceil(g) : floor(g);
+    q /= steps;
+
+    vec3 col = vec3(q) * videoInside(uv);
+    fragColor = vec4(col, 1.0);
+}
+`,
+
         "Black & White": `
 /*
 Mode: noir monochrome — hard S-curve, deep blacks, unsharp snap
@@ -372,6 +405,34 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
     fragColor = vec4(col, 1.0);
 }
 `,
+
+"Desaturate": `
+/*
+Mode: average RGB gray (not Rec.709, not the noir curve)
+Audio: bass = mix toward gray; mid = gray contrast; high = leftover chroma
+*/
+#define EFFECT_MIX  1.00
+
+void mainImage(out vec4 fragColor, in vec2 fragCoord) {
+    vec2 uv = fragCoord / iResolution.xy;
+
+    float bass = audioBoost(safeAudio(getBass(), fallbackBass()));
+    float mid  = audioBoost(safeAudio(getMid(),  fallbackMid()));
+    float high = audioBoost(safeAudio(getHigh(), fallbackHigh()));
+
+    vec3 src = videoAt(uv);
+    float gray = (src.r + src.g + src.b) / 3.0;
+    gray = clamp((gray - 0.5) * (0.90 + mid * 0.40) + 0.5, 0.0, 1.0);
+
+    float amt = EFFECT_MIX * (0.82 + 0.18 * bass);
+    vec3 col = mix(src, vec3(gray), amt);
+    col = mix(col, src, high * 0.10);
+    col *= videoInside(uv);
+
+    fragColor = vec4(clamp(col, 0.0, 1.0), 1.0);
+}
+`,
+
 
         "Kick Prism": `
 /*
@@ -724,38 +785,6 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
 }
 `,
 
-        "Hash Dither": `
-/*
-Mode: 2-step max-channel posterize with diagonal spatial hash dither
-Audio: bass = step count; mid = dither frequency; high = pattern phase
-*/
-#define STEPS        2.0
-#define DITHER_BASE  345.678
-
-void mainImage(out vec4 fragColor, in vec2 fragCoord) {
-    vec2 uv = fragCoord / iResolution.xy;
-
-    float bass = audioBoost(safeAudio(getBass(), fallbackBass()));
-    float mid  = audioBoost(safeAudio(getMid(),  fallbackMid()));
-    float high = audioBoost(safeAudio(getHigh(), fallbackHigh()));
-
-    vec3 src = videoAt(uv);
-    float steps = mix(STEPS, 3.0, smoothstep(0.35, 0.85, bass));
-    float g = max(src.r, max(src.g, src.b)) * steps;
-
-    // Original used 345.678 + iMouse.x; mid drives the hash scale for projection.
-    float ditherScale = DITHER_BASE + mid * 180.0 + iMouse.x;
-    float phase = 500.0 + high * 40.0;
-    float f = mod((uv.x + uv.y + phase) * ditherScale, 1.0);
-
-    float q = (mod(g, 1.0) > f) ? ceil(g) : floor(g);
-    q /= steps;
-
-    vec3 col = vec3(q) * videoInside(uv);
-    fragColor = vec4(col, 1.0);
-}
-`,
-
         "Clay Bands": `
 /*
 Mode: footage posterized into mudcloth clay / charcoal bands
@@ -820,44 +849,19 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
 
         "Fractal Contour": `
 /*
-Mode: Roberts-cross stencil, Julia pigment, optional barrel distort
-Audio: mid bins drive Julia seed + edge radius; silent mic keeps a sine pulse
-From: relampago2048 Fractal Audio 01 (llB3W1)
-      t3hk0d3 webcam roberts (MssGRB)
+Mode: Roberts-cross stencil, video pigment, optional barrel distort
+Audio: mid bins drive edge radius + chroma; silent mic keeps a sine pulse
+From: t3hk0d3 webcam roberts (MssGRB)
       unycone Camera Distortion 01 (XlXfRs)
+      relampago2048 Fractal Audio 01 (llB3W1) — contour pass only
 Set DISTORT to 1 to restore the barrel warp (off in the source mainImage).
 */
-#define JULIA_ITERS  80
 #define DISTORT      0
-#define SENSITIVITY  0.0015625
+#define SENSITIVITY  0.00255625
 
 float sampleMusicA() {
     float v = 0.6 * (fft(0.15) + fft(0.30));
     return audioBoost(safeAudio(v, fallbackMid()));
-}
-
-int fractal(vec2 p, vec2 point) {
-    vec2 so = (-1.0 + 2.0 * point) * 0.3;
-    vec2 seed = vec2(0.098386255 + so.x, 0.6387662 + so.y);
-    int escaped = 0;
-    for (int i = 0; i < JULIA_ITERS; i++) {
-        if (escaped == 0) {
-            if (dot(p, p) > 4.0) {
-                escaped = i;
-            } else {
-                vec2 r = p;
-                p = vec2(p.x * p.x - p.y * p.y, 2.0 * p.x * p.y);
-                p = vec2(p.x * r.x - p.y * r.y + seed.x, r.x * p.y + p.x * r.y + seed.y);
-            }
-        }
-    }
-    return escaped;
-}
-
-vec3 fractalColor(int i) {
-    float f = float(i) / float(JULIA_ITERS) * 2.0;
-    f = f * f * 2.0;
-    return vec3(sin(f * 2.0), sin(f * 3.0), abs(sin(f * 7.0)));
 }
 
 float bw(vec2 coords) {
@@ -883,29 +887,19 @@ vec2 distort(vec2 uv, float music) {
     return vec2(cos(theta), sin(theta)) * ru * 0.5 + 0.5;
 }
 
-vec4 fractalImg(vec2 fragCoord, float pulse) {
-    vec2 position = 3.0 * (-0.5 + fragCoord / iResolution.xy)
-        + vec2(
-            0.2 * abs(cos(iTime * 0.21313)) * sin(sin(iTime) + cos(iTime) * 0.242),
-            0.1 * abs(cos(iTime * 0.1323))
-        );
-    position.x *= iResolution.x / iResolution.y;
-    position *= rot2(mod(iTime * 0.54, 6.3) + abs(0.2 * sin(iTime / 5.3)));
+vec3 contourPigment(vec2 uv, float pulse) {
+    vec3 src = videoAt(uv);
+    vec3 t3 = max(abs(vec3(0.5, 0.1, 0.5) - src) * 0.8, vec3(0.08));
 
-    vec2 pos2 = 2.0 * (-0.5 + (iResolution.xy - fragCoord) / iResolution.xy);
-    pos2.x *= iResolution.x / iResolution.y;
-    pos2 *= rot2(mod(iTime * -0.4235, 6.3) + abs(0.2 * sin(iTime / 5.3)));
+    // Same sine map the Julia escape count used, now keyed to the pulse so
+    // the lines still flash chroma without drawing a fractal.
+    float f = pulse * 2.0;
+    f = f * f * 2.0;
+    vec3 chroma = vec3(sin(f * 2.0), sin(f * 3.0), abs(sin(f * 7.0)));
 
-    vec3 t3 = abs(vec3(0.5, 0.1, 0.5) - videoAt(vec2(length(position) / 14.0, 0.1))) * 0.8;
-    t3 = max(t3, vec3(0.08));
-
-    vec3 invFract = fractalColor(fractal(pos2, vec2(0.55 + sin(iTime / 18.0 + 0.5) * 0.5, pulse * 0.9)));
-    vec3 fract4 = fractalColor(fractal(position / 1.6, vec2(0.6 + cos(iTime / 20.0 + 0.5) * 0.5, pulse * 0.8)));
-    vec3 c = fractalColor(fractal(position, vec2(10.1 + sin(iTime / 3.0) / 12.0, pulse)));
-
-    vec3 salida = c / t3 + c * t3 + invFract * 0.6 + fract4 * 0.25;
-    float spec = fft(clamp(fragCoord.x / iResolution.x, 0.0, 1.0));
-    return mix(vec4(salida * 2.0, 1.0), vec4(vec3(spec), 1.0), 0.3);
+    vec3 salida = src / t3 + src * t3 + chroma * 0.6;
+    float spec = fft(clamp(uv.x, 0.0, 1.0));
+    return mix(salida * 2.0, vec3(spec), 0.3);
 }
 
 void mainImage(out vec4 fragColor, in vec2 fragCoord) {
@@ -920,38 +914,7 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
     float bwColor = outline(uv, music) * 2.0;
     bwColor = min(floor(bwColor * 8.0 + 0.5), 2.0) * bwColor;
 
-    // Original added fractalImg(uv) + fractalImg(-uv); uv is unused inside
-    // fractalImg, so that was a 2x brightness pass. Keep the look, skip the
-    // second Julia stack.
-    vec3 pigment = fractalImg(fragCoord, pulse).xyz * 2.0;
-    vec3 col = bwColor * pigment;
-    col *= videoInside(uv);
-
-    fragColor = vec4(clamp(col, 0.0, 1.0), 1.0);
-}
-`,
-
-        "Desaturate": `
-/*
-Mode: average RGB gray (not Rec.709, not the noir curve)
-Audio: bass = mix toward gray; mid = gray contrast; high = leftover chroma
-*/
-#define EFFECT_MIX  1.00
-
-void mainImage(out vec4 fragColor, in vec2 fragCoord) {
-    vec2 uv = fragCoord / iResolution.xy;
-
-    float bass = audioBoost(safeAudio(getBass(), fallbackBass()));
-    float mid  = audioBoost(safeAudio(getMid(),  fallbackMid()));
-    float high = audioBoost(safeAudio(getHigh(), fallbackHigh()));
-
-    vec3 src = videoAt(uv);
-    float gray = (src.r + src.g + src.b) / 3.0;
-    gray = clamp((gray - 0.5) * (0.90 + mid * 0.40) + 0.5, 0.0, 1.0);
-
-    float amt = EFFECT_MIX * (0.82 + 0.18 * bass);
-    vec3 col = mix(src, vec3(gray), amt);
-    col = mix(col, src, high * 0.10);
+    vec3 col = bwColor * contourPigment(uv, pulse) * 2.0;
     col *= videoInside(uv);
 
     fragColor = vec4(clamp(col, 0.0, 1.0), 1.0);
@@ -1063,42 +1026,12 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
 }
 `,
 
-        "Chromatic Aberration": `
-/*
-Mode: classic horizontal RGB split
-Audio: bass = split width; mid = vertical bleed; high = edge flare
-*/
-#define SPLIT  0.010
-
-void mainImage(out vec4 fragColor, in vec2 fragCoord) {
-    vec2 uv = fragCoord / iResolution.xy;
-
-    float bass = audioBoost(safeAudio(getBass(), fallbackBass()));
-    float mid  = audioBoost(safeAudio(getMid(),  fallbackMid()));
-    float high = audioBoost(safeAudio(getHigh(), fallbackHigh()));
-
-    vec2 offset = vec2(SPLIT * (0.40 + bass * 1.35), SPLIT * 0.45 * mid);
-
-    float r = videoAt(uv + offset.xy).r;
-    float g = videoAt(uv).g;
-    float b = videoAt(uv + offset.yx).b;
-    vec3 col = vec3(r, g, b);
-
-    vec2 px = vec2(2.0 / iResolution.x, 0.0);
-    float edge = abs(videoLuma(uv) - videoLuma(uv + px));
-    col += vec3(0.16, 0.10, 0.22) * edge * high * 5.0;
-    col *= videoInside(uv);
-
-    fragColor = vec4(clamp(col, 0.0, 1.0), 1.0);
-}
-`,
-
         "Color Switch": `
 /*
 Mode: RGB → BRG channel rotate
 Audio: bass = mix amount; mid = saturation of the swapped plate; high = extra blue bite
 */
-#define EFFECT_MIX  1.00
+#define EFFECT_MIX  .800
 
 void mainImage(out vec4 fragColor, in vec2 fragCoord) {
     vec2 uv = fragCoord / iResolution.xy;
@@ -1110,10 +1043,10 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
     vec3 src = videoAt(uv);
     vec3 sw = src.brg;
     float l = dot(sw, vec3(0.299, 0.587, 0.114));
-    sw = mix(vec3(l), sw, 0.85 + mid * 0.35);
-    sw.b += high * 0.08;
+    sw = mix(vec3(l), sw, 0.85 + mid * 0.55);
+    sw.b += high * 0.8;
 
-    float amt = EFFECT_MIX * (0.78 + 0.22 * bass);
+    float amt = EFFECT_MIX * (0.58 + 0.850 * bass);
     vec3 col = mix(src, sw, amt) * videoInside(uv);
 
     fragColor = vec4(clamp(col, 0.0, 1.0), 1.0);
@@ -1123,13 +1056,13 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
         "Sine Wave": `
 /*
 Mode: per-channel sine mix of the clip's RGB (not a UV displacement)
-Audio: bass = mix amplitude; mid = frequency; high = time speed
+Audio: bass = time speed; frequency stays put so the pattern does not retune
 Source: Shadertoy sineWave(pt) on iChannel0 — here iChannel1 via videoAt
 */
-#define SPEED        1.0
+#define SPEED        0.10    // rest drift
+#define SPEED_KICK   0.20    // added on a kick, back to the original 0.30
 #define FREQUENCY    2.0
 #define WAVE_AMP     1.0
-#define UAMP_MUL     1.0
 
 vec4 sineWave(vec4 pt, float speed, float frequency, float amp) {
     float offsetX = sin(pt.y * frequency + iTime * speed);
@@ -1144,15 +1077,10 @@ vec4 sineWave(vec4 pt, float speed, float frequency, float amp) {
 void mainImage(out vec4 fragColor, in vec2 fragCoord) {
     vec2 uv = fragCoord / iResolution.xy;
 
-    float bass = audioBoost(safeAudio(getBass(), fallbackBass()));
-    float mid  = audioBoost(safeAudio(getMid(),  fallbackMid()));
-    float high = audioBoost(safeAudio(getHigh(), fallbackHigh()));
+    float kick = smoothstep(0.28, 0.78, audioBoost(getBass()));
+    float speed = SPEED + SPEED_KICK * kick;
 
-    float speed = SPEED * (0.75 + high * 0.70);
-    float frequency = FREQUENCY * (0.70 + mid * 0.80);
-    float amp = clamp(WAVE_AMP * UAMP_MUL * (0.85 + bass * 0.30), 0.0, 1.0);
-
-    vec4 warped = sineWave(vec4(videoAt(uv), 1.0), speed, frequency, amp);
+    vec4 warped = sineWave(vec4(videoAt(uv), 1.0), speed, FREQUENCY, WAVE_AMP);
     vec3 col = clamp(warped.rgb, 0.0, 1.0) * videoInside(uv);
 
     fragColor = vec4(col, 1.0);
@@ -1172,7 +1100,7 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
 
     vec3 src = videoAt(uv);
     float radial = fft(clamp(1.5 * length((uv - 0.5) * aspect), 0.0, 1.0));
-    float freq = 6.2 + mid * 20.0 + iMouse.y / max(iResolution.y, 1.0) * 20.0;
+    float freq = 6.2 + mid * 8.0 + iMouse.y / max(iResolution.y, 1.0) * 8.0;
     vec3 phase = iTime + vec3(3.0, 1.5, 0.5 * radial);
 
     vec3 col = sin(src * freq + phase) * 0.5 + 0.5;
@@ -1316,6 +1244,7 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
     float mean = acc.r;
     float dev = acc.g;
     float ratio = dev / max(mean, EPS);
+    
 
     // sqrt returns the mean to sRGB, and lifts the two movement channels off a
     // floor they would otherwise spend all their range in.

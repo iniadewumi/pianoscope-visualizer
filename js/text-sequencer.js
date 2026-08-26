@@ -34,12 +34,12 @@ window.PianoscopeTextSequencer = (function () {
             advance: 'bars',
             steps: [
                 { lines: ['CRESCENDO', '[ARTIST]'], in: 'cut' },
-                { promote: false, lines: ['CRESCENDO', 'IS HOUSE'], in: 'roll' },
-                { promote: false, lines: ['HOUSE MUSIC', 'IS BLACK MUSIC'], in: 'roll' },
-                { promote: true, enter: 'IS CULTURE', in: 'knockout' },
-                { promote: true, enter: 'IS OURS', in: 'roll' },
-                { promote: true, enter: 'TONIGHT', in: 'reveal' },
-                { lines: ['CRESCENDO', '[ARTIST]'], in: 'cut' }
+                { lines: ['CRESCENDO', 'IS HOUSE'], in: 'roll' },
+                { lines: ['HOUSE IS', 'BLACK MUSIC'], in: 'roll' },
+                { lines: ['HOUSE MUSIC', 'IS OUR CULTURE'], in: 'knockout' },
+                { lines: ['OUR CULTURE', 'IS OURS'], in: 'roll' },
+                { lines: ['OURS', 'TONIGHT'], in: 'reveal' },
+                { lines: ['CRESCENDO', 'FOR CULTURE'], in: 'cut' }
             ]
         },
         'Roll call': {

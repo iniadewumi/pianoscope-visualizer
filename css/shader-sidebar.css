@@ -1,47 +1,90 @@
-/* Modernized Shader Editor Sidebar Layout */
+/* Shader Editor sidebar — layout, type, and control chrome.
+   video-ui.css (loaded after this file) owns the Video tab and shared tabs. */
+
 .shader-ui-wrapper {
     position: relative;
     z-index: 100;
 }
 
 .shader-test-ui {
+    --ui-bg: rgba(12, 10, 20, 0.97);
+    --ui-surface: rgba(22, 18, 34, 0.92);
+    --ui-border: rgba(123, 44, 191, 0.32);
+    --ui-gold: #D4AF37;
+    --ui-gold-soft: rgba(212, 175, 55, 0.22);
+    --ui-purple: rgba(123, 44, 191, 0.45);
+    --ui-text: #f2f0f7;
+    --ui-muted: rgba(226, 222, 236, 0.62);
+    --ui-radius: 10px;
+
     position: fixed;
     top: 0;
     right: 0;
-    width: 350px;
+    width: 400px;
+    max-width: 100vw;
     height: 100vh;
-    background-color: rgba(18, 18, 24, 0.97); /* Darker with a hint of purple */
-    color: #e0e0e0;
-    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    background-color: var(--ui-bg);
+    color: var(--ui-text);
+    color-scheme: dark;
+    font-family: Inter, "Segoe UI", sans-serif;
+    padding: 0;
     box-sizing: border-box;
-    box-shadow: -5px 0 25px rgba(0, 0, 0, 0.5);
-    overflow-y: auto;
+    box-shadow: -12px 0 40px rgba(0, 0, 0, 0.45);
+    overflow: hidden;
     transition: transform 0.3s cubic-bezier(0.4, 0.0, 0.2, 1);
     z-index: 100;
-    transform: translateX(100%); /* Start hidden (off-screen) */
-    border-left: 1px solid rgba(123, 44, 191, 0.3); /* Subtle purple border */
-    margin-right: 10px;
+    transform: translateX(100%);
+    border-left: 1px solid var(--ui-border);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
 }
 
 .shader-test-ui.open {
-    transform: translateX(0); /* Visible (on-screen) */
+    transform: translateX(0);
 }
 
-/* Modern floating toggle button */
+/* Neutralize the global `button` rules from style.css inside the editor. */
+.shader-test-ui button {
+    min-width: 0;
+    box-shadow: none;
+    letter-spacing: 0.01em;
+    font-family: inherit;
+    font-weight: 500;
+}
+
+.shader-test-ui button span {
+    margin-right: 0;
+}
+
+.shader-test-ui button:active {
+    transform: none;
+}
+
+/* Floating open-editor control. Hidden while the sidebar is open so it cannot
+   cover the header close button or the video toolbar. */
 .toggle-shader-ui {
     position: fixed;
     top: 15px;
     right: 15px;
     z-index: 101;
-    background-color: rgba(123, 44, 191, 0.85); /* Purple background */
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    background-color: rgba(123, 44, 191, 0.9);
     color: white;
+    border-radius: 50%;
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: all 0.2s ease;
-    box-shadow: 0 3px 8px rgba(0, 0, 0, 0.3);
-    margin-right: 10px;
+    transition: background-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
+    box-shadow: 0 3px 10px rgba(0, 0, 0, 0.35);
+}
+
+.toggle-shader-ui[hidden] {
+    display: none !important;
 }
 
 .toggle-shader-ui:focus {
@@ -49,55 +92,77 @@
     box-shadow: 0 0 0 3px rgba(123, 44, 191, 0.4);
 }
 
+.toggle-shader-ui .fas,
 .toggle-shader-ui .fa {
-    font-size: 22px;
-    transition: transform 0.3s ease;
+    font-size: 18px;
 }
 
 .toggle-shader-ui:hover {
-    background-color: rgba(157, 78, 221, 0.95); /* Lighter purple on hover */
+    background-color: rgba(157, 78, 221, 0.95);
     transform: translateY(-2px);
     box-shadow: 0 5px 12px rgba(0, 0, 0, 0.4);
 }
 
-.toggle-shader-ui.active {
-    background-color: rgba(212, 175, 55, 0.9); /* Gold when active */
-}
-
-.toggle-shader-ui.active .fa {
-    transform: rotate(45deg); /* Rotate icon when active */
-}
-
-/* Shader editor header with gold accent */
+/* Sticky chrome: title + tabs stay put while the tab body scrolls. */
 .shader-editor-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 20px;
-    border-bottom: 1px solid rgba(212, 175, 55, 0.3); /* Gold accent border */
-    padding-bottom: 15px;
+    flex: 0 0 auto;
+    gap: 12px;
+    margin: 0;
+    padding: 16px 18px 12px;
+    border-bottom: none;
 }
 
 .shader-editor-header h3 {
     margin: 0;
-    font-size: 18px;
-    font-weight: 500;
-    color: #D4AF37; /* Gold text for header */
-    letter-spacing: 0.5px;
+    font-family: Syne, Inter, sans-serif;
+    font-size: 17px;
+    font-weight: 700;
+    color: var(--ui-gold);
+    letter-spacing: 0.04em;
 }
 
-/* Sample shader buttons container */
+.shader-editor-close {
+    width: 32px;
+    height: 32px;
+    flex: 0 0 32px;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--ui-muted);
+    border: 1px solid var(--ui-border);
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+
+.shader-editor-close:hover {
+    color: var(--ui-gold);
+    border-color: rgba(212, 175, 55, 0.55);
+    background: var(--ui-gold-soft);
+}
+
+.shader-editor-close:focus {
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(212, 175, 55, 0.35);
+}
+
+/* Sample shader chips (kept for any leftover sample-button usage). */
 .sample-container {
     display: flex;
     flex-wrap: wrap;
     gap: 8px;
-    margin-bottom: 20px;
+    margin-bottom: 16px;
 }
 
-/* Modern sample buttons */
 .sample-button {
     padding: 8px 12px;
-    background-color: rgba(123, 44, 191, 0.2); /* Subtle purple */
+    background-color: rgba(123, 44, 191, 0.2);
     color: #e0e0e0;
     border: 1px solid rgba(123, 44, 191, 0.4);
     border-radius: 6px;
@@ -120,19 +185,18 @@
     box-shadow: 0 0 0 2px rgba(123, 44, 191, 0.4);
 }
 
-/* Modern code editor textarea */
 .shader-editor-textarea {
     width: 100%;
-    min-height: 300px;
+    min-height: 180px;
     padding: 12px;
-    background-color: rgba(18, 18, 18, 0.8);
-    color: #e0e0e0;
-    border: 1px solid rgba(123, 44, 191, 0.3);
-    border-radius: 8px;
-    font-family: 'Fira Code', 'Consolas', monospace;
-    font-size: 14px;
+    background-color: rgba(8, 8, 12, 0.92);
+    color: #e8e6ef;
+    border: 1px solid var(--ui-border);
+    border-radius: var(--ui-radius);
+    font-family: "Fira Code", Consolas, ui-monospace, monospace;
+    font-size: 12.5px;
     line-height: 1.5;
-    margin-bottom: 20px;
+    margin: 0;
     resize: vertical;
     box-sizing: border-box;
     transition: border-color 0.2s ease;
@@ -144,27 +208,26 @@
     box-shadow: 0 0 0 2px rgba(123, 44, 191, 0.2);
 }
 
-/* Control buttons container */
 .shader-editor-controls {
     display: flex;
-    gap: 12px;
-    margin-bottom: 20px;
+    gap: 8px;
+    margin: 0;
 }
 
-/* Modernized control buttons */
 .shader-editor-button {
-    padding: 10px 16px;
+    padding: 9px 12px;
     border: none;
-    border-radius: 6px;
+    border-radius: 8px;
     cursor: pointer;
-    font-size: 14px;
-    font-weight: 500;
-    transition: all 0.2s ease;
+    font-size: 13px;
+    font-weight: 600;
+    transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
     flex: 1;
-    display: flex;
+    display: inline-flex;
     align-items: center;
     justify-content: center;
-    min-height: 42px;
+    gap: 8px;
+    min-height: 40px;
 }
 
 .shader-editor-button:focus {
@@ -172,7 +235,6 @@
     box-shadow: 0 0 0 3px rgba(123, 44, 191, 0.3);
 }
 
-/* Apply button with gold gradient */
 .apply-button {
     background-color: #D4AF37;
     background-image: linear-gradient(135deg, #FFD700, #D4AF37);
@@ -181,8 +243,8 @@
 
 .apply-button:hover {
     background-image: linear-gradient(135deg, #FFF45C, #FFD700);
-    transform: translateY(-2px);
-    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.25);
 }
 
 .apply-button:active {
@@ -190,7 +252,6 @@
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
 }
 
-/* Reset button with red gradient */
 .reset-button {
     background-color: #C41E3D;
     background-image: linear-gradient(135deg, #E83A5F, #C41E3D);
@@ -199,8 +260,8 @@
 
 .reset-button:hover {
     background-image: linear-gradient(135deg, #FF4D6D, #E83A5F);
-    transform: translateY(-2px);
-    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.25);
 }
 
 .reset-button:active {
@@ -208,32 +269,43 @@
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
 }
 
-/* Error display with improved styling */
 .error-display {
-    padding: 12px;
+    padding: 10px 12px;
     background-color: rgba(30, 30, 30, 0.7);
-    border-radius: 6px;
-    font-family: 'Consolas', monospace;
-    font-size: 13px;
+    border-radius: 8px;
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 12px;
     display: none;
-    margin-bottom: 15px;
-    border-left: 3px solid; /* Color will be set by JS for error/success */
+    margin-top: 4px;
+    border-left: 3px solid;
     transition: all 0.3s ease;
 }
 
+/* Grouped cards inside the Shader tab. */
+.ui-section {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 14px;
+    background: var(--ui-surface);
+    border: 1px solid var(--ui-border);
+    border-radius: 12px;
+}
+
 .display-text-panel {
-    margin-bottom: 16px;
-    padding-bottom: 16px;
-    border-bottom: 1px solid rgba(212, 175, 55, 0.22);
+    margin: 0;
+    padding-bottom: 14px;
+    border-bottom: none;
 }
 
 .display-text-label {
     display: block;
-    font-size: 12px;
-    letter-spacing: 0.4px;
-    color: #D4AF37;
-    margin-bottom: 8px;
-    font-weight: 500;
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ui-gold);
+    margin: 0;
+    font-weight: 600;
 }
 
 .display-text-row {
@@ -245,87 +317,134 @@
 .display-text-input {
     flex: 1;
     min-width: 0;
-    min-height: 58px;
+    min-height: 64px;
     resize: vertical;
-    background: rgba(18, 18, 18, 0.8);
-    color: #e0e0e0;
-    border: 1px solid rgba(123, 44, 191, 0.3);
-    border-radius: 6px;
+    background: rgba(8, 8, 12, 0.92);
+    color: var(--ui-text);
+    border: 1px solid var(--ui-border);
+    border-radius: 8px;
     padding: 10px 12px;
-    font-size: 14px;
+    font-size: 13px;
     font-family: Inter, "Segoe UI", sans-serif;
     letter-spacing: 0.06em;
-    line-height: 1.35;
+    line-height: 1.4;
     box-sizing: border-box;
 }
 
 .display-text-input:focus {
     border-color: rgba(123, 44, 191, 0.7);
     outline: none;
+    box-shadow: 0 0 0 2px rgba(123, 44, 191, 0.18);
 }
 
 .display-text-hint {
-    margin-top: 6px;
+    margin-top: 0;
     font-size: 11px;
-    color: rgba(224, 224, 224, 0.42);
+    color: var(--ui-muted);
+    line-height: 1.45;
 }
 
 .display-text-meta {
     display: flex;
     align-items: center;
-    gap: 10px;
-    margin-top: 8px;
+    gap: 8px;
+    flex-wrap: wrap;
 }
 
-.display-text-font {
+.display-text-meta .seq-btn {
+    flex: 0 0 auto;
+    padding: 8px 12px;
+}
+
+.display-text-font,
+.shader-test-ui select.display-text-font {
     flex: 1;
     min-width: 0;
-    background: rgba(18, 18, 18, 0.8);
-    color: #e0e0e0;
-    border: 1px solid rgba(123, 44, 191, 0.3);
-    border-radius: 6px;
+    background: rgba(8, 8, 12, 0.92);
+    color: var(--ui-text);
+    border: 1px solid var(--ui-border);
+    border-radius: 8px;
     padding: 8px 10px;
     font-size: 13px;
     font-family: Inter, "Segoe UI", sans-serif;
+    min-height: 38px;
 }
 
 .display-text-overlay-toggle {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 8px;
     font-size: 12px;
-    color: rgba(224, 224, 224, 0.75);
+    color: var(--ui-muted);
     white-space: nowrap;
     cursor: pointer;
+    padding: 0 4px 0 2px;
+}
+
+.display-text-overlay-toggle input {
+    accent-color: var(--ui-gold);
+    width: 14px;
+    height: 14px;
+    margin: 0;
 }
 
 .display-text-apply {
-    flex-grow: 0;
-    min-width: 88px;
+    flex: 0 0 76px;
+    min-width: 76px;
+    padding: 8px 8px;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 11px;
+    letter-spacing: 0.04em;
 }
 
-/* Make sure the canvas isn't affected by the sidebar */
+.display-text-apply i {
+    font-size: 13px;
+}
+
 #visualizer {
     z-index: 1;
 }
 
-/* Responsive adjustments */
-@media (max-width: 768px) {
-    .shader-test-ui {
-        width: 85%;
-        max-width: 350px;
-    }
-    
-    .shader-editor-textarea {
-        min-height: 200px;
-    }
+/* Sequence block sits inside the display-text card. */
+.seq-section {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding-top: 12px;
+    margin-top: 4px;
+    border-top: 1px solid var(--ui-gold-soft);
 }
-/* Sequencer transport inside the display-text panel */
+
 .seq-transport {
     display: flex;
-    align-items: stretch;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 0;
+}
+
+.seq-btns {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 6px;
-    margin-top: 8px;
+}
+
+.seq-fields {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+}
+
+.seq-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ui-muted);
+    font-weight: 600;
 }
 
 .seq-btn {
@@ -334,40 +453,224 @@
     padding: 8px 6px;
     font-size: 12px;
     white-space: nowrap;
+    background: rgba(123, 44, 191, 0.28);
+    border: 1px solid rgba(123, 44, 191, 0.5);
+    color: var(--ui-text);
+    box-shadow: none;
+}
+
+.seq-btn:hover {
+    background: rgba(123, 44, 191, 0.48);
+    border-color: rgba(212, 175, 55, 0.55);
+    color: #FFD700;
+    transform: none;
+}
+
+.seq-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    color: var(--ui-muted);
+    border-color: rgba(123, 44, 191, 0.25);
+    background: rgba(123, 44, 191, 0.12);
+}
+
+.seq-btn:disabled:hover {
+    color: var(--ui-muted);
+    border-color: rgba(123, 44, 191, 0.25);
+    background: rgba(123, 44, 191, 0.12);
+    transform: none;
 }
 
 .seq-btn.seq-live {
-    background: rgba(212, 175, 55, 0.18);
-    border-color: rgba(212, 175, 55, 0.75);
-    color: #D4AF37;
+    background: rgba(212, 175, 55, 0.2);
+    border-color: rgba(212, 175, 55, 0.8);
+    color: var(--ui-gold);
 }
 
 .seq-num {
-    flex: 0 0 56px;
-    width: 56px;
+    flex: 1;
+    width: 100%;
     min-width: 0;
-    background: rgba(18, 18, 18, 0.8);
-    color: #e0e0e0;
-    border: 1px solid rgba(123, 44, 191, 0.3);
-    border-radius: 6px;
+    background: rgba(8, 8, 12, 0.92);
+    color: var(--ui-text);
+    border: 1px solid var(--ui-border);
+    border-radius: 8px;
     padding: 8px 6px;
-    font-size: 12px;
+    font-size: 13px;
     font-family: "IBM Plex Mono", ui-monospace, monospace;
     text-align: center;
     font-variant-numeric: tabular-nums;
+    min-height: 38px;
+    box-sizing: border-box;
 }
 
 .seq-num:focus,
 #seq-artist:focus,
-#display-text-transition:focus {
+#display-text-transition:focus,
+.display-text-font:focus {
     border-color: rgba(123, 44, 191, 0.7);
     outline: none;
+    box-shadow: 0 0 0 2px rgba(123, 44, 191, 0.18);
 }
 
 .seq-readout {
     font-family: "IBM Plex Mono", ui-monospace, monospace;
-    font-size: 10.5px;
+    font-size: 11px;
     letter-spacing: 0.02em;
-    color: rgba(224, 224, 224, 0.55);
-    margin-top: 6px;
+    color: var(--ui-muted);
+    line-height: 1.4;
+}
+
+.display-text-help {
+    margin: 0;
+    color: var(--ui-muted);
+}
+
+.display-text-help summary {
+    cursor: pointer;
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    font-weight: 600;
+    color: rgba(226, 222, 236, 0.55);
+    list-style: none;
+}
+
+.display-text-help summary::-webkit-details-marker {
+    display: none;
+}
+
+.display-text-help summary::before {
+    content: "+";
+    display: inline-block;
+    width: 1em;
+    margin-right: 6px;
+    color: var(--ui-gold);
+}
+
+.display-text-help[open] summary::before {
+    content: "–";
+}
+
+.display-text-help p {
+    margin: 8px 0 0;
+    font-size: 11px;
+    line-height: 1.5;
+    color: var(--ui-muted);
+}
+
+/* Shader search — force the dark theme regardless of OS color-scheme. */
+.shader-search {
+    position: relative;
+    width: 100%;
+    margin: 0;
+}
+
+.shader-search > .fas.fa-search {
+    position: absolute;
+    left: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 12px;
+    color: var(--ui-muted);
+    pointer-events: none;
+    z-index: 1;
+}
+
+.shader-test-ui .dropdown-input {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 10px 12px 10px 34px;
+    background: rgba(8, 8, 12, 0.92);
+    border: 1px solid var(--ui-border);
+    border-radius: 8px;
+    color: var(--ui-text);
+    font-size: 13px;
+    font-family: inherit;
+    cursor: text;
+}
+
+.shader-test-ui .dropdown-input:focus {
+    outline: none;
+    border-color: rgba(123, 44, 191, 0.75);
+    box-shadow: 0 0 0 2px rgba(123, 44, 191, 0.2);
+}
+
+.shader-test-ui .dropdown-options {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    right: 0;
+    max-height: 220px;
+    overflow-y: auto;
+    background: rgba(16, 14, 26, 0.98);
+    border: 1px solid var(--ui-border);
+    border-radius: 8px;
+    margin-top: 0;
+    box-shadow: 0 10px 24px rgba(0, 0, 0, 0.45);
+    z-index: 20;
+}
+
+.shader-test-ui .dropdown-option {
+    padding: 8px 12px;
+    color: var(--ui-text);
+    font-size: 12px;
+}
+
+.shader-test-ui .dropdown-option:hover {
+    background: rgba(123, 44, 191, 0.28);
+}
+
+.shader-code-section .shader-editor-controls {
+    margin-top: 0;
+}
+
+/* Scrollable tab bodies under the sticky header/tabs. */
+.shader-test-ui .tab-content {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 14px 16px 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    margin-bottom: 0;
+}
+
+.shader-test-ui .tab-content.hidden {
+    display: none;
+}
+
+.shader-test-ui .tab-content::-webkit-scrollbar {
+    width: 8px;
+}
+
+.shader-test-ui .tab-content::-webkit-scrollbar-thumb {
+    background: rgba(123, 44, 191, 0.45);
+    border-radius: 8px;
+}
+
+.shader-test-ui .tab-content::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.shader-test-ui .dropdown-input::placeholder,
+.vlib__search input::placeholder,
+.vlib__url input::placeholder {
+    color: rgba(226, 222, 236, 0.4);
+}
+
+body:has(.shader-test-ui.open) .pure-view-toggle {
+    right: calc(16px + min(400px, 90vw));
+}
+
+@media (max-width: 768px) {
+    .shader-test-ui {
+        width: 90%;
+        max-width: 400px;
+    }
+
+    .shader-editor-textarea {
+        min-height: 140px;
+    }
 }
