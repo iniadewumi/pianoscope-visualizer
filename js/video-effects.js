@@ -112,6 +112,10 @@ mat2 rot2(float a) {
 // offset shadow's strength on purpose: enough to hold the letterform against a bright
 // frame, not so much that the type sits in a permanent box.
 #define OVERLAY_GROUND  0.78
+// Flat ink — must match FACE_INK in display-text.js (#fbf8f3).
+#define OVERLAY_INK     vec3(0.984, 0.973, 0.953)
+// Gold accent ink for the Editorial accent word — must match accentInk in display-text.js (#f3d98a).
+#define OVERLAY_ACCENT  vec3(0.953, 0.851, 0.541)
 
 vec2 overlayCenteredUV(vec2 fragCoord) {
     return (fragCoord - 0.5 * iResolution.xy) / iResolution.y;
@@ -128,12 +132,12 @@ vec2 overlayTextUV(vec2 uv) {
     );
 }
 
-vec2 overlayGlyph(vec2 uv) {
+vec3 overlayGlyph(vec2 uv) {
     vec2 t = overlayTextUV(uv);
     if (t.x < 0.0 || t.x > 1.0 || t.y < 0.0 || t.y > 1.0) {
-        return vec2(0.0);
+        return vec3(0.0);
     }
-    return texture2D(iChannel3, t).rg;
+    return texture2D(iChannel3, t).rgb;
 }
 
 vec3 overlayDisplayText(vec3 plate, vec2 fragCoord) {
@@ -142,7 +146,6 @@ vec3 overlayDisplayText(vec3 plate, vec2 fragCoord) {
     }
 
     vec2 uv = overlayCenteredUV(fragCoord);
-    uv.y *= 1.0 + 0.05 * uv.y;
 
     // Kick from raw FFT only — never floor with the time fallback or the type
     // sits in a permanent halo between hits.
@@ -152,8 +155,9 @@ vec3 overlayDisplayText(vec3 plate, vec2 fragCoord) {
     float high = audioBoost(safeAudio(getHigh(), fallbackHigh()));
 
     vec3 col = plate;
-    vec2 faceG = overlayGlyph(uv);
+    vec3 faceG = overlayGlyph(uv);
     float face = faceG.x;
+    float accent = faceG.z;
 
     // Kick ghosts — gated hard so silent / fallback frames stay clean.
     if (hit > 0.04) {
@@ -179,10 +183,12 @@ vec3 overlayDisplayText(vec3 plate, vec2 fragCoord) {
     );
     col *= 1.0 - shade * 0.72;
 
-    // Clean warm white face — almost flat. Beauty is the cut, not the chrome.
+    // Clean warm white face — flat, one contrast floor at every point of every
+    // glyph on every line. A vertical ramp here reads across the whole text
+    // block rather than per glyph, so on a two-line cue the lines came out
+    // different colours; OVERLAY_INK keeps every glyph the same ink instead.
     float faceAmt = smoothstep(0.22, 0.55, face);
-    float ramp = clamp(uv.y * 0.35 + 0.50, 0.0, 1.0);
-    vec3 ink = mix(vec3(1.00, 0.99, 0.97), vec3(0.94, 0.91, 0.86), ramp);
+    vec3 ink = mix(OVERLAY_INK, OVERLAY_ACCENT, clamp(accent, 0.0, 1.0));
     col = mix(col, ink, faceAmt);
 
     // Thin dark hairline from the sharp edge — not a gold rim, not a bevel.
@@ -206,14 +212,13 @@ vec3 overlayTitleCard(vec3 plate, vec2 fragCoord) {
     }
 
     vec2 uv = overlayCenteredUV(fragCoord);
-    uv.y *= 1.0 + 0.05 * uv.y;
 
     float bass = audioBoost(safeAudio(getBass(), fallbackBass()));
     float high = audioBoost(safeAudio(getHigh(), fallbackHigh()));
     float hit = smoothstep(OVERLAY_HIT, 0.82, bass);
     hit *= hit;
 
-    vec2 g0 = overlayGlyph(uv);
+    vec3 g0 = overlayGlyph(uv);
     float face = smoothstep(0.15, 0.58, g0.x);
     float bed = smoothstep(0.03, 0.50, g0.y);
     float bite = smoothstep(0.08, 0.28, g0.y) * (1.0 - smoothstep(0.20, 0.62, g0.x));
@@ -501,7 +506,12 @@ vec3 textPlate(vec2 uv) {
     if (iChannelResolution[3].x < 1.5) {
         return vec3(0.0);
     }
-    return texture2D(iChannel3, clamp(uv, 0.0, 1.0)).rgb;
+    // This effect treats the sheet's channels as a colour plate rather than as a
+    // mask, so it must drop B: that channel is the Editorial accent SELECTOR, not
+    // ink. It read as 0 for every cue before the accent mask existed, and forcing
+    // it back to 0 is what keeps this effect looking the way it was tuned.
+    vec2 t = texture2D(iChannel3, clamp(uv, 0.0, 1.0)).rg;
+    return vec3(t.r, t.g, 0.0);
 }
 
 void mainImage(out vec4 fragColor, in vec2 fragCoord) {

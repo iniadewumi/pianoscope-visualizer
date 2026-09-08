@@ -653,6 +653,10 @@ function createFeedbackState(gl, isWebGL2, width, height, desc) {
             iSampleRate: gl.getUniformLocation(currentProgram, 'iSampleRate'),
             iWriteFeedback: gl.getUniformLocation(currentProgram, 'iWriteFeedback'),
             iFeedback: gl.getUniformLocation(currentProgram, 'iFeedback'),
+            iVideo: gl.getUniformLocation(currentProgram, 'iVideo'),
+            iVideoActive: gl.getUniformLocation(currentProgram, 'iVideoActive'),
+            iVideoBlend: gl.getUniformLocation(currentProgram, 'iVideoBlend'),
+            iVideoBlendAmount: gl.getUniformLocation(currentProgram, 'iVideoBlendAmount'),
             iVideoResolution: gl.getUniformLocation(currentProgram, 'iVideoResolution'),
             iFitMode: gl.getUniformLocation(currentProgram, 'iFitMode'),
             iVideoMirror: gl.getUniformLocation(currentProgram, 'iVideoMirror'),
@@ -853,6 +857,17 @@ function createFeedbackState(gl, isWebGL2, width, height, desc) {
         gl.uniform1i(uniforms.iFeedback, 5);
     }
 
+    // Every program can sample the live source (camera/screen/clip) through
+    // iVideo on unit 6, independent of whether the current look is the video
+    // effect. Falls back to a spare black texture when nothing is attached.
+    function bindVideoChannel() {
+        if (!uniforms.iVideo) return;
+        gl.activeTexture(gl.TEXTURE6);
+        const hasSrc = videoController && videoController.hasSource();
+        gl.bindTexture(gl.TEXTURE_2D, hasSrc ? videoController.getVideoTexture() : extraTextures[0]);
+        gl.uniform1i(uniforms.iVideo, 6);
+    }
+
     function bindTextureChannels(isVideoMode, feedbackReadTexture) {
         // Shader-mode feedback keeps its original layout: noise on 0, the previous
         // frame on 1, audio on 2.
@@ -872,6 +887,7 @@ function createFeedbackState(gl, isWebGL2, width, height, desc) {
             bindFeedbackChannel(feedbackReadTexture);
             bindDisplayTextChannel();
         bindFittedTextSheet();
+            bindVideoChannel();
             return;
         }
 
@@ -881,13 +897,18 @@ function createFeedbackState(gl, isWebGL2, width, height, desc) {
         gl.bindTexture(gl.TEXTURE_2D, audioTexture);
         if (uniforms.iChannel0) gl.uniform1i(uniforms.iChannel0, 0);
 
-        if (isVideoMode && videoController && uniforms.iChannel1) {
+        // Keyed on the program actually on screen rather than the requested look:
+        // while a library shader is still compiling, the effect program keeps
+        // drawing and would otherwise show black until the swap lands.
+        const effectOnScreen = window.currentShaderIsVideoDisplay
+            && videoController && videoController.hasSource();
+        if (effectOnScreen && uniforms.iChannel1) {
             gl.activeTexture(gl.TEXTURE1);
             gl.bindTexture(gl.TEXTURE_2D, videoController.getVideoTexture());
             gl.uniform1i(uniforms.iChannel1, 1);
         }
 
-        for (let i = isVideoMode ? 2 : 1; i < 3; i++) {
+        for (let i = effectOnScreen ? 2 : 1; i < 3; i++) {
             const channelUniform = uniforms['iChannel' + i];
             if (channelUniform) {
                 gl.activeTexture(gl.TEXTURE0 + i);
@@ -899,6 +920,7 @@ function createFeedbackState(gl, isWebGL2, width, height, desc) {
         bindFeedbackChannel(feedbackReadTexture);
         bindDisplayTextChannel();
         bindFittedTextSheet();
+        bindVideoChannel();
     }
 
     function setShaderUniforms(currentTime, isVideoMode) {
@@ -922,6 +944,17 @@ function createFeedbackState(gl, isWebGL2, width, height, desc) {
         }
         if (uniforms.iVideoMirror && videoController) {
             gl.uniform1f(uniforms.iVideoMirror, videoController.getMirror());
+        }
+        if (uniforms.iVideoActive) {
+            const live = videoController && videoController.hasSource()
+                && (videoController.videoHandler.videoLoaded || videoController.videoHandler.isLive());
+            gl.uniform1f(uniforms.iVideoActive, live ? 1.0 : 0.0);
+        }
+        if (uniforms.iVideoBlend) {
+            gl.uniform1f(uniforms.iVideoBlend, videoController ? videoController.getBlendMode() : 0);
+        }
+        if (uniforms.iVideoBlendAmount) {
+            gl.uniform1f(uniforms.iVideoBlendAmount, videoController ? videoController.getBlendAmount() : 1);
         }
         if (uniforms.iChannelResolution) {
             channelResolutions[3] = isVideoMode ? videoSize.width : 1;
@@ -1162,6 +1195,9 @@ function createFeedbackState(gl, isWebGL2, width, height, desc) {
 
         // Check if we're in video mode
         const isVideoMode = videoController && videoController.isInVideoMode && videoController.isInVideoMode();
+        // Separate from look: is a source (clip/camera/screen) attached at all?
+        // Every program can sample it via iVideo regardless of which look is up.
+        const hasSource = videoController && videoController.hasSource();
 
         // Video mode swaps in an effect program. Adopting a new program deletes
         // the one it replaces, so the previous shader is restored by recompiling
@@ -1192,7 +1228,13 @@ function createFeedbackState(gl, isWebGL2, width, height, desc) {
         // Texture uploads temporarily switch programs and framebuffers inside the
         // driver, so they belong before the draw setup rather than between state
         // changes where they would flush the pipeline.
-        if (isVideoMode) videoController.updateVideoTexture();
+        // Upload only when the current program can actually see the frame: the
+        // video-effect look always needs it, and any library shader that declares
+        // iVideo needs it too, whether or not iVideoActive is on. Every other
+        // shader saves the upload cost entirely.
+        if (hasSource && (isVideoMode || window.currentShaderIsVideoDisplay || uniforms.iVideo)) {
+            videoController.updateVideoTexture();
+        }
         uploadAudioTexture();
 
         setShaderUniforms(currentTime, isVideoMode);
@@ -1539,7 +1581,10 @@ window.getCurrentShaderInfo = () => {
         const restoreVideo = videoController && videoController.hasRestorableSession();
         if (restoreVideo) {
             videoController.restoreSession().then((restored) => {
-                if (!restored) applyDefaultShader();
+                // A restored source with look:'shader' still needs a shader on
+                // screen — only skip the default apply when the effect look
+                // actually took over the program.
+                if (!restored || !videoController.isInVideoMode()) applyDefaultShader();
             });
         } else {
             applyDefaultShader();

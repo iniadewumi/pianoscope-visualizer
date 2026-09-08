@@ -48,6 +48,58 @@ uniform sampler2D iChannel2;
 uniform sampler2D iChannel3;
 uniform vec3 iChannelResolution[4];
 
+// Live source (camera / screen / clip). Available in every shader; iVideoActive is 0 when
+// nothing is attached, and the sampler then holds a 1x1 black texel.
+uniform sampler2D iVideo;
+uniform float iVideoActive;
+uniform vec2 iVideoResolution;
+uniform float iFitMode;
+uniform float iVideoMirror;
+uniform float iVideoBlend;
+uniform float iVideoBlendAmount;
+
+// Maps a 0..1 screen coordinate onto the live source, honouring the Fit
+// dropdown, and flips Y for WebGL texture orientation. Mirrors js/video-effects.js's
+// videoUV()/videoInside()/videoAt()/videoLuma(), adapted to sample iVideo instead
+// of iChannel1 so any shader can use them, not just the video-effect look.
+vec2 videoUV(vec2 uv) {
+    float canvasAspect = iResolution.x / max(iResolution.y, 1.0);
+    float videoAspect = iVideoResolution.x / max(iVideoResolution.y, 1.0);
+
+    vec2 scale = vec2(1.0);
+    if (iFitMode < 0.5) {
+        scale = canvasAspect > videoAspect
+            ? vec2(1.0, videoAspect / canvasAspect)
+            : vec2(canvasAspect / videoAspect, 1.0);
+    } else if (iFitMode < 1.5) {
+        scale = canvasAspect > videoAspect
+            ? vec2(canvasAspect / videoAspect, 1.0)
+            : vec2(1.0, videoAspect / canvasAspect);
+    }
+
+    vec2 v = (uv - 0.5) * scale + 0.5;
+    v.y = 1.0 - v.y;
+
+    if (iVideoMirror > 0.5) v.x = 1.0 - v.x;
+
+    return v;
+}
+
+float videoInside(vec2 uv) {
+    vec2 v = videoUV(uv);
+    return step(0.0, v.x) * step(v.x, 1.0) * step(0.0, v.y) * step(v.y, 1.0);
+}
+
+vec3 videoAt(vec2 uv) {
+    vec2 v = videoUV(uv);
+    float inside = step(0.0, v.x) * step(v.x, 1.0) * step(0.0, v.y) * step(v.y, 1.0);
+    return texture2D(iVideo, clamp(v, 0.0, 1.0)).rgb * inside;
+}
+
+float videoLuma(vec2 uv) {
+    return dot(videoAt(uv), vec3(0.299, 0.587, 0.114));
+}
+
 // Display text.
 //   iChannel3  - legacy 2048x512 sheet, R = sharp, G = soft. Unchanged contract.
 //   iTextSheet - sheet fitted to the copy: R = slot A sharp, G = slot A soft,
@@ -76,15 +128,44 @@ uniform float iTextWordCount;
     // 1 here or shaders that leave it at 0 (common in golfed tanh-tonemap shaders)
     // vanish into the background.
     const WEBGL_MAIN = `
+// Blends the live source under/over/keyed/multiplied into whatever the shader
+// drew, independent of that shader's own iVideo use. A no-op when nothing is
+// attached (iVideoActive < 0.5) or Blend is set to Off (iVideoBlend < 0.5).
+vec4 pianoscopeBlendVideo(vec4 col, vec2 fragCoord) {
+    if (iVideoActive < 0.5 || iVideoBlend < 0.5) return col;
+    vec2 uv = fragCoord / iResolution.xy;
+    vec3 v = videoAt(uv);
+    float inside = videoInside(uv);
+    float a = clamp(iVideoBlendAmount, 0.0, 1.0);
+    vec3 s = col.rgb;
+    vec3 outc = s;
+    if (iVideoBlend < 1.5) {            // under: shader over video, shader luma as its alpha
+        float sl = clamp(dot(s, vec3(0.299, 0.587, 0.114)) * 1.5, 0.0, 1.0);
+        outc = mix(v, s, max(sl, 1.0 - a * inside));
+        outc = mix(s, outc, a);
+    } else if (iVideoBlend < 2.5) {     // over: video over shader, video luma as its alpha
+        float vl = clamp(dot(v, vec3(0.299, 0.587, 0.114)) * 1.5, 0.0, 1.0);
+        outc = mix(s, v, vl * a * inside);
+    } else if (iVideoBlend < 3.5) {     // luma key: video shows where the shader is bright
+        float sl = smoothstep(0.25, 0.75, dot(s, vec3(0.299, 0.587, 0.114)));
+        outc = mix(s, v, sl * a * inside);
+    } else {                            // multiply
+        outc = mix(s, s * mix(vec3(1.0), v, inside), a);
+    }
+    return vec4(outc, col.a);
+}
+
 #if __VERSION__ >= 300
 void main() {
     mainImage(fragColor, gl_FragCoord.xy);
+    fragColor = pianoscopeBlendVideo(fragColor, gl_FragCoord.xy);
     fragColor.a = 1.0;
 }
 #else
 void main() {
     vec4 fragColor;
     mainImage(fragColor, gl_FragCoord.xy);
+    fragColor = pianoscopeBlendVideo(fragColor, gl_FragCoord.xy);
     gl_FragColor = vec4(fragColor.rgb, 1.0);
 }
 #endif
@@ -300,6 +381,18 @@ void main() {
         displayTextPanel.appendChild(displayTextRow);
         const displayTextMeta = document.createElement('div');
         displayTextMeta.className = 'display-text-meta';
+        const displayStyleSelect = document.createElement('select');
+        displayStyleSelect.id = 'display-text-style';
+        displayStyleSelect.className = 'display-text-font';
+        displayStyleSelect.title = 'Text style';
+        displayStyleSelect.setAttribute('aria-label', 'Text style');
+        const styles = (window.PianoscopeDisplayText && window.PianoscopeDisplayText.STYLES) || [];
+        for (let i = 0; i < styles.length; i++) {
+            const opt = document.createElement('option');
+            opt.value = styles[i].id;
+            opt.textContent = styles[i].name;
+            displayStyleSelect.appendChild(opt);
+        }
         const displayFontSelect = document.createElement('select');
         displayFontSelect.id = 'display-text-font';
         displayFontSelect.className = 'display-text-font';
@@ -307,10 +400,42 @@ void main() {
         displayFontSelect.setAttribute('aria-label', 'Overlay font');
         const fonts = (window.PianoscopeDisplayText && window.PianoscopeDisplayText.FONTS) || [];
         for (let i = 0; i < fonts.length; i++) {
+            // meta:true faces are caption cuts a style reaches for on its own
+            // (the band's mono data line). They are not headline faces and have
+            // no business in the operator's dropdown.
+            if (fonts[i].meta) continue;
             const opt = document.createElement('option');
             opt.value = fonts[i].id;
             opt.textContent = fonts[i].name;
             displayFontSelect.appendChild(opt);
+        }
+        // The band style carries a second slot under the headline - artist,
+        // tempo, room. Only that style has one, so the field only appears for it.
+        const displayMetaRow = document.createElement('div');
+        displayMetaRow.className = 'display-text-meta display-text-meta-row';
+        const displayMetaInput = document.createElement('input');
+        displayMetaInput.type = 'text';
+        displayMetaInput.id = 'display-text-meta-line';
+        displayMetaInput.className = 'display-text-font';
+        displayMetaInput.placeholder = 'PIANOSCOPE \u00b7 124 BPM \u00b7 LISTENING ROOM';
+        displayMetaInput.title = 'Data line under the band. Leave empty for the band alone.';
+        displayMetaInput.setAttribute('aria-label', 'Band data line');
+        displayMetaInput.autocomplete = 'off';
+        displayMetaInput.spellcheck = false;
+        displayMetaRow.appendChild(displayMetaInput);
+
+        // A style with a non-null `font` pins its own typeface, so the font
+        // dropdown is moot while it's selected - disable it rather than let it
+        // silently do nothing.
+        function syncFontSelectForStyle() {
+            const allStyles = (window.PianoscopeDisplayText && window.PianoscopeDisplayText.STYLES) || [];
+            const style = allStyles.find(function (s) { return s.id === displayStyleSelect.value; });
+            const pinned = !!(style && style.font);
+            displayFontSelect.disabled = pinned;
+            displayFontSelect.title = pinned
+                ? 'This style pins its own typeface - switch to Plain to pick a font'
+                : 'Overlay font';
+            displayMetaRow.hidden = !(style && style.meta);
         }
         const overlayToggle = document.createElement('label');
         overlayToggle.className = 'display-text-overlay-toggle';
@@ -319,9 +444,11 @@ void main() {
         overlayCheck.id = 'display-text-overlay-enabled';
         overlayToggle.appendChild(overlayCheck);
         overlayToggle.appendChild(document.createTextNode('JS overlay'));
+        displayTextMeta.appendChild(displayStyleSelect);
         displayTextMeta.appendChild(displayFontSelect);
         displayTextMeta.appendChild(overlayToggle);
         displayTextPanel.appendChild(displayTextMeta);
+        displayTextPanel.appendChild(displayMetaRow);
 
         // ---- transition picker ----
         const transitionRow = document.createElement('div');
@@ -453,7 +580,10 @@ void main() {
             displayTextInput.value = window.PianoscopeDisplayText.toDisplayValue(
                 window.PianoscopeDisplayText.getText()
             );
+            displayStyleSelect.value = window.PianoscopeDisplayText.getStyle();
             displayFontSelect.value = window.PianoscopeDisplayText.getFont();
+            displayMetaInput.value = window.PianoscopeDisplayText.getMeta();
+            syncFontSelectForStyle();
             overlayCheck.checked = window.PianoscopeDisplayText.isOverlayEnabled();
             window.PianoscopeDisplayText.onChange(function (text) {
                 if (document.activeElement !== displayTextInput) {
@@ -595,6 +725,19 @@ void main() {
             window.PianoscopeDisplayText.setFont(displayFontSelect.value);
             const label = displayFontSelect.options[displayFontSelect.selectedIndex].text;
             showMessage('Font: ' + label, 'success');
+        });
+        displayStyleSelect.addEventListener('change', () => {
+            if (!window.PianoscopeDisplayText) return;
+            window.PianoscopeDisplayText.setStyle(displayStyleSelect.value);
+            syncFontSelectForStyle();
+            const label = displayStyleSelect.options[displayStyleSelect.selectedIndex].text;
+            showMessage('Style: ' + label, 'success');
+        });
+        // Repaint as it is typed - the band's data line is the kind of thing an
+        // operator adjusts against the frame, not blind and then applied.
+        displayMetaInput.addEventListener('input', () => {
+            if (!window.PianoscopeDisplayText) return;
+            window.PianoscopeDisplayText.setMeta(displayMetaInput.value);
         });
         const SEQ = window.PianoscopeTextSequencer || null;
 

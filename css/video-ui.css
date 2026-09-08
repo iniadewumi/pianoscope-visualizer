@@ -145,6 +145,29 @@
     pointer-events: none;
 }
 
+/* Camera device picker: sits inline in the toolbar next to the camera button */
+.vlib__camera-select {
+    flex: 0 0 auto;
+    max-width: 120px;
+    height: 40px;
+    padding: 0 8px;
+    background: rgba(12, 12, 16, 0.85);
+    color: #e0e0e0;
+    border: 1px solid rgba(123, 44, 191, 0.35);
+    border-radius: 8px;
+    font-size: 12px;
+    font-family: inherit;
+    cursor: pointer;
+    transition: border-color 0.2s ease, color 0.2s ease;
+}
+
+.vlib__camera-select:hover,
+.vlib__camera-select:focus {
+    outline: none;
+    border-color: rgba(212, 175, 55, 0.7);
+    color: #D4AF37;
+}
+
 .vcard__cache {
     position: absolute;
     top: 5px;
@@ -507,6 +530,10 @@
     gap: 10px;
 }
 
+.vplayer__row[hidden] {
+    display: none;
+}
+
 .vplayer__row--selects {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -632,7 +659,8 @@
 
 /* Range inputs */
 #seek-bar,
-#volume-bar {
+#volume-bar,
+#video-blend-amount {
     -webkit-appearance: none;
     appearance: none;
     width: 100%;
@@ -654,7 +682,8 @@
 }
 
 #seek-bar::-webkit-slider-thumb,
-#volume-bar::-webkit-slider-thumb {
+#volume-bar::-webkit-slider-thumb,
+#video-blend-amount::-webkit-slider-thumb {
     -webkit-appearance: none;
     appearance: none;
     width: 13px;
@@ -666,13 +695,46 @@
 }
 
 #seek-bar::-moz-range-thumb,
-#volume-bar::-moz-range-thumb {
+#volume-bar::-moz-range-thumb,
+#video-blend-amount::-moz-range-thumb {
     width: 13px;
     height: 13px;
     border-radius: 50%;
     background: #D4AF37;
     cursor: pointer;
     border: none;
+}
+
+/* Look toggle: Effect / Shader segmented control, next to the effect select. */
+.vplayer__look {
+    display: flex;
+    flex: 0 0 auto;
+    border-radius: 8px;
+    overflow: hidden;
+    border: 1px solid rgba(123, 44, 191, 0.35);
+}
+
+.vplayer__look button {
+    background: rgba(123, 44, 191, 0.3);
+    color: rgba(242, 240, 247, 0.75);
+    border: none;
+    padding: 8px 10px;
+    font-size: 10px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+    transition: background 0.2s ease, color 0.2s ease;
+}
+
+.vplayer__look button + button {
+    border-left: 1px solid rgba(123, 44, 191, 0.35);
+}
+
+.vplayer__look button.is-on {
+    background: rgba(212, 175, 55, 0.3);
+    color: #D4AF37;
 }
 
 /* ===== Drop zone ===== */

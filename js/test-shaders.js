@@ -195,7 +195,7 @@ float safeAudio(float value, float fallback) {
 }
 
 float audioBoost(float v) {
-    return clamp(pow(v, 0.75) * 1.45, 0.0, 1.0);
+    return clamp(pow(v, 0.75) * .55, 0.0, 1.0);
 }
 
 float hash21(vec2 p) {

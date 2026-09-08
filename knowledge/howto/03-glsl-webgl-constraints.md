@@ -102,6 +102,19 @@ Things that bite:
   `iChannel1`, audio on `iChannel2`. Video mode keeps audio on `iChannel0` and
   the frame on `iChannel1`, so feedback is only on `iFeedback` — new code should
   read `iFeedback` in both modes.
+- **The live source is on `iVideo` in every mode, not just video mode.** Source
+  (camera/screen/clip, owned by VideoController) and look (which program is on
+  screen) are independent: whatever is attached keeps playing and uploading
+  regardless of look, and any library shader can sample it via `iVideo` on unit
+  6 — `iChannel1` stays reserved for the video-effect look's own contract.
+  `iVideoActive` is 0 when nothing is attached (the sampler then holds a 1x1
+  black texel). `videoUV()`, `videoInside()`, `videoAt()`, and `videoLuma()` are
+  available in every shader's preamble, mirroring the helpers in
+  `js/video-effects.js` but sampling `iVideo`. The video dock's Look toggle
+  (Effect / Shader) picks which program is on screen; the Blend row (Off /
+  Video under / Video over / Luma key / Multiply, plus an Amount slider) only
+  applies while Look is Shader, composited automatically via
+  `pianoscopeBlendVideo()` in the converter's generated `main()`.
 - **The buffer is RGBA8 unless you ask.** Add `#define FEEDBACK_HDR` and the
   visualizer allocates RGBA32F (or RGBA16F) where the driver can render to it.
   Required for anything storing a statistic rather than a colour: in 8 bits the

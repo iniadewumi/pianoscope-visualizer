@@ -9,7 +9,17 @@ class VideoTextureHandler {
     constructor(gl) {
         // Store the WebGL context
         this.gl = gl;
-        
+
+        // WebGL2 lets us allocate texture storage once (texStorage2D) and
+        // update it in place per frame (texSubImage2D) instead of
+        // re-specifying/reallocating the texture on every upload.
+        this.isWebGL2 = (typeof WebGL2RenderingContext !== 'undefined') && gl instanceof WebGL2RenderingContext;
+
+        // Size of the currently allocated texture storage (WebGL2 path only).
+        // 0 means nothing has been allocated yet.
+        this.texWidth = 0;
+        this.texHeight = 0;
+
         // Create video element
         this.videoElement = document.createElement('video');
         this.videoElement.muted = true;
@@ -38,6 +48,10 @@ class VideoTextureHandler {
 
         // Live camera feed, when the source is a MediaStream rather than a file.
         this.stream = null;
+
+        // True from the moment a clip or stream is handed to the element until
+        // unload(). Metadata arrives later, so this is what "has a source" means.
+        this.attached = false;
 
         // HTML5 video drops currentTime assignments while a seek is in flight.
         // Keep the latest tap and apply it when the previous seek settles.
@@ -199,6 +213,7 @@ class VideoTextureHandler {
         // Update video source
         this.videoElement.src = url;
         this.videoElement.load();
+        this.attached = true;
         this.play();
 
         // Enter video mode
@@ -218,6 +233,7 @@ class VideoTextureHandler {
 
         this.videoElement.removeAttribute('src');
         this.videoElement.srcObject = stream;
+        this.attached = true;
         this.play();
 
         this.setVideoMode(true);
@@ -245,19 +261,63 @@ class VideoTextureHandler {
     }
     
     updateVideoTexture() {
-        if (this.videoMode && this.videoLoaded && this.isPlaying &&
+        if (this.videoLoaded && this.isPlaying &&
             this.videoElement.readyState >= this.videoElement.HAVE_CURRENT_DATA) {
 
             // Without frame callbacks there is no way to tell a repeat frame from
             // a fresh one, so fall back to uploading every tick.
             if (this.usingFrameCallback && !this.hasNewFrame) return;
+
+            const w = this.videoElement.videoWidth;
+            const h = this.videoElement.videoHeight;
+            if (!w || !h) return;
+
             this.hasNewFrame = false;
 
-            this.gl.bindTexture(this.gl.TEXTURE_2D, this.videoTexture);
-            this.gl.texImage2D(
-                this.gl.TEXTURE_2D, 0, this.gl.RGBA, this.gl.RGBA,
-                this.gl.UNSIGNED_BYTE, this.videoElement
-            );
+            const gl = this.gl;
+            gl.bindTexture(gl.TEXTURE_2D, this.videoTexture);
+
+            // Avoid the browser's default colorspace conversion / Y-flip work on
+            // every frame; the shaders already handle the flip.
+            gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.NONE);
+            gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+
+            if (this.isWebGL2) {
+                if (this.texWidth !== w || this.texHeight !== h) {
+                    // Immutable storage can't be resized in place; recreate the
+                    // texture object and re-apply its sampling params.
+                    gl.deleteTexture(this.videoTexture);
+                    this.videoTexture = gl.createTexture();
+                    gl.bindTexture(gl.TEXTURE_2D, this.videoTexture);
+                    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+                    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+                    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+                    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+                    gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA8, w, h);
+                    this.texWidth = w;
+                    this.texHeight = h;
+                }
+
+                try {
+                    gl.texSubImage2D(
+                        gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, this.videoElement
+                    );
+                } catch (e) {
+                    // Cross-origin or not-yet-decodable frame; retry next tick.
+                    this.hasNewFrame = true;
+                }
+            } else {
+                try {
+                    gl.texImage2D(
+                        gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA,
+                        gl.UNSIGNED_BYTE, this.videoElement
+                    );
+                } catch (e) {
+                    this.hasNewFrame = true;
+                }
+            }
+
+            gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.BROWSER_DEFAULT_WEBGL);
         }
     }
     
@@ -390,16 +450,35 @@ class VideoTextureHandler {
     }
     
     setVideoMode(enabled) {
+        // Source (playback) and look (which program is on screen) are separate
+        // now: this flag is purely informational bookkeeping for callers that
+        // still read it. It must NOT pause playback — the source keeps running
+        // and uploading regardless of which look is on screen.
         this.videoMode = enabled;
-        
-        // If disabling video mode, pause the video to save resources
-        if (!enabled && this.isPlaying) {
-            this.pause();
-        }
     }
-    
+
     getVideoTexture() {
         return this.videoTexture;
+    }
+
+    /** True when a clip is loaded or a live stream (camera/screen) is attached. */
+    hasSource() {
+        return this.attached;
+    }
+
+    /**
+     * Drop the current source entirely: stop stream tracks, clear the element,
+     * and forget playback state. The texture keeps its last frame until the
+     * next upload, but iVideoActive goes to 0 so nothing samples it.
+     */
+    unload() {
+        this.videoElement.pause();
+        this.releaseSource();
+        this.videoElement.removeAttribute('src');
+        this.videoElement.load();
+        this.resetPlaybackState();
+        this.attached = false;
+        this.currentSrc = null;
     }
 
     /**

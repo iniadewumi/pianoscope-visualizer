@@ -356,6 +356,18 @@
     padding: 8px 12px;
 }
 
+/* The band style's data line. .display-text-meta sets display:flex, which beats
+   the [hidden] attribute's UA display:none - so hiding it needs a real rule. */
+.display-text-meta-row[hidden] {
+    display: none;
+}
+
+#display-text-meta-line {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 12px;
+    letter-spacing: 0.04em;
+}
+
 .display-text-font,
 .shader-test-ui select.display-text-font {
     flex: 1;

@@ -72,6 +72,10 @@ const kioskHtmlContent = `<!DOCTYPE html>
         let currentProgram = null;
         let audioTexture = null;
         let videoTexture = null;
+        // Size of the currently allocated video texture storage (WebGL2 texStorage2D
+        // path only). 0 means nothing has been allocated yet.
+        let videoTexWidth = 0;
+        let videoTexHeight = 0;
         let displayTextTexture = null;
         let fittedTextTexture = null;
         let fittedTextW = 1;
@@ -334,6 +338,20 @@ const kioskHtmlContent = `<!DOCTYPE html>
             } else if (message.type === 'audio-data') {
                 // Update audio data
                 updateAudioData(message.audioData);
+            } else if (message.type === 'display-text') {
+                // Deliberately empty. The kiosk shares the opener's realm and reads
+                // text, font, overlay, style AND the band's meta line straight off
+                // window.opener's PianoscopeDisplayText every frame (see
+                // getOpenerDisplayText), and blits the opener's already-painted
+                // overlay canvas - so that single instance is already
+                // authoritative here.
+                //
+                // Do NOT "mirror" the payload by calling a setter on it: that setter
+                // runs in the OPENER's realm, where it ends in notify(), which posts
+                // this very message back to this window - which would call the setter
+                // again. The only thing standing between that and an unbounded loop
+                // would be a setter that short-circuits on an unchanged value, and
+                // that is not a property worth depending on from over here.
             }
         });
         
@@ -464,6 +482,10 @@ const kioskHtmlContent = `<!DOCTYPE html>
                 iWriteFeedback: gl.getUniformLocation(currentProgram, 'iWriteFeedback'),
                 iFeedback: gl.getUniformLocation(currentProgram, 'iFeedback'),
                 iChannelResolution: gl.getUniformLocation(currentProgram, 'iChannelResolution[0]'),
+                iVideo: gl.getUniformLocation(currentProgram, 'iVideo'),
+                iVideoActive: gl.getUniformLocation(currentProgram, 'iVideoActive'),
+                iVideoBlend: gl.getUniformLocation(currentProgram, 'iVideoBlend'),
+                iVideoBlendAmount: gl.getUniformLocation(currentProgram, 'iVideoBlendAmount'),
                 iVideoResolution: gl.getUniformLocation(currentProgram, 'iVideoResolution'),
                 iFitMode: gl.getUniformLocation(currentProgram, 'iFitMode'),
                 iVideoMirror: gl.getUniformLocation(currentProgram, 'iVideoMirror'),
@@ -569,7 +591,7 @@ const kioskHtmlContent = `<!DOCTYPE html>
         function getOpenerVideoState() {
             try {
                 const controller = window.opener && window.opener.videoController;
-                if (!controller || !controller.isInVideoMode()) return null;
+                if (!controller || !controller.hasSource()) return null;
 
                 const element = controller.videoHandler.videoElement;
                 if (!element) return null;
@@ -580,7 +602,13 @@ const kioskHtmlContent = `<!DOCTYPE html>
                     width: size.width,
                     height: size.height,
                     fitMode: controller.getFitMode(),
-                    mirror: controller.getMirror()
+                    mirror: controller.getMirror(),
+                    // Whether the opener's current *look* is the video-effect
+                    // program (vs. a library shader that may still sample iVideo).
+                    effectLook: controller.isInVideoMode(),
+                    blend: controller.getBlendMode(),
+                    blendAmount: controller.getBlendAmount(),
+                    active: controller.videoHandler.hasSource() ? 1 : 0
                 };
             } catch (e) {
                 return null;
@@ -657,22 +685,85 @@ const kioskHtmlContent = `<!DOCTYPE html>
                         gl.activeTexture(gl.TEXTURE1);
                         gl.bindTexture(gl.TEXTURE_2D, videoTexture);
 
-                        if (videoState.element.readyState >= 2 &&
+                        // Upload when the video-effect look needs iChannel1, OR any
+                        // shader on screen declares iVideo — a library shader with
+                        // no iVideo uniform gets nothing to skip the upload cost.
+                        if ((videoState.effectLook || kioskUniforms.iVideo) &&
+                            videoState.element.readyState >= 2 &&
                             (!videoUsesFrameCallback || videoHasNewFrame)) {
-                            videoHasNewFrame = false;
-                            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, videoState.element);
+                            const vw = videoState.element.videoWidth;
+                            const vh = videoState.element.videoHeight;
+
+                            if (vw && vh) {
+                                videoHasNewFrame = false;
+
+                                // Avoid the browser's default colorspace conversion / Y-flip
+                                // work on every frame; the shaders already handle the flip.
+                                gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.NONE);
+                                gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+
+                                if (isWebGL2) {
+                                    if (videoTexWidth !== vw || videoTexHeight !== vh) {
+                                        // Immutable storage can't be resized in place; recreate
+                                        // the texture object and re-apply its sampling params.
+                                        gl.deleteTexture(videoTexture);
+                                        videoTexture = gl.createTexture();
+                                        gl.activeTexture(gl.TEXTURE1);
+                                        gl.bindTexture(gl.TEXTURE_2D, videoTexture);
+                                        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+                                        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+                                        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+                                        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+                                        gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA8, vw, vh);
+                                        videoTexWidth = vw;
+                                        videoTexHeight = vh;
+                                    }
+
+                                    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, videoState.element);
+                                } else {
+                                    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, videoState.element);
+                                }
+
+                                gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.BROWSER_DEFAULT_WEBGL);
+                            }
                         }
                     } catch (e) {
                         videoHasNewFrame = true;
                     }
-                    
-                    if (kioskUniforms.iChannel1) gl.uniform1i(kioskUniforms.iChannel1, 1);
+
+                    // iChannel1 = video is the video-effect look's legacy contract;
+                    // any other program reads the source through iVideo instead.
+                    if (videoState.effectLook && kioskUniforms.iChannel1) {
+                        gl.activeTexture(gl.TEXTURE1);
+                        gl.bindTexture(gl.TEXTURE_2D, videoTexture);
+                        gl.uniform1i(kioskUniforms.iChannel1, 1);
+                    }
+
+                    if (kioskUniforms.iVideo) {
+                        gl.activeTexture(gl.TEXTURE6);
+                        gl.bindTexture(gl.TEXTURE_2D, videoTexture);
+                        gl.uniform1i(kioskUniforms.iVideo, 6);
+                    }
 
                     if (kioskUniforms.iVideoResolution) {
                         gl.uniform2f(kioskUniforms.iVideoResolution, videoState.width, videoState.height);
                     }
                     if (kioskUniforms.iFitMode) gl.uniform1f(kioskUniforms.iFitMode, videoState.fitMode);
                     if (kioskUniforms.iVideoMirror) gl.uniform1f(kioskUniforms.iVideoMirror, videoState.mirror);
+                    if (kioskUniforms.iVideoActive) {
+                        gl.uniform1f(kioskUniforms.iVideoActive, videoState.active ? 1.0 : 0.0);
+                    }
+                    if (kioskUniforms.iVideoBlend) {
+                        gl.uniform1f(kioskUniforms.iVideoBlend, videoState.blend || 0);
+                    }
+                    if (kioskUniforms.iVideoBlendAmount) {
+                        gl.uniform1f(kioskUniforms.iVideoBlendAmount,
+                            typeof videoState.blendAmount === 'number' ? videoState.blendAmount : 1);
+                    }
+                } else {
+                    if (kioskUniforms.iVideoActive) gl.uniform1f(kioskUniforms.iVideoActive, 0.0);
+                    if (kioskUniforms.iVideoBlend) gl.uniform1f(kioskUniforms.iVideoBlend, 0.0);
+                    if (kioskUniforms.iVideoBlendAmount) gl.uniform1f(kioskUniforms.iVideoBlendAmount, 0.0);
                 }
                 
                 // Audio holds iChannel0 in both modes so video effects stay reactive.
@@ -755,8 +846,9 @@ const kioskHtmlContent = `<!DOCTYPE html>
                 }
 
                 if (kioskUniforms.iChannelResolution) {
-                    const videoW = videoState ? videoState.width : 1;
-                    const videoH = videoState ? videoState.height : 1;
+                    const videoEffectActive = videoState && videoState.effectLook;
+                    const videoW = videoEffectActive ? videoState.width : 1;
+                    const videoH = videoEffectActive ? videoState.height : 1;
                     gl.uniform3fv(kioskUniforms.iChannelResolution, new Float32Array([
                         256, 1, 1,
                         videoW, videoH, 1,
@@ -772,9 +864,9 @@ const kioskHtmlContent = `<!DOCTYPE html>
                     gl.activeTexture(gl.TEXTURE5);
                     gl.bindTexture(gl.TEXTURE_2D, readTexture);
                     if (kioskUniforms.iFeedback) gl.uniform1i(kioskUniforms.iFeedback, 5);
-                    // Outside video mode iChannel1 is spare, and that is where
-                    // shader-mode feedback reads its previous frame from.
-                    if (!videoState && kioskUniforms.iChannel1) {
+                    // Outside the video-effect look iChannel1 is spare, and that is
+                    // where shader-mode feedback reads its previous frame from.
+                    if (!(videoState && videoState.effectLook) && kioskUniforms.iChannel1) {
                         gl.activeTexture(gl.TEXTURE1);
                         gl.bindTexture(gl.TEXTURE_2D, readTexture);
                         gl.uniform1i(kioskUniforms.iChannel1, 1);

@@ -40,6 +40,14 @@ class VideoController {
         this.thumbnailsRequested = new Set();
         this.isScrubbing = false;
 
+        // Source (clip/camera/screen, owned by the video handler) is now separate
+        // from look (which program is on screen): 'effect' shows the video-effect
+        // program, 'shader' shows whatever library shader is current while the
+        // source keeps playing in the background, sample-able via iVideo.
+        this.look = 'effect';
+        this.blendMode = 'under';
+        this.blendAmount = 1;
+
         // Playback is itself an effect ("None" is the identity pass), so there is
         // one code path whether or not a treatment is applied.
         this.effectName = 'None';
@@ -49,6 +57,11 @@ class VideoController {
         this.isLiveSource = false;
         this.mirror = false;
         this._restoring = false;
+
+        // Chosen camera device, persisted across reloads so restoreSession()
+        // reopens the same physical camera rather than whatever is default.
+        this.cameraDeviceId = null;
+        this.cameraDevices = [];
 
         this.setupVideoEventListeners();
     }
@@ -72,6 +85,10 @@ class VideoController {
                     </button>
                     <button class="vlib__icon-btn vlib__icon-btn--ghost" id="camera-btn" title="Use the camera as a live source">
                         <i class="fas fa-video"></i>
+                    </button>
+                    <select class="vlib__camera-select" id="camera-device" title="Choose a camera" hidden></select>
+                    <button class="vlib__icon-btn vlib__icon-btn--ghost" id="screen-btn" title="Use a screen or window as a live source">
+                        <i class="fas fa-desktop"></i>
                     </button>
                     <button class="vlib__icon-btn" id="local-video-btn" title="Upload a video">
                         <i class="fas fa-plus"></i>
@@ -125,6 +142,10 @@ class VideoController {
                             Effect
                             <select id="video-effect"></select>
                         </label>
+                        <div class="vplayer__look" id="video-look">
+                            <button type="button" data-look="effect">Effect</button>
+                            <button type="button" data-look="shader">Shader</button>
+                        </div>
                     </div>
 
                     <div class="vplayer__row vplayer__row--selects" id="video-selects-row">
@@ -147,6 +168,23 @@ class VideoController {
                             </select>
                         </label>
                     </div>
+
+                    <div class="vplayer__row vplayer__row--selects" id="video-blend-row" hidden>
+                        <label>
+                            Blend
+                            <select id="video-blend">
+                                <option value="off">Off</option>
+                                <option value="under" selected>Video under</option>
+                                <option value="over">Video over</option>
+                                <option value="key">Luma key</option>
+                                <option value="multiply">Multiply</option>
+                            </select>
+                        </label>
+                        <label>
+                            Amount
+                            <input type="range" id="video-blend-amount" min="0" max="1" step="0.01" value="1">
+                        </label>
+                    </div>
                 </div>
 
                 <input type="file" id="video-file-input" accept="video/*" hidden>
@@ -162,6 +200,11 @@ class VideoController {
         this.populateEffects();
         this.bindUIEvents();
         this.loadLibrary();
+        this.populateCameraDevices();
+
+        if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
+            navigator.mediaDevices.addEventListener('devicechange', () => this.populateCameraDevices());
+        }
 
         window.addEventListener('pagehide', () => this.persistSession());
     }
@@ -182,13 +225,18 @@ class VideoController {
         if (this._restoring) return;
 
         const isUpload = !!(this.activeSrc && this.activeSrc.indexOf('upload:') === 0);
+        const isScreen = this.activeSrc === 'screen:live';
         writeVideoSession({
             videoMode: this.isVideoMode,
-            source: isUpload ? null : this.activeSrc,
+            source: (isUpload || isScreen) ? null : this.activeSrc,
             title: this.nowPlayingEl ? this.nowPlayingEl.textContent : null,
             effect: this.effectName,
             fit: this.fitMode,
-            mirror: this.mirror
+            mirror: this.mirror,
+            cameraDeviceId: this.cameraDeviceId || null,
+            look: this.look,
+            blendMode: this.blendMode,
+            blendAmount: this.blendAmount
         });
     }
 
@@ -206,15 +254,30 @@ class VideoController {
         if (typeof session.mirror === 'boolean') {
             this.mirror = session.mirror;
         }
+        if (session.cameraDeviceId) {
+            this.cameraDeviceId = session.cameraDeviceId;
+        }
+        if (session.look === 'effect' || session.look === 'shader') {
+            this.look = session.look;
+        }
+        if (session.blendMode) {
+            this.blendMode = session.blendMode;
+        }
+        if (typeof session.blendAmount === 'number') {
+            this.blendAmount = session.blendAmount;
+        }
 
         if (this.effectSelect) this.effectSelect.value = this.effectName;
         if (this.fitSelect) this.fitSelect.value = this.fitMode;
         if (this.mirrorBtn) this.mirrorBtn.classList.toggle('is-on', this.mirror);
+        if (this.blendSelect) this.blendSelect.value = this.blendMode;
+        if (this.blendAmountInput) this.blendAmountInput.value = String(this.blendAmount);
+        this.updateLookUI();
     }
 
     hasRestorableSession() {
         const session = readVideoSession();
-        return !!(session && session.videoMode && session.source);
+        return !!(session && session.source);
     }
 
     /**
@@ -223,19 +286,25 @@ class VideoController {
      */
     async restoreSession() {
         const session = readVideoSession();
-        if (!session || !session.videoMode || !session.source) return false;
+        if (!session || !session.source) return false;
 
         this._restoring = true;
         try {
             if (session.source === 'camera:live') {
-                await this.startCamera();
+                await this.startCamera(session.cameraDeviceId);
             } else {
                 await this.playSource(session.source, session.title);
             }
             if (typeof session.mirror === 'boolean') {
                 this.setMirror(session.mirror);
             }
-            return this.isVideoMode;
+            this.look = (session.look === 'shader') ? 'shader' : 'effect';
+            if (session.blendMode) this.blendMode = session.blendMode;
+            if (typeof session.blendAmount === 'number') this.blendAmount = session.blendAmount;
+            if (this.blendSelect) this.blendSelect.value = this.blendMode;
+            if (this.blendAmountInput) this.blendAmountInput.value = String(this.blendAmount);
+            this.syncMode();
+            return this.hasSource();
         } catch (e) {
             return false;
         } finally {
@@ -252,6 +321,8 @@ class VideoController {
         this.searchInput = $('video-search');
         this.localVideoBtn = $('local-video-btn');
         this.cameraBtn = $('camera-btn');
+        this.cameraDeviceSelect = $('camera-device');
+        this.screenBtn = $('screen-btn');
         this.cacheAllBtn = $('cache-all-btn');
         this.videoFileInput = $('video-file-input');
         this.videoUrlInput = $('video-url-input');
@@ -278,11 +349,32 @@ class VideoController {
         this.speedLabel = $('video-speed-label');
         this.effectSelect = $('video-effect');
         this.seekSection = $('video-seek-section');
+        this.lookToggle = $('video-look');
+        this.blendRow = $('video-blend-row');
+        this.blendSelect = $('video-blend');
+        this.blendAmountInput = $('video-blend-amount');
     }
 
     bindUIEvents() {
         this.localVideoBtn.addEventListener('click', () => this.videoFileInput.click());
         this.cameraBtn.addEventListener('click', () => this.startCamera());
+
+        if (this.cameraDeviceSelect) {
+            this.cameraDeviceSelect.addEventListener('change', () => {
+                const deviceId = this.cameraDeviceSelect.value;
+                this.cameraDeviceId = deviceId;
+                if (this.isLiveSource && this.activeSrc === 'camera:live') {
+                    this.startCamera(deviceId);
+                } else {
+                    this.persistSession();
+                }
+            });
+        }
+
+        if (this.screenBtn) {
+            this.screenBtn.hidden = !(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia);
+            this.screenBtn.addEventListener('click', () => this.startScreen());
+        }
 
         if (this.cacheAllBtn) {
             this.cacheAllBtn.hidden = !VideoCache.supported();
@@ -374,8 +466,7 @@ class VideoController {
         this.playPauseBtn.addEventListener('click', () => this.videoHandler.togglePlay());
 
         this.exitBtn.addEventListener('click', () => {
-            this.videoHandler.pause();
-            this.setVideoMode(false);
+            this.detachSource();
         });
 
         this.muteBtn.addEventListener('click', () => {
@@ -400,8 +491,35 @@ class VideoController {
         });
 
         this.effectSelect.addEventListener('change', () => {
+            // Picking an effect is an explicit request to see the effect look.
+            this.look = 'effect';
+            this.syncMode();
             this.setEffect(this.effectSelect.value);
         });
+
+        if (this.lookToggle) {
+            this.lookToggle.addEventListener('click', (e) => {
+                const btn = e.target.closest('[data-look]');
+                if (!btn) return;
+                this.look = btn.dataset.look;
+                this.syncMode();
+                this.persistSession();
+            });
+        }
+
+        if (this.blendSelect) {
+            this.blendSelect.addEventListener('change', () => {
+                this.blendMode = this.blendSelect.value;
+                this.persistSession();
+            });
+        }
+
+        if (this.blendAmountInput) {
+            this.blendAmountInput.addEventListener('input', () => {
+                this.blendAmount = parseFloat(this.blendAmountInput.value);
+                this.persistSession();
+            });
+        }
 
         this.mirrorBtn.addEventListener('click', () => this.setMirror(!this.mirror));
 
@@ -666,7 +784,43 @@ class VideoController {
 
     // === Camera ===
 
-    async startCamera() {
+    /**
+     * List available cameras into #camera-device. Labels are blank until a
+     * getUserMedia permission has been granted at least once, so callers fall
+     * back to "Camera N" — this is re-run after a successful startCamera() and
+     * on devicechange so labels and the device list stay current.
+     */
+    async populateCameraDevices() {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
+
+        try {
+            const devices = await navigator.mediaDevices.enumerateDevices();
+            const cams = devices.filter((d) => d.kind === 'videoinput');
+            this.cameraDevices = cams;
+            if (!this.cameraDeviceSelect) return;
+
+            const previous = this.cameraDeviceSelect.value || this.cameraDeviceId || '';
+
+            this.cameraDeviceSelect.innerHTML = '';
+            cams.forEach((d, i) => {
+                const option = document.createElement('option');
+                option.value = d.deviceId;
+                option.textContent = d.label || `Camera ${i + 1}`;
+                this.cameraDeviceSelect.appendChild(option);
+            });
+
+            this.cameraDeviceSelect.hidden = cams.length < 2;
+
+            if (previous && cams.some((d) => d.deviceId === previous)) {
+                this.cameraDeviceSelect.value = previous;
+            }
+        } catch (e) {
+            // enumerateDevices can be flaky pre-permission on some browsers;
+            // leave the picker hidden rather than surface an error for it.
+        }
+    }
+
+    async startCamera(deviceId) {
         if (!window.isSecureContext) {
             this.showCameraError('Camera needs https:// or localhost');
             return;
@@ -676,14 +830,33 @@ class VideoController {
             return;
         }
 
+        const targetDeviceId = deviceId
+            || (this.cameraDeviceSelect && this.cameraDeviceSelect.value)
+            || this.cameraDeviceId;
+
         this.cameraBtn.classList.add('is-busy');
         try {
             // Video only. The FFT already owns the microphone, and grabbing it
             // twice would fight over the device.
+            const videoConstraints = {
+                width: { ideal: 1920 },
+                height: { ideal: 1080 },
+                frameRate: { ideal: 60 }
+            };
+            if (targetDeviceId) {
+                videoConstraints.deviceId = { exact: targetDeviceId };
+            }
+
             const stream = await navigator.mediaDevices.getUserMedia({
-                video: { width: { ideal: 1920 }, height: { ideal: 1080 } },
+                video: videoConstraints,
                 audio: false
             });
+
+            const settings = stream.getVideoTracks()[0] && stream.getVideoTracks()[0].getSettings();
+            this.cameraDeviceId = targetDeviceId || (settings && settings.deviceId) || this.cameraDeviceId;
+            if (this.cameraDeviceSelect && this.cameraDeviceId) {
+                this.cameraDeviceSelect.value = this.cameraDeviceId;
+            }
 
             this.activeSrc = 'camera:live';
             this.videoHandler.loadStream(stream, 'camera:live');
@@ -692,11 +865,54 @@ class VideoController {
             this.setMirror(true);
             this.showDock(this.cameraLabel(stream));
             this.updateActiveCard();
+            this.populateCameraDevices();
         } catch (err) {
             // Leave any current clip/mode alone — the camera never attached.
             this.showCameraError(this.cameraErrorMessage(err));
         } finally {
             this.cameraBtn.classList.remove('is-busy');
+        }
+    }
+
+    // === Screen share ===
+
+    async startScreen() {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+            this.showCameraError('This browser has no screen share API');
+            return;
+        }
+
+        if (this.screenBtn) this.screenBtn.classList.add('is-busy');
+        try {
+            const stream = await navigator.mediaDevices.getDisplayMedia({
+                video: { frameRate: { ideal: 60 } },
+                audio: false
+            });
+
+            this.activeSrc = 'screen:live';
+            this.videoHandler.loadStream(stream, 'screen:live');
+            this.setVideoMode(true);
+            this.setLiveUI(true);
+            this.setMirror(false);
+
+            const track = stream.getVideoTracks()[0];
+            this.showDock(track && track.label ? `Screen — ${track.label}` : 'Screen');
+            this.updateActiveCard();
+
+            if (track) {
+                // The browser's own "Stop sharing" UI ends the track directly.
+                // That must fully detach the source, not just switch the look —
+                // there is nothing left to sample once the OS tears it down.
+                track.addEventListener('ended', () => {
+                    if (this.activeSrc === 'screen:live') {
+                        this.detachSource();
+                    }
+                });
+            }
+        } catch (err) {
+            this.showCameraError(this.cameraErrorMessage(err, true));
+        } finally {
+            if (this.screenBtn) this.screenBtn.classList.remove('is-busy');
         }
     }
 
@@ -712,7 +928,10 @@ class VideoController {
         return track && track.label ? `Camera — ${track.label}` : 'Camera';
     }
 
-    cameraErrorMessage(err) {
+    cameraErrorMessage(err, isScreen) {
+        if (isScreen && err && err.name === 'NotAllowedError') {
+            return 'Screen share cancelled';
+        }
         switch (err && err.name) {
             case 'NotAllowedError':
             case 'SecurityError':
@@ -727,12 +946,35 @@ class VideoController {
         }
     }
 
+    /** Thin alias kept for any remaining callers; detachSource() is the real thing now. */
     stopCamera() {
-        this.videoHandler.releaseSource();
+        this.detachSource();
+    }
+
+    /**
+     * Fully release whatever is currently attached — stream tracks stopped, file
+     * source cleared — and drop back to no source at all. This is the only path
+     * that should ever stop playback; setVideoMode() only switches the look.
+     */
+    detachSource() {
+        this.videoHandler.unload();
+
+        this.activeSrc = null;
         this.setLiveUI(false);
         this.setMirror(false);
-        this.activeSrc = null;
+
+        if (this.previewVideo) {
+            this.previewVideo.remove();
+            this.previewVideo = null;
+        }
+        if (this.seekBar) this.seekBar.value = '0';
+        if (this.currentTimeEl) this.currentTimeEl.textContent = '0:00';
+        if (this.durationEl) this.durationEl.textContent = '0:00';
+
+        if (this.dock) this.dock.hidden = true;
         this.updateActiveCard();
+        this.syncMode();
+        this.persistSession();
     }
 
     /**
@@ -938,9 +1180,9 @@ class VideoController {
     // === Render hooks ===
 
     updateVideoTexture() {
-        if (this.isVideoMode) {
-            this.videoHandler.updateVideoTexture();
-        }
+        // The caller (the render loop) already decides whether the current
+        // program can see the source at all; this just does the upload.
+        this.videoHandler.updateVideoTexture();
     }
 
     getVideoTexture() {
@@ -976,6 +1218,9 @@ class VideoController {
         const currentIndex = names.indexOf(this.effectName);
         const delta = direction === 'left' ? -1 : 1;
         const nextIndex = (currentIndex + delta + names.length) % names.length;
+        // Cycling effects is an explicit request to see the effect look.
+        this.look = 'effect';
+        this.syncMode();
         this.setEffect(names[nextIndex]);
         if (this.effectSelect) this.effectSelect.value = this.effectName;
     }
@@ -988,22 +1233,57 @@ class VideoController {
         this.effectDirty = false;
     }
 
+    /** True when a source is attached AND the current look is the video effect. */
     isInVideoMode() {
-        return this.isVideoMode;
+        return this.hasSource() && this.look === 'effect';
     }
 
-    setVideoMode(enabled) {
-        // Every exit route lands here — the dock's close button and any shader
-        // being applied — so the camera is released in one place.
-        if (!enabled && this.videoHandler.isLive()) {
-            this.stopCamera();
-        }
+    /** True when a clip is loaded or a live stream (camera/screen) is attached. */
+    hasSource() {
+        return this.videoHandler.videoLoaded || this.videoHandler.isLive();
+    }
 
-        this.isVideoMode = enabled;
-        this.videoHandler.setVideoMode(enabled);
+    /**
+     * Recompute isVideoMode from source + look and push it out to the parts that
+     * need it in sync (the handler's bookkeeping flag, the dock's look toggle,
+     * the blend row's visibility). Call this any time source or look changes.
+     */
+    syncMode() {
+        this.isVideoMode = this.isInVideoMode();
+        this.videoHandler.setVideoMode(this.isVideoMode);
         if (this.root) {
-            this.root.classList.toggle('is-live', enabled);
+            this.root.classList.toggle('is-live', this.isVideoMode);
         }
+        this.updateLookUI();
+    }
+
+    updateLookUI() {
+        if (this.lookToggle) {
+            this.lookToggle.querySelectorAll('[data-look]').forEach((btn) => {
+                btn.classList.toggle('is-on', btn.dataset.look === this.look);
+            });
+        }
+        if (this.blendRow) {
+            this.blendRow.hidden = this.look !== 'shader';
+        }
+    }
+
+    getBlendMode() {
+        const map = { off: 0, under: 1, over: 2, key: 3, multiply: 4 };
+        return map[this.blendMode] ?? 1;
+    }
+
+    getBlendAmount() {
+        return this.blendAmount;
+    }
+
+    /**
+     * Switch the *look* only. The source (camera/clip/screen) keeps playing
+     * either way — detachSource() is the only thing that stops it.
+     */
+    setVideoMode(enabled) {
+        this.look = enabled ? 'effect' : 'shader';
+        this.syncMode();
         this.persistSession();
     }
 
