@@ -68,7 +68,7 @@ class VideoController {
 
     /**
      * Build the library UI inside the supplied container. Called once the shader
-     * editor has created the video tab.
+     * editor has created the media tab.
      */
     mountUI(container) {
         if (!container || this.root) return;
@@ -78,7 +78,7 @@ class VideoController {
                 <div class="vlib__toolbar">
                     <div class="vlib__search">
                         <i class="fas fa-search"></i>
-                        <input type="text" id="video-search" placeholder="Search clips..." autocomplete="off">
+                        <input type="text" id="video-search" placeholder="Search media..." autocomplete="off">
                     </div>
                     <button class="vlib__icon-btn vlib__icon-btn--ghost" id="cache-all-btn" title="Download remote clips for offline playback">
                         <i class="fas fa-cloud-download-alt"></i>
@@ -90,13 +90,13 @@ class VideoController {
                     <button class="vlib__icon-btn vlib__icon-btn--ghost" id="screen-btn" title="Use a screen or window as a live source">
                         <i class="fas fa-desktop"></i>
                     </button>
-                    <button class="vlib__icon-btn" id="local-video-btn" title="Upload a video">
+                    <button class="vlib__icon-btn" id="local-video-btn" title="Upload a video or image">
                         <i class="fas fa-plus"></i>
                     </button>
                 </div>
 
                 <div class="vlib__url">
-                    <input type="text" id="video-url-input" placeholder="Paste a video URL..." autocomplete="off">
+                    <input type="text" id="video-url-input" placeholder="Paste a video or image URL..." autocomplete="off">
                     <button id="load-url-btn">Load</button>
                 </div>
 
@@ -174,8 +174,8 @@ class VideoController {
                             Blend
                             <select id="video-blend">
                                 <option value="off">Off</option>
-                                <option value="under" selected>Video under</option>
-                                <option value="over">Video over</option>
+                                <option value="under" selected>Media under</option>
+                                <option value="over">Media over</option>
                                 <option value="key">Luma key</option>
                                 <option value="multiply">Multiply</option>
                             </select>
@@ -187,9 +187,9 @@ class VideoController {
                     </div>
                 </div>
 
-                <input type="file" id="video-file-input" accept="video/*" hidden>
+                <input type="file" id="video-file-input" accept="video/*,image/*" hidden>
                 <div class="vlib__drop" id="video-dropzone">
-                    <div><i class="fas fa-film"></i><span>Drop a video to play it</span></div>
+                    <div><i class="fas fa-photo-video"></i><span>Drop a video or image to play it</span></div>
                 </div>
             </div>
         `;
@@ -409,7 +409,7 @@ class VideoController {
             }
 
             const card = e.target.closest('.vcard');
-            if (card) this.playSource(card.dataset.src, card.dataset.title);
+            if (card) this.playSource(card.dataset.src, card.dataset.title, card.dataset.kind);
         });
 
         this.grid.addEventListener('keydown', (e) => {
@@ -668,7 +668,7 @@ class VideoController {
         this.entries = available;
 
         if (!available.length) {
-            this.statusEl.textContent = 'No clips found. Upload, drop a file, or add entries to videos/index.json.';
+        this.statusEl.textContent = 'No media found. Upload, drop a file, or add entries under media/videos or media/images.';
             return;
         }
 
@@ -684,20 +684,22 @@ class VideoController {
             .replace(/</g, '&lt;');
 
         this.grid.innerHTML = entries.map((entry) => {
+            const kind = entry.kind || (VideoLibrary.isImageSrc(entry.src) ? 'image' : 'video');
             const remote = VideoCache.isCacheable(entry.src);
             const cacheControl = remote
                 ? `<span class="vcard__cache" data-cache-src="${escapeAttr(entry.src)}" title="Save offline" role="button" tabindex="0" aria-label="Save offline">
                         <i class="fas fa-download"></i>
                    </span>`
                 : '';
+            const playIcon = kind === 'image' ? 'fa-image' : 'fa-play';
 
             return `
-            <button class="vcard" data-src="${escapeAttr(entry.src)}" data-title="${escapeAttr(entry.title)}">
+            <button class="vcard" data-src="${escapeAttr(entry.src)}" data-title="${escapeAttr(entry.title)}" data-kind="${kind}">
                 <span class="vcard__thumb">
                     <span class="vcard__skeleton"></span>
                     <span class="vcard__badge" hidden></span>
                     ${cacheControl}
-                    <span class="vcard__play"><i class="fas fa-play"></i></span>
+                    <span class="vcard__play"><i class="fas ${playIcon}"></i></span>
                 </span>
                 <span class="vcard__title">${escapeAttr(entry.title)}</span>
                 <span class="vcard__meta"></span>
@@ -738,7 +740,7 @@ class VideoController {
         if (this.thumbnailsRequested.has(src)) return;
         this.thumbnailsRequested.add(src);
 
-        const meta = await VideoLibrary.generateThumbnail(src);
+        const meta = await VideoLibrary.generateThumbnail(src, { kind: card.dataset.kind });
         const thumb = card.querySelector('.vcard__thumb');
         const skeleton = card.querySelector('.vcard__skeleton');
         const badge = card.querySelector('.vcard__badge');
@@ -778,7 +780,7 @@ class VideoController {
 
         this.statusEl.hidden = visible > 0 || this.entries.length === 0;
         if (!visible && this.entries.length) {
-            this.statusEl.textContent = `No clips match “${this.searchInput.value.trim()}”.`;
+            this.statusEl.textContent = `No media match “${this.searchInput.value.trim()}”.`;
         }
     }
 
@@ -983,10 +985,19 @@ class VideoController {
      */
     setLiveUI(live) {
         this.isLiveSource = live;
-        if (this.seekSection) this.seekSection.hidden = live;
-        if (this.loopBtn) this.loopBtn.hidden = live;
-        if (this.speedLabel) this.speedLabel.hidden = live;
+        this.syncTransportUI();
         if (this.root) this.root.classList.toggle('is-camera', live);
+    }
+
+    syncTransportUI() {
+        const hideTransport = this.isLiveSource || this.videoHandler.isStill();
+        if (this.seekSection) this.seekSection.hidden = hideTransport;
+        if (this.loopBtn) this.loopBtn.hidden = hideTransport;
+        if (this.speedLabel) this.speedLabel.hidden = hideTransport;
+        if (this.playPauseBtn) this.playPauseBtn.hidden = hideTransport;
+        if (this.muteBtn) this.muteBtn.hidden = this.videoHandler.isStill();
+        if (this.volumeBar) this.volumeBar.hidden = this.videoHandler.isStill();
+        if (this.root) this.root.classList.toggle('is-still', this.videoHandler.isStill());
     }
 
     setMirror(enabled) {
@@ -1001,9 +1012,11 @@ class VideoController {
 
     // === Playback ===
 
-    async playSource(src, title) {
+    async playSource(src, title, kind) {
+        const sourceKind = kind || (this.entries.find((entry) => entry.src === src) || {}).kind
+            || (VideoLibrary.isImageSrc(src) ? 'image' : 'video');
         this.activeSrc = src;
-        // loadVideo() releases any live stream itself; only the UI needs resetting.
+        // loadVideo()/loadImage() release any live stream themselves; only the UI needs resetting.
         this.setLiveUI(false);
         this.setMirror(false);
         this.setVideoMode(true);
@@ -1011,10 +1024,18 @@ class VideoController {
         this.updateActiveCard();
 
         const resolved = await VideoCache.resolveForPlayback(src, { warm: false });
-        this.videoHandler.loadVideo(resolved.playUrl, {
-            sourceId: src,
-            isObjectUrl: resolved.isObjectUrl
-        });
+        if (sourceKind === 'image') {
+            this.videoHandler.loadImage(resolved.playUrl, {
+                sourceId: src,
+                isObjectUrl: resolved.isObjectUrl
+            });
+        } else {
+            this.videoHandler.loadVideo(resolved.playUrl, {
+                sourceId: src,
+                isObjectUrl: resolved.isObjectUrl
+            });
+        }
+        this.syncTransportUI();
 
         if (!resolved.fromCache && VideoCache.isCacheable(src)) {
             VideoCache.put(src).then((ok) => {
@@ -1098,7 +1119,9 @@ class VideoController {
     }
 
     playFile(file) {
-        if (!file.type.startsWith('video/')) {
+        const isImage = file.type.startsWith('image/');
+        const isVideo = file.type.startsWith('video/');
+        if (!isImage && !isVideo) {
             this.showDock('Unsupported file type');
             return;
         }
@@ -1108,6 +1131,7 @@ class VideoController {
         this.setMirror(false);
         this.videoHandler.loadVideoFile(file);
         this.setVideoMode(true);
+        this.syncTransportUI();
         this.showDock(file.name);
         this.updateActiveCard();
     }
@@ -1127,7 +1151,7 @@ class VideoController {
 
     setupVideoEventListeners() {
         document.addEventListener('videoMetadataLoaded', (e) => {
-            const { duration, width, height } = e.detail;
+            const { duration, width, height, still } = e.detail;
 
             if (this.durationEl) {
                 this.durationEl.textContent = VideoLibrary.formatDuration(duration) || '0:00';
@@ -1136,7 +1160,8 @@ class VideoController {
                 this.nowPlayingEl.title = `${width}×${height}`;
             }
 
-            this.videoHandler.play();
+            this.syncTransportUI();
+            if (!still) this.videoHandler.play();
         });
 
         document.addEventListener('videoTimeUpdate', (e) => {
@@ -1158,7 +1183,7 @@ class VideoController {
         document.addEventListener('videoError', (e) => {
             console.error('Video error:', e.detail.error);
             if (this.nowPlayingEl) {
-                this.nowPlayingEl.textContent = 'Could not play that video';
+                this.nowPlayingEl.textContent = 'Could not load that media';
             }
         });
     }

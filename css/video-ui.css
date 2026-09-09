@@ -1,4 +1,4 @@
-/* Video Tab UI Styling */
+/* Media Tab UI Styling */
 
 /* Tab System */
 .tab-container {
@@ -655,6 +655,16 @@
 @keyframes vlib-live-pulse {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.25; }
+}
+
+/* ===== Still image source ===== */
+.vlib.is-still #video-seek-section,
+.vlib.is-still #play-pause-btn,
+.vlib.is-still #mute-btn,
+.vlib.is-still #volume-bar,
+.vlib.is-still #loop-video,
+.vlib.is-still #video-speed-label {
+    display: none;
 }
 
 /* Range inputs */

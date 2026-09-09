@@ -593,12 +593,15 @@ const kioskHtmlContent = `<!DOCTYPE html>
                 const controller = window.opener && window.opener.videoController;
                 if (!controller || !controller.hasSource()) return null;
 
-                const element = controller.videoHandler.videoElement;
+                const handler = controller.videoHandler;
+                const element = handler.getTextureElement ? handler.getTextureElement() : handler.videoElement;
                 if (!element) return null;
 
                 const size = controller.getVideoSize();
+                const still = handler.isStill ? handler.isStill() : false;
                 return {
                     element: element,
+                    still: still,
                     width: size.width,
                     height: size.height,
                     fitMode: controller.getFitMode(),
@@ -680,52 +683,64 @@ const kioskHtmlContent = `<!DOCTYPE html>
                 
                 if (videoState) {
                     try {
-                        watchOpenerFrames(videoState.element);
+                        if (videoState.still) {
+                            if (watchedVideoElement !== videoState.element) {
+                                watchedVideoElement = videoState.element;
+                                videoHasNewFrame = true;
+                                videoUsesFrameCallback = false;
+                            }
+                        } else {
+                            watchOpenerFrames(videoState.element);
+                        }
 
                         gl.activeTexture(gl.TEXTURE1);
                         gl.bindTexture(gl.TEXTURE_2D, videoTexture);
 
+                        const el = videoState.element;
+                        const vw = videoState.still ? el.naturalWidth : el.videoWidth;
+                        const vh = videoState.still ? el.naturalHeight : el.videoHeight;
+                        const ready = videoState.still
+                            ? (el.complete && vw && vh)
+                            : (el.readyState >= 2);
+
                         // Upload when the video-effect look needs iChannel1, OR any
                         // shader on screen declares iVideo — a library shader with
                         // no iVideo uniform gets nothing to skip the upload cost.
-                        if ((videoState.effectLook || kioskUniforms.iVideo) &&
-                            videoState.element.readyState >= 2 &&
-                            (!videoUsesFrameCallback || videoHasNewFrame)) {
-                            const vw = videoState.element.videoWidth;
-                            const vh = videoState.element.videoHeight;
+                        // Stills upload once; clips skip repeat frames via rVFC.
+                        const wantsUpload = videoState.effectLook || kioskUniforms.iVideo;
+                        const hasNew = videoState.still ? videoHasNewFrame : (!videoUsesFrameCallback || videoHasNewFrame);
 
-                            if (vw && vh) {
-                                videoHasNewFrame = false;
+                        if (wantsUpload && ready && hasNew && vw && vh) {
+                            videoHasNewFrame = false;
 
-                                // Avoid the browser's default colorspace conversion / Y-flip
-                                // work on every frame; the shaders already handle the flip.
-                                gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.NONE);
-                                gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+                            // Avoid the browser's default colorspace conversion / Y-flip
+                            // work on every frame; the shaders already handle the flip.
+                            gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.NONE);
+                            gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
 
-                                if (isWebGL2) {
-                                    if (videoTexWidth !== vw || videoTexHeight !== vh) {
-                                        // Immutable storage can't be resized in place; recreate
-                                        // the texture object and re-apply its sampling params.
-                                        gl.deleteTexture(videoTexture);
-                                        videoTexture = gl.createTexture();
-                                        gl.activeTexture(gl.TEXTURE1);
-                                        gl.bindTexture(gl.TEXTURE_2D, videoTexture);
-                                        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-                                        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-                                        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-                                        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-                                        gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA8, vw, vh);
-                                        videoTexWidth = vw;
-                                        videoTexHeight = vh;
-                                    }
-
-                                    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, videoState.element);
-                                } else {
-                                    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, videoState.element);
+                            if (isWebGL2) {
+                                if (videoTexWidth !== vw || videoTexHeight !== vh) {
+                                    // Immutable storage can't be resized in place; recreate
+                                    // the texture object and re-apply its sampling params.
+                                    gl.deleteTexture(videoTexture);
+                                    videoTexture = gl.createTexture();
+                                    gl.activeTexture(gl.TEXTURE1);
+                                    gl.bindTexture(gl.TEXTURE_2D, videoTexture);
+                                    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+                                    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+                                    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+                                    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+                                    gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA8, vw, vh);
+                                    videoTexWidth = vw;
+                                    videoTexHeight = vh;
                                 }
 
-                                gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.BROWSER_DEFAULT_WEBGL);
+                                gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, el);
+                            } else {
+                                gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, el);
                             }
+
+                            gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.BROWSER_DEFAULT_WEBGL);
                         }
                     } catch (e) {
                         videoHasNewFrame = true;

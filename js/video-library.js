@@ -1,8 +1,10 @@
 /**
  * Video Library for Pianoscope Visualizer
  *
- * Discovers clips in videos/ at runtime (no hardcoded catalog), then generates
- * poster frames + metadata on demand.
+ * Discovers clips in media/videos/ at runtime (no hardcoded catalog), then
+ * generates poster frames + metadata on demand.
+ *
+ * Visualizer source stills live in media/images/ (UI assets stay in images/).
  */
 
 window.VideoLibrary = (function () {
@@ -11,8 +13,19 @@ window.VideoLibrary = (function () {
     const THUMB_CACHE_PREFIX = 'psv:thumb:v1:';
     const THUMB_WIDTH = 320;
     const THUMB_HEIGHT = 180;
-    const VIDEOS_DIR = 'videos';
+    const MEDIA_DIR = 'media';
+    const VIDEOS_DIR = `${MEDIA_DIR}/videos`;
+    const IMAGES_DIR = `${MEDIA_DIR}/images`;
     const VIDEO_EXT = /\.(mp4|webm|mov|ogg|ogv|m4v)$/i;
+    const IMAGE_EXT = /\.(png|jpe?g|gif|webp|bmp|avif)$/i;
+
+    const VIDEO_KIND = { dir: VIDEOS_DIR, ext: VIDEO_EXT, kind: 'video', jsonKeys: ['videos', 'files'] };
+    const IMAGE_KIND = { dir: IMAGES_DIR, ext: IMAGE_EXT, kind: 'image', jsonKeys: ['images', 'files'] };
+
+    function isImageSrc(src) {
+        if (!src || typeof src !== 'string') return false;
+        return IMAGE_EXT.test(src.split('?')[0].split('#')[0]);
+    }
 
     function decodeHtml(value) {
         const textarea = document.createElement('textarea');
@@ -42,23 +55,24 @@ window.VideoLibrary = (function () {
         );
     }
 
-    function entriesFromNames(names) {
-        const unique = [...new Set(names.filter((name) => name && VIDEO_EXT.test(name)))];
+    function entriesFromNames(names, spec) {
+        const unique = [...new Set(names.filter((name) => name && spec.ext.test(name)))];
         return sortEntries(unique.map((name) => ({
-            src: `${VIDEOS_DIR}/${name}`,
-            title: titleFromSrc(name)
+            src: `${spec.dir}/${name}`,
+            title: titleFromSrc(name),
+            kind: spec.kind
         })));
     }
 
-    function entryFromItem(item) {
+    function entryFromItem(item, spec) {
         if (typeof item === 'string') {
             if (isAbsoluteUrl(item)) {
-                if (!VIDEO_EXT.test(item.split('?')[0])) return null;
-                return { src: item, title: titleFromSrc(item) };
+                if (!spec.ext.test(item.split('?')[0])) return null;
+                return { src: item, title: titleFromSrc(item), kind: spec.kind };
             }
             const name = fileNameFromHref(item);
-            if (!name || !VIDEO_EXT.test(name)) return null;
-            return { src: `${VIDEOS_DIR}/${name}`, title: titleFromSrc(name) };
+            if (!name || !spec.ext.test(name)) return null;
+            return { src: `${spec.dir}/${name}`, title: titleFromSrc(name), kind: spec.kind };
         }
 
         if (item && typeof item === 'object') {
@@ -66,18 +80,20 @@ window.VideoLibrary = (function () {
             if (!raw) return null;
 
             if (isAbsoluteUrl(raw)) {
-                if (!VIDEO_EXT.test(raw.split('?')[0])) return null;
+                if (!spec.ext.test(raw.split('?')[0])) return null;
                 return {
                     src: raw,
-                    title: item.title || titleFromSrc(raw)
+                    title: item.title || titleFromSrc(raw),
+                    kind: spec.kind
                 };
             }
 
             const name = fileNameFromHref(raw);
-            if (!name || !VIDEO_EXT.test(name)) return null;
+            if (!name || !spec.ext.test(name)) return null;
             return {
-                src: `${VIDEOS_DIR}/${name}`,
-                title: item.title || titleFromSrc(name)
+                src: `${spec.dir}/${name}`,
+                title: item.title || titleFromSrc(name),
+                kind: spec.kind
             };
         }
 
@@ -104,7 +120,7 @@ window.VideoLibrary = (function () {
         return sortEntries([...byKey.values()]);
     }
 
-    function parseDirectoryHtml(html) {
+    function parseDirectoryHtml(html, spec) {
         const names = [];
         const hrefRe = /href\s*=\s*["']([^"']+)["']/gi;
         let match;
@@ -112,53 +128,57 @@ window.VideoLibrary = (function () {
             const name = fileNameFromHref(match[1]);
             if (name) names.push(name);
         }
-        return entriesFromNames(names);
+        return entriesFromNames(names, spec);
     }
 
     /**
-     * npx serve and python's http.server both emit an HTML index for videos/.
+     * npx serve and python's http.server both emit an HTML index for media/*.
      * GitHub Pages does not, so this returns null there and we fall through.
      */
-    async function listFromDirectory() {
+    async function listFromDirectory(spec) {
         try {
-            const response = await fetch(`${VIDEOS_DIR}/`, { cache: 'no-store' });
+            const response = await fetch(`${spec.dir}/`, { cache: 'no-store' });
             if (!response.ok) return null;
 
             const type = response.headers.get('content-type') || '';
             if (type.includes('application/json')) {
                 const data = await response.json();
-                return entriesFromJson(data);
+                return entriesFromJson(data, spec);
             }
 
-            const entries = parseDirectoryHtml(await response.text());
+            const entries = parseDirectoryHtml(await response.text(), spec);
             return entries.length ? entries : null;
         } catch (error) {
             return null;
         }
     }
 
-    function entriesFromJson(data) {
+    function entriesFromJson(data, spec) {
         if (!data) return null;
 
-        const raw = Array.isArray(data)
-            ? data
-            : Array.isArray(data.files)
-                ? data.files
-                : Array.isArray(data.videos)
-                    ? data.videos
-                    : null;
+        let raw = null;
+        if (Array.isArray(data)) {
+            raw = data;
+        } else {
+            for (const key of spec.jsonKeys) {
+                if (Array.isArray(data[key])) {
+                    raw = data[key];
+                    break;
+                }
+            }
+        }
 
         if (!raw) return null;
 
-        const entries = raw.map(entryFromItem).filter(Boolean);
+        const entries = raw.map((item) => entryFromItem(item, spec)).filter(Boolean);
         return entries.length ? sortEntries(entries) : null;
     }
 
-    async function listFromManifest() {
+    async function listFromManifest(spec) {
         try {
-            const response = await fetch(`${VIDEOS_DIR}/index.json`, { cache: 'no-store' });
+            const response = await fetch(`${spec.dir}/index.json`, { cache: 'no-store' });
             if (!response.ok) return null;
-            return entriesFromJson(await response.json());
+            return entriesFromJson(await response.json(), spec);
         } catch (error) {
             return null;
         }
@@ -178,15 +198,15 @@ window.VideoLibrary = (function () {
 
     /**
      * GitHub Pages has no directory listing, but the public Contents API can
-     * enumerate whatever is committed under videos/.
+     * enumerate whatever is committed under media/videos or media/images.
      */
-    async function listFromGitHub() {
+    async function listFromGitHub(spec) {
         const repo = githubPagesRepo();
         if (!repo) return null;
 
         try {
             const response = await fetch(
-                `https://api.github.com/repos/${repo.owner}/${repo.repo}/contents/${VIDEOS_DIR}`,
+                `https://api.github.com/repos/${repo.owner}/${repo.repo}/contents/${spec.dir}`,
                 { headers: { Accept: 'application/vnd.github+json' } }
             );
             if (!response.ok) return null;
@@ -198,20 +218,28 @@ window.VideoLibrary = (function () {
                 .filter((item) => item && item.type === 'file' && item.name)
                 .map((item) => item.name);
 
-            const entries = entriesFromNames(names);
+            const entries = entriesFromNames(names, spec);
             return entries.length ? entries : null;
         } catch (error) {
             return null;
         }
     }
 
-    async function list() {
+    async function listKind(spec) {
         const [directory, manifest, github] = await Promise.all([
-            listFromDirectory(),
-            listFromManifest(),
-            listFromGitHub()
+            listFromDirectory(spec),
+            listFromManifest(spec),
+            listFromGitHub(spec)
         ]);
         return mergeEntries(directory || [], manifest || [], github || []);
+    }
+
+    async function list() {
+        const [videos, images] = await Promise.all([
+            listKind(VIDEO_KIND),
+            listKind(IMAGE_KIND)
+        ]);
+        return sortEntries([...(videos || []), ...(images || [])]);
     }
 
     async function probe() {
@@ -240,7 +268,45 @@ window.VideoLibrary = (function () {
      * Resolves with a null poster when the frame cannot be read (e.g. a
      * cross-origin source that taints the canvas).
      */
-    function generateThumbnail(src, { useCache = true } = {}) {
+    function generateImageThumbnail(src) {
+        return new Promise((resolve) => {
+            const img = new Image();
+            let settled = false;
+
+            const finish = (data) => {
+                if (settled) return;
+                settled = true;
+                resolve(data);
+            };
+
+            const timeout = setTimeout(() => {
+                finish({ poster: null, duration: 0, width: 0, height: 0, kind: 'image' });
+            }, 15000);
+
+            img.crossOrigin = 'anonymous';
+            img.onload = () => {
+                clearTimeout(timeout);
+                finish({
+                    poster: src,
+                    duration: 0,
+                    width: img.naturalWidth,
+                    height: img.naturalHeight,
+                    kind: 'image'
+                });
+            };
+            img.onerror = () => {
+                clearTimeout(timeout);
+                finish({ poster: null, duration: 0, width: 0, height: 0, kind: 'image' });
+            };
+            img.src = src;
+        });
+    }
+
+    function generateThumbnail(src, { useCache = true, kind } = {}) {
+        if (kind === 'image' || isImageSrc(src)) {
+            return generateImageThumbnail(src);
+        }
+
         if (useCache) {
             const cached = readCachedThumb(src);
             if (cached) return Promise.resolve(cached);
@@ -329,6 +395,10 @@ window.VideoLibrary = (function () {
     }
 
     return {
+        MEDIA_DIR,
+        VIDEOS_DIR,
+        IMAGES_DIR,
+        isImageSrc,
         list,
         probe,
         generateThumbnail,

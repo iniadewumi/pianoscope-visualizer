@@ -254,7 +254,7 @@ void main() {
         videoTabBtn.type = 'button';
         videoTabBtn.className = 'tab-button';
         videoTabBtn.dataset.tab = 'video';
-        videoTabBtn.textContent = 'Video';
+        videoTabBtn.textContent = 'Media';
         tabContainer.appendChild(shaderTabBtn);
         tabContainer.appendChild(videoTabBtn);
         uiContainer.appendChild(tabContainer);
@@ -371,12 +371,21 @@ void main() {
         displayTextInput.placeholder = 'LET THE MUSIC\nDO THE TALKING';
         displayTextInput.autocomplete = 'off';
         displayTextInput.spellcheck = false;
+        const displayTextActions = document.createElement('div');
+        displayTextActions.className = 'display-text-actions';
         const displayTextApply = document.createElement('button');
         displayTextApply.type = 'button';
         displayTextApply.className = 'shader-editor-button apply-button display-text-apply';
         displayTextApply.innerHTML = '<i class="fas fa-check"></i><span>Apply</span>';
+        const displayTextClear = document.createElement('button');
+        displayTextClear.type = 'button';
+        displayTextClear.className = 'shader-editor-button reset-button display-text-clear';
+        displayTextClear.innerHTML = '<i class="fas fa-times"></i><span>Clear</span>';
+        displayTextClear.title = 'Remove display text from the wall';
+        displayTextActions.appendChild(displayTextApply);
+        displayTextActions.appendChild(displayTextClear);
         displayTextRow.appendChild(displayTextInput);
-        displayTextRow.appendChild(displayTextApply);
+        displayTextRow.appendChild(displayTextActions);
         displayTextPanel.appendChild(displayTextLabel);
         displayTextPanel.appendChild(displayTextRow);
         const displayTextMeta = document.createElement('div');
@@ -472,7 +481,14 @@ void main() {
         previewBtn.title = 'Re-apply the current text using the selected transition';
         transitionRow.appendChild(transitionSelect);
         transitionRow.appendChild(previewBtn);
-        displayTextPanel.appendChild(transitionRow);
+        const displayTextExtras = document.createElement('div');
+        displayTextExtras.className = 'display-text-extras ui-section';
+        const extrasLabel = document.createElement('label');
+        extrasLabel.className = 'display-text-label';
+        extrasLabel.textContent = 'Transition';
+        extrasLabel.htmlFor = 'display-text-transition';
+        displayTextExtras.appendChild(extrasLabel);
+        displayTextExtras.appendChild(transitionRow);
 
         // ---- sequencer transport ----
         const seqSection = document.createElement('div');
@@ -575,7 +591,7 @@ void main() {
         displayTextHelp.appendChild(helpSummary);
         displayTextHelp.appendChild(helpBody);
         seqSection.appendChild(displayTextHelp);
-        displayTextPanel.appendChild(seqSection);
+        displayTextExtras.appendChild(seqSection);
         if (window.PianoscopeDisplayText) {
             displayTextInput.value = window.PianoscopeDisplayText.toDisplayValue(
                 window.PianoscopeDisplayText.getText()
@@ -589,6 +605,7 @@ void main() {
                 if (document.activeElement !== displayTextInput) {
                     displayTextInput.value = window.PianoscopeDisplayText.toDisplayValue(text);
                 }
+                syncClearEnabled();
             });
         }
         dropdownContainer.appendChild(searchIcon);
@@ -618,13 +635,14 @@ void main() {
         shaderSection.appendChild(shaderTextarea);
         shaderSection.appendChild(errorDisplay);
 
-        shaderTabContent.appendChild(displayTextPanel);
+        shaderTabContent.appendChild(displayTextExtras);
         shaderTabContent.appendChild(shaderSection);
 
-        // Video tab is populated by VideoController.mountUI() once the catalog
+        // Media tab is populated by VideoController.mountUI() once the catalog
         // has been probed, so the markup lives with the code that drives it.
 
         // Add the content divs to the main UI container
+        uiContainer.appendChild(displayTextPanel);
         uiContainer.appendChild(shaderTabContent);
         uiContainer.appendChild(videoTabContent);
 
@@ -664,6 +682,7 @@ void main() {
             tabContents.forEach((content) => {
                 content.classList.toggle('hidden', content.id !== tab + '-tab');
             });
+            uiContainer.classList.toggle('is-video-tab', tab === 'video');
             persistEditorSession();
         }
 
@@ -706,14 +725,34 @@ void main() {
             }, 3000);
         }
 
+        function syncClearEnabled() {
+            const hasText = !!(window.PianoscopeDisplayText && window.PianoscopeDisplayText.getText());
+            displayTextClear.disabled = !hasText;
+        }
+
         function commitDisplayText() {
             if (!window.PianoscopeDisplayText) return;
             const next = window.PianoscopeDisplayText.applyText(displayTextInput.value);
             displayTextInput.value = window.PianoscopeDisplayText.toDisplayValue(next);
+            syncClearEnabled();
             showMessage(next ? ('Display text: ' + next.replace(/\|/g, ' / ')) : 'Display text cleared', 'success');
         }
 
+        function clearDisplayText() {
+            if (window.PianoscopeTextSequencer) {
+                const st = window.PianoscopeTextSequencer.status();
+                if (st && st.running) window.PianoscopeTextSequencer.stop();
+            }
+            if (!window.PianoscopeDisplayText) return;
+            window.PianoscopeDisplayText.applyText('', { transition: 'cut' });
+            displayTextInput.value = '';
+            syncClearEnabled();
+            showMessage('Display text cleared', 'success');
+        }
+
         displayTextApply.addEventListener('click', commitDisplayText);
+        displayTextClear.addEventListener('click', clearDisplayText);
+        syncClearEnabled();
         displayTextInput.addEventListener('keydown', (e) => {
             if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
                 e.preventDefault();

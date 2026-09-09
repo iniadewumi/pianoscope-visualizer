@@ -29,6 +29,14 @@ class VideoTextureHandler {
         this.videoElement.crossOrigin = 'anonymous';
         this.videoElement.style.display = 'none';
         document.body.appendChild(this.videoElement);
+
+        // Still images share the same WebGL texture slot as video frames.
+        this.imageElement = document.createElement('img');
+        this.imageElement.crossOrigin = 'anonymous';
+        this.imageElement.alt = '';
+        this.imageElement.style.display = 'none';
+        document.body.appendChild(this.imageElement);
+        this.still = false;
         
         // Video state
         this.isPlaying = false;
@@ -180,6 +188,8 @@ class VideoTextureHandler {
         this.seekInFlight = false;
         this.clearSeekWatchdog();
         this.hasNewFrame = true;
+        this.still = false;
+        this.clearImage();
     }
 
     /**
@@ -199,11 +209,21 @@ class VideoTextureHandler {
             URL.revokeObjectURL(this.objectUrl);
             this.objectUrl = null;
         }
+        if (!this.still) this.clearImage();
+    }
+
+    clearImage() {
+        if (!this.imageElement) return;
+        this.imageElement.onload = null;
+        this.imageElement.onerror = null;
+        this.imageElement.removeAttribute('src');
+        this.still = false;
     }
 
     loadVideo(url, options = {}) {
         this.resetPlaybackState();
         this.currentSrc = options.sourceId || url;
+        this.still = false;
 
         this.releaseSource(url);
         if (options.isObjectUrl) {
@@ -218,6 +238,54 @@ class VideoTextureHandler {
 
         // Enter video mode
         this.setVideoMode(true);
+    }
+
+    /**
+     * Feed the pipeline from a still image. Same texture slot as a clip; the
+     * frame is uploaded once and held until the source changes.
+     */
+    loadImage(url, options = {}) {
+        this.resetPlaybackState();
+        this.currentSrc = options.sourceId || url;
+
+        this.releaseSource(url);
+        if (options.isObjectUrl) {
+            this.objectUrl = url;
+        }
+
+        this.videoElement.pause();
+        this.videoElement.removeAttribute('src');
+        this.videoElement.load();
+
+        this.still = true;
+        this.attached = true;
+        this.setVideoMode(true);
+
+        const img = this.imageElement;
+        img.onload = () => {
+            this.videoLoaded = true;
+            this.videoWidth = img.naturalWidth;
+            this.videoHeight = img.naturalHeight;
+            this.isPlaying = true;
+            this.isPaused = true;
+            this.hasNewFrame = true;
+
+            document.dispatchEvent(new CustomEvent('videoMetadataLoaded', {
+                detail: {
+                    duration: 0,
+                    width: img.naturalWidth,
+                    height: img.naturalHeight,
+                    still: true
+                }
+            }));
+        };
+        img.onerror = () => {
+            document.dispatchEvent(new CustomEvent('videoError', {
+                detail: { error: 'Could not load that image.' }
+            }));
+        };
+        img.crossOrigin = 'anonymous';
+        img.src = url;
     }
 
     /**
@@ -245,27 +313,83 @@ class VideoTextureHandler {
 
     
     loadVideoFile(file) {
+        if (file && file.type.startsWith('image/')) {
+            const fileURL = URL.createObjectURL(file);
+            this.loadImage(fileURL, { isObjectUrl: true, sourceId: `upload:${file.name}` });
+            return;
+        }
+
         if (file && file.type.startsWith('video/')) {
             const fileURL = URL.createObjectURL(file);
             this.loadVideo(fileURL, { isObjectUrl: true, sourceId: `upload:${file.name}` });
         } else {
-            console.error('Invalid file type. Please select a video file.');
+            console.error('Invalid file type. Please select a video or image file.');
             
             const event = new CustomEvent('videoError', {
                 detail: {
-                    error: 'Invalid file type. Please select a video file.'
+                    error: 'Invalid file type. Please select a video or image file.'
                 }
             });
             document.dispatchEvent(event);
         }
     }
+
+    uploadTexture(source, w, h) {
+        const gl = this.gl;
+        gl.bindTexture(gl.TEXTURE_2D, this.videoTexture);
+
+        gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.NONE);
+        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+
+        if (this.isWebGL2) {
+            if (this.texWidth !== w || this.texHeight !== h) {
+                gl.deleteTexture(this.videoTexture);
+                this.videoTexture = gl.createTexture();
+                gl.bindTexture(gl.TEXTURE_2D, this.videoTexture);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+                gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA8, w, h);
+                this.texWidth = w;
+                this.texHeight = h;
+            }
+
+            try {
+                gl.texSubImage2D(
+                    gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, source
+                );
+            } catch (e) {
+                this.hasNewFrame = true;
+            }
+        } else {
+            try {
+                gl.texImage2D(
+                    gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA,
+                    gl.UNSIGNED_BYTE, source
+                );
+            } catch (e) {
+                this.hasNewFrame = true;
+            }
+        }
+
+        gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.BROWSER_DEFAULT_WEBGL);
+    }
     
     updateVideoTexture() {
+        if (this.still) {
+            if (!this.videoLoaded || !this.hasNewFrame) return;
+            const w = this.imageElement.naturalWidth;
+            const h = this.imageElement.naturalHeight;
+            if (!w || !h) return;
+            this.hasNewFrame = false;
+            this.uploadTexture(this.imageElement, w, h);
+            return;
+        }
+
         if (this.videoLoaded && this.isPlaying &&
             this.videoElement.readyState >= this.videoElement.HAVE_CURRENT_DATA) {
 
-            // Without frame callbacks there is no way to tell a repeat frame from
-            // a fresh one, so fall back to uploading every tick.
             if (this.usingFrameCallback && !this.hasNewFrame) return;
 
             const w = this.videoElement.videoWidth;
@@ -273,55 +397,13 @@ class VideoTextureHandler {
             if (!w || !h) return;
 
             this.hasNewFrame = false;
-
-            const gl = this.gl;
-            gl.bindTexture(gl.TEXTURE_2D, this.videoTexture);
-
-            // Avoid the browser's default colorspace conversion / Y-flip work on
-            // every frame; the shaders already handle the flip.
-            gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.NONE);
-            gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
-
-            if (this.isWebGL2) {
-                if (this.texWidth !== w || this.texHeight !== h) {
-                    // Immutable storage can't be resized in place; recreate the
-                    // texture object and re-apply its sampling params.
-                    gl.deleteTexture(this.videoTexture);
-                    this.videoTexture = gl.createTexture();
-                    gl.bindTexture(gl.TEXTURE_2D, this.videoTexture);
-                    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-                    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-                    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-                    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-                    gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA8, w, h);
-                    this.texWidth = w;
-                    this.texHeight = h;
-                }
-
-                try {
-                    gl.texSubImage2D(
-                        gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, this.videoElement
-                    );
-                } catch (e) {
-                    // Cross-origin or not-yet-decodable frame; retry next tick.
-                    this.hasNewFrame = true;
-                }
-            } else {
-                try {
-                    gl.texImage2D(
-                        gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA,
-                        gl.UNSIGNED_BYTE, this.videoElement
-                    );
-                } catch (e) {
-                    this.hasNewFrame = true;
-                }
-            }
-
-            gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.BROWSER_DEFAULT_WEBGL);
+            this.uploadTexture(this.videoElement, w, h);
         }
     }
     
     play() {
+        if (this.still) return;
+
         // If video isn't ready yet, set a flag to play when ready
         if (this.videoElement.readyState < this.videoElement.HAVE_METADATA) {
             console.log("Video metadata not ready yet, play() deferred.");
@@ -369,6 +451,7 @@ class VideoTextureHandler {
     }
     
     togglePlay() {
+        if (this.still) return;
         if (this.isPaused) {
             this.play();
         } else {
@@ -377,7 +460,7 @@ class VideoTextureHandler {
     }
     
     setTime(time) {
-        if (!this.videoLoaded) return;
+        if (this.still || !this.videoLoaded) return;
 
         const duration = this.videoElement.duration;
         if (!Number.isFinite(duration) || duration <= 0) return;
@@ -474,6 +557,7 @@ class VideoTextureHandler {
     unload() {
         this.videoElement.pause();
         this.releaseSource();
+        this.clearImage();
         this.videoElement.removeAttribute('src');
         this.videoElement.load();
         this.resetPlaybackState();
@@ -492,8 +576,16 @@ class VideoTextureHandler {
         };
     }
     
+    isStill() {
+        return this.still;
+    }
+
+    getTextureElement() {
+        return this.still ? this.imageElement : this.videoElement;
+    }
+
     hasVideo() {
-        return this.videoLoaded;
+        return this.videoLoaded && !this.still;
     }
     
     dispose() {
@@ -504,12 +596,16 @@ class VideoTextureHandler {
         // Pause and unload video
         this.videoElement.pause();
         this.releaseSource();
+        this.clearImage();
         this.videoElement.src = '';
         this.videoElement.load();
         
         // Remove video element from DOM
         if (this.videoElement.parentNode) {
             this.videoElement.parentNode.removeChild(this.videoElement);
+        }
+        if (this.imageElement && this.imageElement.parentNode) {
+            this.imageElement.parentNode.removeChild(this.imageElement);
         }
         
         // Delete WebGL texture
