@@ -679,59 +679,71 @@ function createFeedbackState(gl, isWebGL2, width, height, desc) {
         };
     }
     
-    // Mouse tracking
-    let mouseX = 0;
-    let mouseY = 0;
-    let mouseDown = 0;
-    let clickX = 0;
-    let clickY = 0;
-    
-    canvas.addEventListener('mousemove', (e) => {
+    // Mouse tracking. Positions are kept as fractions of the canvas box (y up)
+    // and turned into pixels when iMouse is uploaded. iResolution is in
+    // drawing-buffer pixels, which are rarely CSS pixels (DPR cap, adaptive
+    // scale, shader bias) and change mid-show, so CSS pixels here made
+    // iMouse.xy / iResolution.xy top out around 0.57 on a Retina screen.
+    let mouseU = 0;
+    let mouseV = 0;
+    let clickU = 0;
+    let clickV = 0;
+    let mouseDown = false;
+    // True for the first frame after a press, which is when Shadertoy makes
+    // iMouse.w positive.
+    let clickFresh = false;
+
+    function trackPointer(clientX, clientY) {
         const rect = canvas.getBoundingClientRect();
-        mouseX = e.clientX - rect.left;
-        mouseY = rect.height - (e.clientY - rect.top); // Flip Y for WebGL
+        if (rect.width === 0 || rect.height === 0) return;
+        mouseU = (clientX - rect.left) / rect.width;
+        mouseV = 1 - (clientY - rect.top) / rect.height; // Flip Y for WebGL
+    }
+
+    function pressPointer() {
+        mouseDown = true;
+        clickFresh = true;
+        clickU = mouseU;
+        clickV = mouseV;
+    }
+
+    canvas.addEventListener('mousemove', (e) => {
+        trackPointer(e.clientX, e.clientY);
     });
-    
+
     canvas.addEventListener('mousedown', (e) => {
-        mouseDown = 1;
-        clickX = mouseX;
-        clickY = mouseY;
+        trackPointer(e.clientX, e.clientY);
+        pressPointer();
     });
-    
+
     canvas.addEventListener('mouseup', () => {
-        mouseDown = 0;
+        mouseDown = false;
     });
-    
+
     canvas.addEventListener('mouseleave', () => {
         // Keep the last click position but indicate no mouse down
-        mouseDown = 0;
+        mouseDown = false;
     });
-    
+
     // Touch support
     canvas.addEventListener('touchstart', (e) => {
         e.preventDefault();
-        mouseDown = 1;
         if (e.touches.length > 0) {
-            const rect = canvas.getBoundingClientRect();
-            mouseX = e.touches[0].clientX - rect.left;
-            mouseY = rect.height - (e.touches[0].clientY - rect.top);
-            clickX = mouseX;
-            clickY = mouseY;
+            trackPointer(e.touches[0].clientX, e.touches[0].clientY);
         }
+        pressPointer();
     });
-    
+
     canvas.addEventListener('touchmove', (e) => {
         e.preventDefault();
         if (e.touches.length > 0) {
-            const rect = canvas.getBoundingClientRect();
-            mouseX = e.touches[0].clientX - rect.left;
-            mouseY = rect.height - (e.touches[0].clientY - rect.top);
+            trackPointer(e.touches[0].clientX, e.touches[0].clientY);
         }
     });
-    
+
     canvas.addEventListener('touchend', (e) => {
         e.preventDefault();
-        mouseDown = 0;
+        mouseDown = false;
     });
     
     // Create audio texture
@@ -1014,7 +1026,20 @@ function createFeedbackState(gl, isWebGL2, width, height, desc) {
         if (uniforms.iTime) gl.uniform1f(uniforms.iTime, currentTime);
         if (uniforms.iTimeDelta) gl.uniform1f(uniforms.iTimeDelta, deltaTime);
         if (uniforms.iFrame) gl.uniform1f(uniforms.iFrame, frameCount);
-        if (uniforms.iMouse) gl.uniform4f(uniforms.iMouse, mouseX, mouseY, mouseDown, clickX);
+        if (uniforms.iMouse) {
+            // xy follows the pointer even without a press (Shadertoy only
+            // updates it while dragging; the library was tuned on hover). zw is
+            // Shadertoy's: the press position, z positive while held and w only
+            // on the frame of the press, both negated otherwise, so ported code
+            // can tell "held" and "just clicked" from a remembered position.
+            const clickX = clickU * canvas.width;
+            const clickY = clickV * canvas.height;
+            gl.uniform4f(uniforms.iMouse,
+                mouseU * canvas.width, mouseV * canvas.height,
+                mouseDown ? clickX : -clickX,
+                clickFresh ? clickY : -clickY);
+        }
+        clickFresh = false;
 
         if (uniforms.iDate) {
             const d = new Date();
