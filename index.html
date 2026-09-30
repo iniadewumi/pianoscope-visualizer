@@ -90,30 +90,6 @@
                 errorLog.style.display = 'none';
             }, 10000);
         });
-
-        // Update button icons when mic state changes
-        document.addEventListener('DOMContentLoaded', function () {
-            const micToggle = document.getElementById('mic-toggle');
-            if (micToggle) {
-                const originalClickHandler = micToggle.onclick;
-
-                micToggle.onclick = function () {
-                    // Call the original handler
-                    if (originalClickHandler) {
-                        originalClickHandler.call(this);
-                    }
-
-                    // Update the icon based on the button's class
-                    setTimeout(() => {
-                        if (micToggle.classList.contains('red-button')) {
-                            micToggle.innerHTML = '<i class="fas fa-microphone-slash"></i><span>&nbsp;Stop Listen</span>';
-                        } else {
-                            micToggle.innerHTML = '<i class="fas fa-microphone"></i><span>&nbsp;Start Listen</span>';
-                        }
-                    }, 50);
-                };
-            }
-        });
     </script>
     <!-- Pure View Toggle Button -->
     <button id="pure-view-toggle" class="pure-view-toggle" title="Toggle Pure Visualization Mode">

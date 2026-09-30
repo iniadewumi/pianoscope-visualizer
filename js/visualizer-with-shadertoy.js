@@ -1075,11 +1075,39 @@ function createFeedbackState(gl, isWebGL2, width, height, desc) {
     }
     
     // === AUDIO FUNCTIONS ===
+
+    // True while getUserMedia is pending. A second click during the permission
+    // prompt used to start a second capture: the first stream was orphaned, so
+    // the mic light stayed on after Stop.
+    let micStarting = false;
+
+    /**
+     * canvas-view.html starts listening with a scripted click, which is not a
+     * user gesture, so the context can come up suspended and the analyser reads
+     * silence. Try to resume now, and failing that on the next real interaction.
+     */
+    function resumeAudioWhenAllowed() {
+        const context = audioContext;
+        if (!context || context.state !== 'suspended') return;
+        context.resume().catch(() => {});
+        const onGesture = () => {
+            if (context.state === 'suspended') context.resume().catch(() => {});
+        };
+        document.addEventListener('pointerdown', onGesture, { once: true, capture: true });
+        document.addEventListener('keydown', onGesture, { once: true, capture: true });
+    }
+
     async function startMic() {
+        if (micStarting || isListening) return;
+        micStarting = true;
+        // Created before the await so it is still inside the click's user
+        // activation; a context made later starts suspended.
+        const context = new (window.AudioContext || window.webkitAudioContext)();
         try {
-            audioContext = new (window.AudioContext || window.webkitAudioContext)();
-            micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            audioContext = context;
+            micStream = stream;
+
             const source = audioContext.createMediaStreamSource(micStream);
             analyser = audioContext.createAnalyser();
             analyser.fftSize = 1024;
@@ -1090,10 +1118,11 @@ function createFeedbackState(gl, isWebGL2, width, height, desc) {
             const bufferLength = analyser.frequencyBinCount;
             frequencyArray = new Uint8Array(bufferLength);
             isListening = true;
-            
+            resumeAudioWhenAllowed();
+
             if (statusEl) statusEl.textContent = 'Listening to audio';
             if (h) h.textContent = 'Listening...';
-            micToggle.innerHTML = '<i class="fas fa-microphone-slash"></i><span>Stop Listen</span>';
+            micToggle.innerHTML = '<i class="fas fa-microphone-slash"></i><span>&nbsp;Stop Listen</span>';
             micToggle.className = "red-button";
 
             // Start animation if not already running
@@ -1105,20 +1134,27 @@ function createFeedbackState(gl, isWebGL2, width, height, desc) {
             }
             
         } catch (err) {
+            // Never became the live context, so nothing else will close it.
+            context.close().catch(() => {});
             if (statusEl) statusEl.textContent = 'Mic Error: ' + err.message;
             console.error('Error accessing microphone', err);
+        } finally {
+            micStarting = false;
         }
     }
-    
+
     function stopMic() {
         if (micStream) {
             micStream.getTracks().forEach(track => track.stop());
         }
         if (audioContext) {
-            audioContext.close();
+            audioContext.close().catch(() => {});
         }
+        micStream = null;
+        audioContext = null;
+        analyser = null;
         isListening = false;
-        micToggle.innerHTML = '<i class="fas fa-microphone"></i><span>Start Listen</span>';
+        micToggle.innerHTML = '<i class="fas fa-microphone"></i><span>&nbsp;Start Listen</span>';
         micToggle.className = "green-button";
         if (statusEl) statusEl.textContent = 'Audio stopped';
         if (h) h.textContent = 'Please allow the use of your microphone.';
