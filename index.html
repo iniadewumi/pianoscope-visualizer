@@ -39,6 +39,14 @@
     height: 2rem;
     width: 3rem;
 }
+
+.logo-img {
+    position: absolute;
+    top: 0;
+    left: 0;
+    height: 2rem;
+    width: 3rem;
+}
 </style>
 </head>
 <body>
@@ -49,7 +57,7 @@
     <h1 class="main-text">Please allow the use of your microphone</h1>
     <h1 class="sub-text"></h1>
     <div class="logo">
-        <img style="padding-left:8px" src="images/pianoscope-logo-small.png" alt="" class="logo">
+        <img style="padding-left:8px" src="images/pianoscope-logo-small.png" alt="" class="logo-img">
         <h6 style="padding-top:10px" >Pianoscope</h6>
     </div>
     <!-- Updated Controls -->
@@ -77,17 +85,25 @@
 
     <script>
         // Error handler to catch and display JS errors
+        const MAX_ERROR_ENTRIES = 5;
+        let errorLogHideTimer = 0;
+
         window.addEventListener('error', function (event) {
             const errorLog = document.getElementById('error-log');
             errorLog.style.display = 'block';
             const errorDiv = document.createElement('div');
             errorDiv.textContent = event.message;
             errorLog.appendChild(errorDiv);
+            while (errorLog.childElementCount > MAX_ERROR_ENTRIES) {
+                errorLog.firstElementChild.remove();
+            }
             console.error(event.error);
 
-            // Auto-hide after 10 seconds
-            setTimeout(() => {
+            // Hide 10 seconds after the most recent error, then start fresh
+            clearTimeout(errorLogHideTimer);
+            errorLogHideTimer = setTimeout(() => {
                 errorLog.style.display = 'none';
+                errorLog.replaceChildren();
             }, 10000);
         });
     </script>

@@ -1054,9 +1054,10 @@ function createFeedbackState(gl, width, height, desc) {
     let micStarting = false;
 
     /**
-     * canvas-view.html starts listening with a scripted click, which is not a
-     * user gesture, so the context can come up suspended and the analyser reads
-     * silence. Try to resume now, and failing that on the next real interaction.
+     * A start that is not a user gesture (a scripted click, or a browser that
+     * applies its autoplay policy anyway) can bring the context up suspended,
+     * and then the analyser reads silence. Try to resume now, and failing that
+     * on the next real interaction.
      */
     function resumeAudioWhenAllowed() {
         const context = audioContext;
