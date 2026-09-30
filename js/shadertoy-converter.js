@@ -20,20 +20,15 @@ window.ShaderConverter = (function () {
     const WEBGL_PREAMBLE = `
 precision highp float;
 
-// Version compatibility layer
-#if __VERSION__ >= 300
-    #define attribute in
-    #define varying out
-    #define texture2D texture
-    #define textureCube texture
-    #define texture2DLod textureLod
-    #define textureCubeLod textureLod
-    #define texture2DProj textureProj
-    #define texture2DProjLod textureProjLod
-#else
-    #define in varying
-    #define out varying
-#endif
+// Maps GLSL ES 1.00 names used by Shadertoy code to their GLSL ES 3.00 equivalents
+#define attribute in
+#define varying out
+#define texture2D texture
+#define textureCube texture
+#define texture2DLod textureLod
+#define textureCubeLod textureLod
+#define texture2DProj textureProj
+#define texture2DProjLod textureProjLod
 
 uniform vec3 iResolution;
 uniform float iTime;
@@ -155,20 +150,11 @@ vec4 pianoscopeBlendVideo(vec4 col, vec2 fragCoord) {
     return vec4(outc, col.a);
 }
 
-#if __VERSION__ >= 300
 void main() {
     mainImage(fragColor, gl_FragCoord.xy);
     fragColor = pianoscopeBlendVideo(fragColor, gl_FragCoord.xy);
     fragColor.a = 1.0;
 }
-#else
-void main() {
-    vec4 fragColor;
-    mainImage(fragColor, gl_FragCoord.xy);
-    fragColor = pianoscopeBlendVideo(fragColor, gl_FragCoord.xy);
-    gl_FragColor = vec4(fragColor.rgb, 1.0);
-}
-#endif
 `;
 
     // Source-string numbers for #line. The operator's code is wrapped in ~100

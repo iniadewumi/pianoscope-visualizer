@@ -10,13 +10,9 @@ class VideoTextureHandler {
         // Store the WebGL context
         this.gl = gl;
 
-        // WebGL2 lets us allocate texture storage once (texStorage2D) and
-        // update it in place per frame (texSubImage2D) instead of
-        // re-specifying/reallocating the texture on every upload.
-        this.isWebGL2 = (typeof WebGL2RenderingContext !== 'undefined') && gl instanceof WebGL2RenderingContext;
-
-        // Size of the currently allocated texture storage (WebGL2 path only).
-        // 0 means nothing has been allocated yet.
+        // Size of the currently allocated texture storage; 0 means none yet.
+        // Storage is allocated once per frame size (texStorage2D) and updated
+        // in place (texSubImage2D) rather than re-specified on every upload.
         this.texWidth = 0;
         this.texHeight = 0;
 
@@ -341,36 +337,25 @@ class VideoTextureHandler {
         gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.NONE);
         gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
 
-        if (this.isWebGL2) {
-            if (this.texWidth !== w || this.texHeight !== h) {
-                gl.deleteTexture(this.videoTexture);
-                this.videoTexture = gl.createTexture();
-                gl.bindTexture(gl.TEXTURE_2D, this.videoTexture);
-                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-                gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA8, w, h);
-                this.texWidth = w;
-                this.texHeight = h;
-            }
+        if (this.texWidth !== w || this.texHeight !== h) {
+            gl.deleteTexture(this.videoTexture);
+            this.videoTexture = gl.createTexture();
+            gl.bindTexture(gl.TEXTURE_2D, this.videoTexture);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+            gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA8, w, h);
+            this.texWidth = w;
+            this.texHeight = h;
+        }
 
-            try {
-                gl.texSubImage2D(
-                    gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, source
-                );
-            } catch (e) {
-                this.hasNewFrame = true;
-            }
-        } else {
-            try {
-                gl.texImage2D(
-                    gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA,
-                    gl.UNSIGNED_BYTE, source
-                );
-            } catch (e) {
-                this.hasNewFrame = true;
-            }
+        try {
+            gl.texSubImage2D(
+                gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, source
+            );
+        } catch (e) {
+            this.hasNewFrame = true;
         }
 
         gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.BROWSER_DEFAULT_WEBGL);

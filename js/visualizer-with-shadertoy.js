@@ -46,10 +46,10 @@ function clearFeedbackTextures(gl, state) {
 // (1/255 swamps a small variance) for that, and says so with FEEDBACK_HDR in its
 // source. Probing costs driver round-trips, so the answer is cached per context.
 let hdrFeedbackFormat;
-function feedbackFormat(gl, isWebGL2, wantsHDR) {
+function feedbackFormat(gl, wantsHDR) {
     const rgba8 = {
         label: 'rgba8',
-        internalFormat: isWebGL2 ? gl.RGBA8 : gl.RGBA,
+        internalFormat: gl.RGBA8,
         format: gl.RGBA,
         type: gl.UNSIGNED_BYTE,
         filter: gl.LINEAR
@@ -58,37 +58,24 @@ function feedbackFormat(gl, isWebGL2, wantsHDR) {
     if (hdrFeedbackFormat !== undefined) return hdrFeedbackFormat || rgba8;
 
     hdrFeedbackFormat = null;
-    if (isWebGL2) {
-        const renderFloat = gl.getExtension('EXT_color_buffer_float');
-        if (renderFloat && gl.getExtension('OES_texture_float_linear')) {
-            hdrFeedbackFormat = {
-                label: 'rgba32f',
-                internalFormat: gl.RGBA32F,
-                format: gl.RGBA,
-                type: gl.FLOAT,
-                filter: gl.LINEAR
-            };
-        } else if (renderFloat || gl.getExtension('EXT_color_buffer_half_float')) {
-            // Half float is filterable in core WebGL 2, so LINEAR needs no extension.
-            hdrFeedbackFormat = {
-                label: 'rgba16f',
-                internalFormat: gl.RGBA16F,
-                format: gl.RGBA,
-                type: gl.HALF_FLOAT,
-                filter: gl.LINEAR
-            };
-        }
-    } else {
-        const halfTexture = gl.getExtension('OES_texture_half_float');
-        if (halfTexture && gl.getExtension('EXT_color_buffer_half_float')) {
-            hdrFeedbackFormat = {
-                label: 'rgba16f',
-                internalFormat: gl.RGBA,
-                format: gl.RGBA,
-                type: halfTexture.HALF_FLOAT_OES,
-                filter: gl.getExtension('OES_texture_half_float_linear') ? gl.LINEAR : gl.NEAREST
-            };
-        }
+    const renderFloat = gl.getExtension('EXT_color_buffer_float');
+    if (renderFloat && gl.getExtension('OES_texture_float_linear')) {
+        hdrFeedbackFormat = {
+            label: 'rgba32f',
+            internalFormat: gl.RGBA32F,
+            format: gl.RGBA,
+            type: gl.FLOAT,
+            filter: gl.LINEAR
+        };
+    } else if (renderFloat || gl.getExtension('EXT_color_buffer_half_float')) {
+        // Half float is filterable in core WebGL 2, so LINEAR needs no extension.
+        hdrFeedbackFormat = {
+            label: 'rgba16f',
+            internalFormat: gl.RGBA16F,
+            format: gl.RGBA,
+            type: gl.HALF_FLOAT,
+            filter: gl.LINEAR
+        };
     }
 
     if (!hdrFeedbackFormat) {
@@ -103,7 +90,7 @@ function feedbackFormat(gl, isWebGL2, wantsHDR) {
 
 // Returns null rather than a broken state when the driver accepts the texture
 // format but refuses to render to it, which is the usual way float support fails.
-function createFeedbackState(gl, isWebGL2, width, height, desc) {
+function createFeedbackState(gl, width, height, desc) {
     const textures = [gl.createTexture(), gl.createTexture()];
     textures.forEach((texture) => {
         gl.bindTexture(gl.TEXTURE_2D, texture);
@@ -111,15 +98,10 @@ function createFeedbackState(gl, isWebGL2, width, height, desc) {
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, desc.filter);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, desc.filter);
-        if (isWebGL2) {
-            // Immutable storage lets the driver lay the texture out in GPU
-            // memory immediately, and levels=1 avoids allocating a mip chain
-            // we never sample.
-            gl.texStorage2D(gl.TEXTURE_2D, 1, desc.internalFormat, width, height);
-        } else {
-            gl.texImage2D(gl.TEXTURE_2D, 0, desc.internalFormat, width, height, 0,
-                desc.format, desc.type, null);
-        }
+        // Immutable storage lets the driver lay the texture out in GPU
+        // memory immediately, and levels=1 avoids allocating a mip chain
+        // we never sample.
+        gl.texStorage2D(gl.TEXTURE_2D, 1, desc.internalFormat, width, height);
     });
 
     // One framebuffer per texture with a permanent attachment. Swapping an
@@ -149,7 +131,6 @@ function createFeedbackState(gl, isWebGL2, width, height, desc) {
     // === ELEMENTS ===
     const canvas = document.getElementById('visualizer');
     const micToggle = document.getElementById('mic-toggle');
-    const fullscreenBtn = document.getElementById('fullscreen');
     const statusEl = document.getElementById('status');
     const h = document.getElementsByTagName('h1')[0];
     const hSub = document.getElementsByTagName('h1')[1];
@@ -313,11 +294,18 @@ function createFeedbackState(gl, isWebGL2, width, height, desc) {
         powerPreference: 'high-performance'
     };
 
-    const gl = canvas.getContext('webgl2', GL_ATTRIBUTES)
-        || canvas.getContext('webgl', GL_ATTRIBUTES)
-        || canvas.getContext('experimental-webgl', GL_ATTRIBUTES);
-    const isWebGL2 = gl instanceof WebGL2RenderingContext;
-    const glslVersion = isWebGL2 ? '300 es' : '100';
+    // WebGL 2 only. Every shader is compiled as GLSL ES 3.00; the WebGL 1
+    // fallback that used to live here could not compile a single library
+    // shader, so all it did was turn a clear message into a blank canvas.
+    const gl = canvas.getContext('webgl2', GL_ATTRIBUTES);
+    if (!gl) {
+        const message = 'This visualizer needs WebGL 2, which this browser or GPU does not provide.';
+        if (h) h.textContent = message;
+        if (statusEl) statusEl.textContent = message;
+        micToggle.disabled = true;
+        console.error(message);
+        return;
+    }
 
     // Asking for the discrete GPU makes context loss meaningfully more likely,
     // because switching GPUs drops the context. Without a handler that is a black
@@ -351,18 +339,6 @@ function createFeedbackState(gl, isWebGL2, width, height, desc) {
         window.currentShaderIsVideoDisplay = false;
     }
     
-    function addVersionHeader(shaderSource, isFragmentShader) {
-        const versionHeader = glslVersion === '300 es' 
-            ? `#version 300 es
-               precision highp float;
-               ${isFragmentShader ? 'out vec4 fragColor;' : ''}
-               #define gl_FragColor fragColor`
-            : `#version 100
-               precision highp float;`;
-        
-        return versionHeader + '\n' + shaderSource;
-    }
-
     let usesFeedbackPass = false;
     let feedbackWantsHDR = false;
     let iResolutionIsVec2 = false;
@@ -456,8 +432,8 @@ function createFeedbackState(gl, isWebGL2, width, height, desc) {
     // before linking, which avoids the expensive desktop-GL emulation path for a
     // disabled attrib 0 and stops ANGLE from re-specializing a program the first
     // time it meets a vertex layout it did not see at link time.
-    const quadVao = isWebGL2 ? gl.createVertexArray() : null;
-    if (quadVao) gl.bindVertexArray(quadVao);
+    const quadVao = gl.createVertexArray();
+    gl.bindVertexArray(quadVao);
 
     const quadBuffer = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, quadBuffer);
@@ -472,17 +448,14 @@ function createFeedbackState(gl, isWebGL2, width, height, desc) {
 
     function createShader(gl, type, source) {
         const shader = gl.createShader(type);
-        const isWebGL2 = gl instanceof WebGL2RenderingContext;
 
-        const prefix = isWebGL2
-            ? "#version 300 es\nprecision highp float;\n" +
-                (type === gl.FRAGMENT_SHADER ? "out vec4 fragColor;\n" : "") +
-                "#define texture2D texture\n" +
-                (type === gl.VERTEX_SHADER ? "#define attribute in\n" : "")
-            : "#version 100\nprecision highp float;\n#define fragColor gl_FragColor\n";
+        const prefix = "#version 300 es\nprecision highp float;\n" +
+            (type === gl.FRAGMENT_SHADER ? "out vec4 fragColor;\n" : "") +
+            "#define texture2D texture\n" +
+            (type === gl.VERTEX_SHADER ? "#define attribute in\n" : "");
 
         // For fragment shaders, remap the output
-        if (type === gl.FRAGMENT_SHADER && isWebGL2) {
+        if (type === gl.FRAGMENT_SHADER) {
             source = source.replace(/gl_FragColor/g, 'fragColor');
         }
 
@@ -851,12 +824,11 @@ function createFeedbackState(gl, isWebGL2, width, height, desc) {
 
         destroyFeedbackState(gl, feedbackState);
 
-        const desc = feedbackFormat(gl, isWebGL2, feedbackWantsHDR);
-        let state = createFeedbackState(gl, isWebGL2, width, height, desc);
+        const desc = feedbackFormat(gl, feedbackWantsHDR);
+        let state = createFeedbackState(gl, width, height, desc);
         if (!state && desc.label !== 'rgba8') {
             console.warn('Feedback buffer: ' + desc.label + ' is not renderable here, using rgba8');
-            state = createFeedbackState(gl, isWebGL2, width, height,
-                feedbackFormat(gl, isWebGL2, false));
+            state = createFeedbackState(gl, width, height, feedbackFormat(gl, false));
         }
 
         feedbackState = state;
@@ -1403,20 +1375,6 @@ function createFeedbackState(gl, isWebGL2, width, height, desc) {
             startMic();
         }
     });
-    
-    if (fullscreenBtn) {
-        fullscreenBtn.addEventListener('click', () => {
-            if (canvas.requestFullscreen) {
-                canvas.requestFullscreen();
-            } else if (canvas.webkitRequestFullscreen) {
-                canvas.webkitRequestFullscreen();
-            } else if (canvas.mozRequestFullScreen) {
-                canvas.mozRequestFullScreen();
-            } else if (canvas.msRequestFullscreen) {
-                canvas.msRequestFullscreen();
-            }
-        });
-    }
 
 // === KEYBOARD SHADER NAVIGATION ===
 // -1 = default shader (Pianoscope Text), outside the numbered cycle

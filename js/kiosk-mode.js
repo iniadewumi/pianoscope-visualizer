@@ -14,13 +14,7 @@ const ShaderPrefixes = {
         "precision highp float;\n" +
         "out vec4 fragColor;\n" +
         "#define texture2D texture\n" +
-        "#define gl_FragColor fragColor\n",
-    
-    // WebGL1 shader prefix (common for both vertex and fragment)
-    webgl1Prefix: 
-        "#version 100\n" +
-        "precision highp float;\n" +
-        "#define fragColor gl_FragColor"+"\n"
+        "#define gl_FragColor fragColor\n"
 };
 
 // Create the kiosk HTML content with reference to our external prefix constants
@@ -68,12 +62,11 @@ const kioskHtmlContent = `<!DOCTYPE html>
     <script>
         // Will be filled by the parent window
         let gl = null;
-        let isWebGL2 = false;
         let currentProgram = null;
         let audioTexture = null;
         let videoTexture = null;
-        // Size of the currently allocated video texture storage (WebGL2 texStorage2D
-        // path only). 0 means nothing has been allocated yet.
+        // Size of the currently allocated video texture storage (texStorage2D).
+        // 0 means nothing has been allocated yet.
         let videoTexWidth = 0;
         let videoTexHeight = 0;
         let displayTextTexture = null;
@@ -143,7 +136,7 @@ const kioskHtmlContent = `<!DOCTYPE html>
         function feedbackFormat(wantsHDR) {
             const rgba8 = {
                 label: 'rgba8',
-                internalFormat: isWebGL2 ? gl.RGBA8 : gl.RGBA,
+                internalFormat: gl.RGBA8,
                 format: gl.RGBA,
                 type: gl.UNSIGNED_BYTE,
                 filter: gl.LINEAR
@@ -152,36 +145,23 @@ const kioskHtmlContent = `<!DOCTYPE html>
             if (hdrFeedbackFormat !== undefined) return hdrFeedbackFormat || rgba8;
 
             hdrFeedbackFormat = null;
-            if (isWebGL2) {
-                const renderFloat = gl.getExtension('EXT_color_buffer_float');
-                if (renderFloat && gl.getExtension('OES_texture_float_linear')) {
-                    hdrFeedbackFormat = {
-                        label: 'rgba32f',
-                        internalFormat: gl.RGBA32F,
-                        format: gl.RGBA,
-                        type: gl.FLOAT,
-                        filter: gl.LINEAR
-                    };
-                } else if (renderFloat || gl.getExtension('EXT_color_buffer_half_float')) {
-                    hdrFeedbackFormat = {
-                        label: 'rgba16f',
-                        internalFormat: gl.RGBA16F,
-                        format: gl.RGBA,
-                        type: gl.HALF_FLOAT,
-                        filter: gl.LINEAR
-                    };
-                }
-            } else {
-                const halfTexture = gl.getExtension('OES_texture_half_float');
-                if (halfTexture && gl.getExtension('EXT_color_buffer_half_float')) {
-                    hdrFeedbackFormat = {
-                        label: 'rgba16f',
-                        internalFormat: gl.RGBA,
-                        format: gl.RGBA,
-                        type: halfTexture.HALF_FLOAT_OES,
-                        filter: gl.getExtension('OES_texture_half_float_linear') ? gl.LINEAR : gl.NEAREST
-                    };
-                }
+            const renderFloat = gl.getExtension('EXT_color_buffer_float');
+            if (renderFloat && gl.getExtension('OES_texture_float_linear')) {
+                hdrFeedbackFormat = {
+                    label: 'rgba32f',
+                    internalFormat: gl.RGBA32F,
+                    format: gl.RGBA,
+                    type: gl.FLOAT,
+                    filter: gl.LINEAR
+                };
+            } else if (renderFloat || gl.getExtension('EXT_color_buffer_half_float')) {
+                hdrFeedbackFormat = {
+                    label: 'rgba16f',
+                    internalFormat: gl.RGBA16F,
+                    format: gl.RGBA,
+                    type: gl.HALF_FLOAT,
+                    filter: gl.LINEAR
+                };
             }
             return hdrFeedbackFormat || rgba8;
         }
@@ -200,12 +180,7 @@ const kioskHtmlContent = `<!DOCTYPE html>
                 gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
                 gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, desc.filter);
                 gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, desc.filter);
-                if (isWebGL2) {
-                    gl.texStorage2D(gl.TEXTURE_2D, 1, desc.internalFormat, width, height);
-                } else {
-                    gl.texImage2D(gl.TEXTURE_2D, 0, desc.internalFormat, width, height, 0,
-                        desc.format, desc.type, null);
-                }
+                gl.texStorage2D(gl.TEXTURE_2D, 1, desc.internalFormat, width, height);
             });
 
             const fbos = [gl.createFramebuffer(), gl.createFramebuffer()];
@@ -350,7 +325,7 @@ const kioskHtmlContent = `<!DOCTYPE html>
         function initGL() {
             if (gl) return;
 
-            // Try to get WebGL2 context first, then fall back to WebGL
+            // WebGL 2 only, like the opener: every shader is GLSL ES 3.00.
             const kioskGlAttrs = {
                 alpha: true,
                 depth: false,
@@ -360,13 +335,10 @@ const kioskHtmlContent = `<!DOCTYPE html>
                 preserveDrawingBuffer: false,
                 powerPreference: 'high-performance'
             };
-            gl = canvas.getContext('webgl2', kioskGlAttrs)
-                || canvas.getContext('webgl', kioskGlAttrs)
-                || canvas.getContext('experimental-webgl', kioskGlAttrs);
-            isWebGL2 = gl instanceof WebGL2RenderingContext;
-            
+            gl = canvas.getContext('webgl2', kioskGlAttrs);
+
             if (!gl) {
-                console.error('WebGL not supported in kiosk mode');
+                console.error('WebGL 2 not supported in kiosk mode');
                 return;
             }
 
@@ -563,18 +535,13 @@ const kioskHtmlContent = `<!DOCTYPE html>
             const shader = gl.createShader(type);
             
             // Get the appropriate prefix from our parent-defined prefixes
-            let prefix;
-            if (isWebGL2) {
-                prefix = (type === gl.VERTEX_SHADER) ? 
-                    shaderPrefixes.webgl2VertexPrefix : 
-                    shaderPrefixes.webgl2FragmentPrefix;
-                
-                // Replace gl_FragColor with fragColor for WebGL2 fragment shaders
-                if (type === gl.FRAGMENT_SHADER) {
-                    source = source.replace(/gl_FragColor/g, 'fragColor');
-                }
-            } else {
-                prefix = shaderPrefixes.webgl1Prefix;
+            const prefix = (type === gl.VERTEX_SHADER)
+                ? shaderPrefixes.webgl2VertexPrefix
+                : shaderPrefixes.webgl2FragmentPrefix;
+
+            // Replace gl_FragColor with fragColor for fragment shaders
+            if (type === gl.FRAGMENT_SHADER) {
+                source = source.replace(/gl_FragColor/g, 'fragColor');
             }
             
             // Combine prefix with source
@@ -813,27 +780,23 @@ const kioskHtmlContent = `<!DOCTYPE html>
                             gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.NONE);
                             gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
 
-                            if (isWebGL2) {
-                                if (videoTexWidth !== vw || videoTexHeight !== vh) {
-                                    // Immutable storage can't be resized in place; recreate
-                                    // the texture object and re-apply its sampling params.
-                                    gl.deleteTexture(videoTexture);
-                                    videoTexture = gl.createTexture();
-                                    gl.activeTexture(gl.TEXTURE1);
-                                    gl.bindTexture(gl.TEXTURE_2D, videoTexture);
-                                    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-                                    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-                                    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-                                    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-                                    gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA8, vw, vh);
-                                    videoTexWidth = vw;
-                                    videoTexHeight = vh;
-                                }
-
-                                gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, el);
-                            } else {
-                                gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, el);
+                            if (videoTexWidth !== vw || videoTexHeight !== vh) {
+                                // Immutable storage can't be resized in place; recreate
+                                // the texture object and re-apply its sampling params.
+                                gl.deleteTexture(videoTexture);
+                                videoTexture = gl.createTexture();
+                                gl.activeTexture(gl.TEXTURE1);
+                                gl.bindTexture(gl.TEXTURE_2D, videoTexture);
+                                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+                                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+                                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+                                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+                                gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA8, vw, vh);
+                                videoTexWidth = vw;
+                                videoTexHeight = vh;
                             }
+
+                            gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, el);
 
                             gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.BROWSER_DEFAULT_WEBGL);
                         }
