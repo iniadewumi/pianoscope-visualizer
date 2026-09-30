@@ -392,7 +392,7 @@ function createFeedbackState(gl, isWebGL2, width, height, desc) {
         let bufferWidth;
         let bufferHeight;
         if (perf) {
-            const size = perf.bufferSize(displayWidth, displayHeight);
+            const size = perf.previewBufferSize(displayWidth, displayHeight);
             bufferWidth = size.width;
             bufferHeight = size.height;
         } else {
@@ -1250,6 +1250,10 @@ function createFeedbackState(gl, isWebGL2, width, height, desc) {
         // Promote a finished shader build before doing anything else, so the rest
         // of the frame draws with a single consistent program.
         pollShaderProgram();
+
+        // Cheap per-frame check; perf only resizes when it flips (see
+        // previewScaleWithKiosk in perf.js).
+        if (perf) perf.setKioskLive(window.kioskWindow && !window.kioskWindow.closed);
 
         if (resizePending || (perf && perf.takeResolutionDirty())) {
             resizePending = false;

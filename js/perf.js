@@ -30,6 +30,10 @@
         // QHD ceiling: 4K projectors scale down, 1080p/Retina laptops stay near
         // native. The old 1920×1080 cap was the main "looks worse" complaint.
         maxPixelCount: 2560 * 1440,
+        // While the kiosk is open the room watches the projector, and both
+        // windows draw the same shader on one GPU. The operator's preview drops
+        // to this fraction of its resolution so the projector gets the headroom.
+        previewScaleWithKiosk: 0.5,
         fpsCap: 0,
         hud: false
     };
@@ -291,6 +295,7 @@
         shaderBias: 1,
         _costLabel: 'light',
         _resolutionDirty: false,
+        _kioskLive: false,
 
         attach(gl, canvas, onScaleChange) {
             this.gl = gl;
@@ -335,6 +340,36 @@
                 height = Math.max(1, Math.round(height * shrink));
             }
             return { width: width, height: height };
+        },
+
+        /** Fraction of full resolution the operator's own canvas renders at. */
+        previewScale() {
+            if (!this._kioskLive) return 1;
+            return clamp(this.settings.previewScaleWithKiosk || 1, 0.25, 1);
+        },
+
+        /**
+         * bufferSize for the operator's canvas, reduced while the kiosk is live.
+         * The kiosk sizes itself through bufferSize() directly, so the
+         * projector never sees this reduction.
+         */
+        previewBufferSize(cssWidth, cssHeight) {
+            const size = this.bufferSize(cssWidth, cssHeight);
+            const factor = this.previewScale();
+            if (factor >= 1) return size;
+            return {
+                width: Math.max(1, Math.round(size.width * factor)),
+                height: Math.max(1, Math.round(size.height * factor))
+            };
+        },
+
+        /** Called every frame with whether a kiosk window is open; acts on change. */
+        setKioskLive(live) {
+            live = !!live;
+            if (live === this._kioskLive) return;
+            this._kioskLive = live;
+            this.invalidate();
+            this._resolutionDirty = true;
         },
 
         markResolutionDirty() {
@@ -493,6 +528,10 @@
                 `pxcap  ${(this.settings.maxPixelCount / 1e6).toFixed(2)} MP  cost ${this._costLabel} \u00d7${this.shaderBias.toFixed(2)}`,
                 `mode   ${this.settings.adaptive ? 'adaptive' : 'manual'}${this.settings.fpsCap ? '  cap ' + this.settings.fpsCap : ''}`
             ];
+
+            if (this._kioskLive) {
+                lines.push(`kiosk  live, preview ×${this.previewScale().toFixed(2)}`);
+            }
 
             if (this._shaderLabel) {
                 lines.push(`shader ${this._shaderLabel.slice(0, 22)}`);
