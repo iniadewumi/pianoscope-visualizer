@@ -36,6 +36,10 @@ class VideoController {
         this.isVideoMode = false;
         this.fitMode = 'contain';
         this.activeSrc = null;
+        // Bumped whenever the source changes. Async loaders (cache lookup,
+        // getUserMedia) capture it up front and drop their result if it moved,
+        // so a slow one cannot land on top of a newer choice.
+        this.sourceRequest = 0;
         this.entries = [];
         this.thumbnailsRequested = new Set();
         this.isScrubbing = false;
@@ -836,6 +840,7 @@ class VideoController {
             || (this.cameraDeviceSelect && this.cameraDeviceSelect.value)
             || this.cameraDeviceId;
 
+        const request = ++this.sourceRequest;
         this.cameraBtn.classList.add('is-busy');
         try {
             // Video only. The FFT already owns the microphone, and grabbing it
@@ -854,6 +859,11 @@ class VideoController {
                 audio: false
             });
 
+            if (request !== this.sourceRequest) {
+                this.discardStream(stream);
+                return;
+            }
+
             const settings = stream.getVideoTracks()[0] && stream.getVideoTracks()[0].getSettings();
             this.cameraDeviceId = targetDeviceId || (settings && settings.deviceId) || this.cameraDeviceId;
             if (this.cameraDeviceSelect && this.cameraDeviceId) {
@@ -870,6 +880,8 @@ class VideoController {
             this.populateCameraDevices();
         } catch (err) {
             // Leave any current clip/mode alone — the camera never attached.
+            // A request that was already replaced has nothing to report.
+            if (request !== this.sourceRequest) return;
             this.showCameraError(this.cameraErrorMessage(err));
         } finally {
             this.cameraBtn.classList.remove('is-busy');
@@ -884,12 +896,18 @@ class VideoController {
             return;
         }
 
+        const request = ++this.sourceRequest;
         if (this.screenBtn) this.screenBtn.classList.add('is-busy');
         try {
             const stream = await navigator.mediaDevices.getDisplayMedia({
                 video: { frameRate: { ideal: 60 } },
                 audio: false
             });
+
+            if (request !== this.sourceRequest) {
+                this.discardStream(stream);
+                return;
+            }
 
             this.activeSrc = 'screen:live';
             this.videoHandler.loadStream(stream, 'screen:live');
@@ -912,6 +930,7 @@ class VideoController {
                 });
             }
         } catch (err) {
+            if (request !== this.sourceRequest) return;
             this.showCameraError(this.cameraErrorMessage(err, true));
         } finally {
             if (this.screenBtn) this.screenBtn.classList.remove('is-busy');
@@ -923,6 +942,11 @@ class VideoController {
         if (!this.statusEl) return;
         this.statusEl.hidden = false;
         this.statusEl.textContent = message;
+    }
+
+    /** Stop a stream that lost the race to a newer source, or the camera light stays on. */
+    discardStream(stream) {
+        stream.getTracks().forEach((track) => track.stop());
     }
 
     cameraLabel(stream) {
@@ -959,6 +983,7 @@ class VideoController {
      * that should ever stop playback; setVideoMode() only switches the look.
      */
     detachSource() {
+        this.sourceRequest++;
         this.videoHandler.unload();
 
         this.activeSrc = null;
@@ -1013,6 +1038,7 @@ class VideoController {
     // === Playback ===
 
     async playSource(src, title, kind) {
+        const request = ++this.sourceRequest;
         const sourceKind = kind || (this.entries.find((entry) => entry.src === src) || {}).kind
             || (VideoLibrary.isImageSrc(src) ? 'image' : 'video');
         this.activeSrc = src;
@@ -1024,6 +1050,11 @@ class VideoController {
         this.updateActiveCard();
 
         const resolved = await VideoCache.resolveForPlayback(src, { warm: false });
+        if (request !== this.sourceRequest) {
+            // Something newer took over during the lookup; nobody will play this blob.
+            if (resolved.isObjectUrl) URL.revokeObjectURL(resolved.playUrl);
+            return;
+        }
         if (sourceKind === 'image') {
             this.videoHandler.loadImage(resolved.playUrl, {
                 sourceId: src,
@@ -1126,6 +1157,7 @@ class VideoController {
             return;
         }
 
+        this.sourceRequest++;
         this.activeSrc = `upload:${file.name}`;
         this.setLiveUI(false);
         this.setMirror(false);

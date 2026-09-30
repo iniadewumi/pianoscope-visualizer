@@ -329,7 +329,8 @@ window.VideoLibrary = (function () {
 
             video.muted = true;
             video.playsInline = true;
-            video.preload = 'auto';
+            // Metadata plus the one seek is all a poster needs; 'auto' pulls the whole clip per card.
+            video.preload = 'metadata';
             video.crossOrigin = 'anonymous';
 
             video.addEventListener('loadedmetadata', () => {
