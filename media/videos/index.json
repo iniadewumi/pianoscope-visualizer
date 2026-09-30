@@ -1,5 +1,9 @@
 {
   "videos": [
+    { "src": "0813(2).mov" },
+    { "src": "0813(3).mp4" },
+    { "src": "CRESCENDO.mp4" },
+    { "src": "sample.mp4" },
     { "src": "https://pub-ff498410309b44ea8ca524d7a17e6df8.r2.dev/pianoscope-videos/0813.mov", "title": "0813" },
     { "src": "https://pub-ff498410309b44ea8ca524d7a17e6df8.r2.dev/pianoscope-videos/0813(2).mov", "title": "0813 (2)" },
     { "src": "https://pub-ff498410309b44ea8ca524d7a17e6df8.r2.dev/pianoscope-videos/0813(3).mov", "title": "0813 (3)" },

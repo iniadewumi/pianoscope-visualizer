@@ -1,8 +1,9 @@
 /**
  * Video Library for Pianoscope Visualizer
  *
- * Discovers clips in media/videos/ at runtime (no hardcoded catalog), then
- * generates poster frames + metadata on demand.
+ * Lists clips from media/videos/index.json (committed files and R2 URLs) plus
+ * the dev server's directory listing, then generates poster frames + metadata
+ * on demand.
  *
  * Visualizer source stills live in media/images/ (UI assets stay in images/).
  */
@@ -132,8 +133,9 @@ window.VideoLibrary = (function () {
     }
 
     /**
-     * npx serve and python's http.server both emit an HTML index for media/*.
-     * GitHub Pages does not, so this returns null there and we fall through.
+     * npx serve and python's http.server both emit an HTML index for media/*,
+     * so files dropped in locally show up without a manifest edit. GitHub Pages
+     * does not; there only what index.json lists (local files and R2) appears.
      */
     async function listFromDirectory(spec) {
         try {
@@ -184,54 +186,12 @@ window.VideoLibrary = (function () {
         }
     }
 
-    function githubPagesRepo() {
-        const { hostname, pathname } = location;
-        if (!hostname.endsWith('.github.io')) return null;
-
-        const owner = hostname.slice(0, -'.github.io'.length);
-        if (!owner) return null;
-
-        const segments = pathname.split('/').filter(Boolean);
-        const repo = segments[0] || `${owner}.github.io`;
-        return { owner, repo };
-    }
-
-    /**
-     * GitHub Pages has no directory listing, but the public Contents API can
-     * enumerate whatever is committed under media/videos or media/images.
-     */
-    async function listFromGitHub(spec) {
-        const repo = githubPagesRepo();
-        if (!repo) return null;
-
-        try {
-            const response = await fetch(
-                `https://api.github.com/repos/${repo.owner}/${repo.repo}/contents/${spec.dir}`,
-                { headers: { Accept: 'application/vnd.github+json' } }
-            );
-            if (!response.ok) return null;
-
-            const data = await response.json();
-            if (!Array.isArray(data)) return null;
-
-            const names = data
-                .filter((item) => item && item.type === 'file' && item.name)
-                .map((item) => item.name);
-
-            const entries = entriesFromNames(names, spec);
-            return entries.length ? entries : null;
-        } catch (error) {
-            return null;
-        }
-    }
-
     async function listKind(spec) {
-        const [directory, manifest, github] = await Promise.all([
+        const [directory, manifest] = await Promise.all([
             listFromDirectory(spec),
-            listFromManifest(spec),
-            listFromGitHub(spec)
+            listFromManifest(spec)
         ]);
-        return mergeEntries(directory || [], manifest || [], github || []);
+        return mergeEntries(directory || [], manifest || []);
     }
 
     async function list() {
