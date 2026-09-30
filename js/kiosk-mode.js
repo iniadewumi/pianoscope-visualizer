@@ -529,6 +529,7 @@ const kioskHtmlContent = `<!DOCTYPE html>
                 iTime: gl.getUniformLocation(currentProgram, 'iTime'),
                 iTimeDelta: gl.getUniformLocation(currentProgram, 'iTimeDelta'),
                 iFrame: gl.getUniformLocation(currentProgram, 'iFrame'),
+                iMouse: gl.getUniformLocation(currentProgram, 'iMouse'),
                 iChannel0: gl.getUniformLocation(currentProgram, 'iChannel0'),
                 iChannel1: gl.getUniformLocation(currentProgram, 'iChannel1'),
                 iChannel3: gl.getUniformLocation(currentProgram, 'iChannel3'),
@@ -603,6 +604,34 @@ const kioskHtmlContent = `<!DOCTYPE html>
             gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, audioData.length, 1, gl.LUMINANCE, gl.UNSIGNED_BYTE, audioData);
         }
         
+        // Mirrors the operator's pointer, so a mouse-driven shader shows the same
+        // view here as in the preview. The opener hands over fractions of its
+        // canvas; they are scaled to this buffer with the same zw convention
+        // (press position, z positive while held, w only on the press frame).
+        // A press is spotted by its count changing, since this loop can run
+        // between two of the opener's frames. -1 until the first read, so a
+        // press from before the kiosk opened is not replayed as fresh.
+        let lastPressCount = -1;
+        function setMouseUniform() {
+            let p = null;
+            try {
+                const read = window.opener && window.opener.pianoscopeReadPointer;
+                if (typeof read === 'function') p = read();
+            } catch (e) {}
+            if (!p) {
+                gl.uniform4f(kioskUniforms.iMouse, 0, 0, 0, 0);
+                return;
+            }
+            const fresh = lastPressCount !== -1 && p.presses !== lastPressCount;
+            lastPressCount = p.presses;
+            const clickX = p.clickU * canvas.width;
+            const clickY = p.clickV * canvas.height;
+            gl.uniform4f(kioskUniforms.iMouse,
+                p.u * canvas.width, p.v * canvas.height,
+                p.down ? clickX : -clickX,
+                fresh ? clickY : -clickY);
+        }
+
         // Pulled every frame instead of pushed on a timer. The opener's render
         // loop stops while that window is hidden, so a pushed buffer froze here
         // on the last spectrum, and the 20 Hz timer made the projector step
@@ -740,6 +769,7 @@ const kioskHtmlContent = `<!DOCTYPE html>
                 if (kioskUniforms.iTime) gl.uniform1f(kioskUniforms.iTime, currentTime);
                 if (kioskUniforms.iTimeDelta) gl.uniform1f(kioskUniforms.iTimeDelta, deltaTime);
                 if (kioskUniforms.iFrame) gl.uniform1f(kioskUniforms.iFrame, frameCount);
+                if (kioskUniforms.iMouse) setMouseUniform();
                 
                 // Both windows share an origin, so the opener's <video> element can
                 // be uploaded straight into this context instead of shipping pixels

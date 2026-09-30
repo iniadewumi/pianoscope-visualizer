@@ -692,6 +692,23 @@ function createFeedbackState(gl, isWebGL2, width, height, desc) {
     // True for the first frame after a press, which is when Shadertoy makes
     // iMouse.w positive.
     let clickFresh = false;
+    // The kiosk renders on its own clock and can miss a one-frame flag, so it
+    // spots a new press by this count changing instead.
+    let pressCount = 0;
+
+    // The kiosk mirrors this pointer so mouse-driven shaders look the same on
+    // the projector as in the preview. Fractions of the canvas, which the kiosk
+    // scales to its own buffer. One reused object: this is read every frame.
+    const pointerState = { u: 0, v: 0, clickU: 0, clickV: 0, down: false, presses: 0 };
+    window.pianoscopeReadPointer = () => {
+        pointerState.u = mouseU;
+        pointerState.v = mouseV;
+        pointerState.clickU = clickU;
+        pointerState.clickV = clickV;
+        pointerState.down = mouseDown;
+        pointerState.presses = pressCount;
+        return pointerState;
+    };
 
     function trackPointer(clientX, clientY) {
         const rect = canvas.getBoundingClientRect();
@@ -703,6 +720,7 @@ function createFeedbackState(gl, isWebGL2, width, height, desc) {
     function pressPointer() {
         mouseDown = true;
         clickFresh = true;
+        pressCount++;
         clickU = mouseU;
         clickV = mouseV;
     }
