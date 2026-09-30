@@ -1020,15 +1020,18 @@ const kioskHtmlContent = `<!DOCTYPE html>
 </body>
 </html>`;
 
-// Function to create the kiosk.html file
+// One blob URL for the life of this page, reused by every kiosk opening, and
+// never revoked. Reloading the kiosk window (Cmd+R on the projector, or Chrome
+// recovering from a GPU crash) navigates to this URL again, and a revoked one
+// would put an error page on the projector. Reuse keeps the cost to a single
+// ~50 KB blob, which the browser frees when this page unloads.
+let kioskBlobUrl = null;
+
 function createKioskHtmlFile() {
-    // Create a Blob with the HTML content
-    const blob = new Blob([kioskHtmlContent], { type: 'text/html' });
-    
-    // Create a URL for the Blob
-    const url = URL.createObjectURL(blob);
-    
-    return url;
+    if (!kioskBlobUrl) {
+        kioskBlobUrl = URL.createObjectURL(new Blob([kioskHtmlContent], { type: 'text/html' }));
+    }
+    return kioskBlobUrl;
 }
 
 function handleKioskMessage(event) {
@@ -1062,15 +1065,15 @@ function openKioskMode() {
 
     // Create and get a URL for the kiosk.html file
     const kioskUrl = createKioskHtmlFile();
-    
+
     // Open the kiosk window
     const kioskWindow = window.open(kioskUrl, 'PianoscopeKiosk', 'width=800,height=600');
-    
+
     if (!kioskWindow) {
         alert('Please allow popups to open the kiosk mode');
         return;
     }
-    
+
     // Store a reference to the kiosk window
     window.kioskWindow = kioskWindow;
 
