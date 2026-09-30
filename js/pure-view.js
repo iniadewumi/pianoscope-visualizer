@@ -5,11 +5,13 @@ document.addEventListener('DOMContentLoaded', function() {
     const miniFullscreen = document.getElementById('mini-fullscreen');
     const miniShaderToggle = document.getElementById('mini-shader-toggle');
     const mainMicToggle = document.getElementById('mic-toggle');
-    const canvas = document.getElementById('visualizer');
     const body = document.body;
 
+    // The document goes fullscreen rather than the visualizer canvas, so the
+    // display-text overlay canvas beside it stays in the picture. style.css
+    // hides everything else while fullscreen.
     function toggleFullscreen() {
-        const target = canvas || document.documentElement;
+        const target = document.documentElement;
         if (document.fullscreenElement) {
             document.exitFullscreen();
         } else if (target.requestFullscreen) {

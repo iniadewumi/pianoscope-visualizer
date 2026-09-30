@@ -214,6 +214,17 @@ body.pure-view-mode canvas {
     width: 100%;
 }
 
+/* Fullscreen covers the whole document so the display-text overlay canvas
+   comes along with the visualizer; everything that is not a canvas stays out
+   of the picture, as it did when only the visualizer canvas went fullscreen. */
+:root:fullscreen body > :not(canvas) {
+    display: none !important;
+}
+
+:root:fullscreen body > canvas {
+    height: 100% !important;
+}
+
 /* Show a minimal menu on hover in pure view mode */
 .mini-controls {
     position: fixed;

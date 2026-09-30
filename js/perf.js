@@ -308,18 +308,24 @@
             return this;
         },
 
-        /** Device pixels per CSS pixel that the drawing buffer should use. */
-        pixelRatio() {
-            const dpr = window.devicePixelRatio || 1;
-            return Math.min(dpr, this.settings.dprCap) * this.settings.scale * this.shaderBias;
+        /**
+         * Device pixels per CSS pixel that the drawing buffer should use.
+         * @param {number} [dpr] density of the screen being drawn to. Defaults
+         *   to this window's; the kiosk passes its own because it sits on a
+         *   different screen, and a Retina laptop's density applied to a 1080p
+         *   projector renders ~1.8x the pixels the projector can show.
+         */
+        pixelRatio(dpr) {
+            const density = dpr || window.devicePixelRatio || 1;
+            return Math.min(density, this.settings.dprCap) * this.settings.scale * this.shaderBias;
         },
 
         /**
          * Drawing-buffer size for a CSS box. Applies DPR cap, adaptive scale,
          * shader bias, then the absolute pixel ceiling.
          */
-        bufferSize(cssWidth, cssHeight) {
-            const ratio = this.pixelRatio();
+        bufferSize(cssWidth, cssHeight, dpr) {
+            const ratio = this.pixelRatio(dpr);
             let width = Math.max(1, Math.round(cssWidth * ratio));
             let height = Math.max(1, Math.round(cssHeight * ratio));
             const maxPx = this.settings.maxPixelCount || 0;

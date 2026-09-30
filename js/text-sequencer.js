@@ -70,6 +70,7 @@ window.PianoscopeTextSequencer = (function () {
     let artist = '[ARTIST]';
     let lastLines = ['CRESCENDO', '[ARTIST]'];
     let hasShown = false;
+    let nextAt = 0;
     const listeners = [];
 
     // Tap tempo. Four taps is enough to lock; stale taps are dropped so a operator
@@ -156,13 +157,34 @@ window.PianoscopeTextSequencer = (function () {
         if (running) schedule();
     }
 
+    function armTimer() {
+        if (!running) return;
+        timer = setTimeout(function () {
+            // show(), not step(): step() is a manual cue and re-anchors the grid.
+            show(index + 1);
+            nextAt += stepMs();
+            // A throttled background tab or a sleeping laptop can leave the grid
+            // more than a whole step behind. Skip the missed slots rather than
+            // firing them back to back, and stay on the original phase.
+            const now = performance.now();
+            while (nextAt <= now) {
+                nextAt += stepMs();
+            }
+            armTimer();
+        }, Math.max(0, nextAt - performance.now()));
+    }
+
+    /**
+     * Re-anchor the grid so the next state is due one step from now. Each state
+     * after that is aimed at an absolute time on the grid. Chaining each timeout
+     * off the previous one let every late fire push the rest of the set later,
+     * about a beat off the downbeat after half an hour.
+     */
     function schedule() {
         if (timer) { clearTimeout(timer); timer = 0; }
         if (!running) return;
-        timer = setTimeout(function () {
-            step(1);
-            schedule();
-        }, stepMs());
+        nextAt = performance.now() + stepMs();
+        armTimer();
     }
 
     /**

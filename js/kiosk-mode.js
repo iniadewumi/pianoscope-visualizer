@@ -116,7 +116,10 @@ const kioskHtmlContent = `<!DOCTYPE html>
             }
             try {
                 if (window.opener && !window.opener.closed && window.opener.PianoscopePerf) {
-                    return window.opener.PianoscopePerf.bufferSize(displayWidth, displayHeight);
+                    // The opener's scale, pixel cap and shader bias carry over;
+                    // the density has to be this screen's, not the laptop's.
+                    return window.opener.PianoscopePerf.bufferSize(
+                        displayWidth, displayHeight, window.devicePixelRatio || 1);
                 }
             } catch (e) {}
             const ratio = Math.min(window.devicePixelRatio || 1, DPR_CAP);
@@ -280,39 +283,26 @@ const kioskHtmlContent = `<!DOCTYPE html>
         }
         resizeKioskCanvas();
         
-        // Double-click for fullscreen
-        canvas.addEventListener('dblclick', function() {
-            if (document.fullscreenElement) {
-                document.exitFullscreen();
-            } else {
-                if (canvas.requestFullscreen) {
-                    canvas.requestFullscreen();
-                } else if (canvas.webkitRequestFullscreen) {
-                    canvas.webkitRequestFullscreen();
-                } else if (canvas.mozRequestFullScreen) {
-                    canvas.mozRequestFullScreen();
-                } else if (canvas.msRequestFullscreen) {
-                    canvas.msRequestFullscreen();
-                }
+        // Fullscreen the document, not the WebGL canvas. The text overlay is a
+        // sibling canvas, and everything outside the fullscreen element sits
+        // behind the backdrop, so canvas-only fullscreen hid the overlay on the
+        // projector.
+        function toggleFullscreen() {
+            if (document.fullscreenElement || document.webkitFullscreenElement) {
+                if (document.exitFullscreen) document.exitFullscreen();
+                else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+                return;
             }
-        });
-        
-        // Handle keyboard shortcuts
+            const root = document.documentElement;
+            if (root.requestFullscreen) root.requestFullscreen();
+            else if (root.webkitRequestFullscreen) root.webkitRequestFullscreen();
+        }
+
+        canvas.addEventListener('dblclick', toggleFullscreen);
+
         document.addEventListener('keydown', function(e) {
             if (e.key === 'f' || e.key === 'F') {
-                if (document.fullscreenElement) {
-                    document.exitFullscreen();
-                } else {
-                    if (canvas.requestFullscreen) {
-                        canvas.requestFullscreen();
-                    } else if (canvas.webkitRequestFullscreen) {
-                        canvas.webkitRequestFullscreen();
-                    } else if (canvas.mozRequestFullScreen) {
-                        canvas.mozRequestFullScreen();
-                    } else if (canvas.msRequestFullscreen) {
-                        canvas.msRequestFullscreen();
-                    }
-                }
+                toggleFullscreen();
             } else if (e.key === 'Escape') {
                 window.close();
             }
@@ -333,11 +323,7 @@ const kioskHtmlContent = `<!DOCTYPE html>
                 // Send ready message
                 if (window.opener) window.opener.postMessage({ type: 'kiosk-ready' }, '*');
             } else if (message.type === 'shader-update') {
-                iResolutionIsVec2 = /uniform\\s+vec2\\s+iResolution/.test(message.fragmentShader);
                 updateShaderProgram(message.vertexShader, message.fragmentShader);
-            } else if (message.type === 'audio-data') {
-                // Update audio data
-                updateAudioData(message.audioData);
             } else if (message.type === 'display-text') {
                 // Deliberately empty. The kiosk shares the opener's realm and reads
                 // text, font, overlay, style AND the band's meta line straight off
@@ -378,6 +364,8 @@ const kioskHtmlContent = `<!DOCTYPE html>
                 console.error('WebGL not supported in kiosk mode');
                 return;
             }
+
+            parallelCompileExt = gl.getExtension('KHR_parallel_shader_compile');
 
             quadBuffer = gl.createBuffer();
             gl.bindBuffer(gl.ARRAY_BUFFER, quadBuffer);
@@ -433,41 +421,101 @@ const kioskHtmlContent = `<!DOCTYPE html>
             resizeKioskCanvas();
         }
         
-        // Update shader program
+        // A shader switch is compiled in the background while the current program
+        // keeps drawing, the same scheme as the opener's pollShaderProgram. Asking
+        // for compile or link status before the driver is done blocks until it is,
+        // which on the projector was a visible freeze on every switch.
+        let pendingBuild = null;
+        let parallelCompileExt = null;
+
+        function destroyBuild(build) {
+            gl.deleteProgram(build.program);
+            gl.deleteShader(build.vertexShader);
+            gl.deleteShader(build.fragmentShader);
+        }
+
         function updateShaderProgram(vertexSource, fragmentSource) {
             if (!gl) return;
 
-            const vertexShader = createShader(gl.VERTEX_SHADER, vertexSource);
-            const fragmentShader = createShader(gl.FRAGMENT_SHADER, fragmentSource);
-            if (!vertexShader || !fragmentShader) {
-                if (vertexShader) gl.deleteShader(vertexShader);
-                if (fragmentShader) gl.deleteShader(fragmentShader);
-                return;
+            // Holding an arrow key in the opener outruns compilation, and only
+            // the latest request is of any interest.
+            if (pendingBuild) {
+                destroyBuild(pendingBuild);
+                pendingBuild = null;
             }
 
+            const vertexShader = createShader(gl.VERTEX_SHADER, vertexSource);
+            const fragmentShader = createShader(gl.FRAGMENT_SHADER, fragmentSource);
             const program = gl.createProgram();
             gl.attachShader(program, vertexShader);
             gl.attachShader(program, fragmentShader);
+            gl.bindAttribLocation(program, 0, 'position');
             gl.linkProgram(program);
 
-            if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-                console.error('Could not link program', gl.getProgramInfoLog(program));
-                gl.deleteProgram(program);
-                gl.deleteShader(vertexShader);
-                gl.deleteShader(fragmentShader);
+            pendingBuild = {
+                program: program,
+                vertexShader: vertexShader,
+                fragmentShader: fragmentShader,
+                fragmentSource: fragmentSource,
+                startMs: performance.now()
+            };
+        }
+
+        /** Called at the top of every frame. Never blocks. */
+        function pollShaderProgram() {
+            if (!pendingBuild) return;
+
+            if (parallelCompileExt) {
+                const done = gl.getProgramParameter(pendingBuild.program, parallelCompileExt.COMPLETION_STATUS_KHR);
+                if (!done) return;
+            } else if (performance.now() - pendingBuild.startMs < 24) {
+                // Without the extension LINK_STATUS blocks; a frame of wall clock
+                // lets the driver finish in the background first.
                 return;
             }
 
+            const build = pendingBuild;
+            pendingBuild = null;
+
+            if (!gl.getProgramParameter(build.program, gl.LINK_STATUS)) {
+                console.error('Kiosk shader link error:',
+                    gl.getShaderInfoLog(build.fragmentShader)
+                    || gl.getShaderInfoLog(build.vertexShader)
+                    || gl.getProgramInfoLog(build.program));
+                destroyBuild(build);
+                return;
+            }
+
+            adoptProgram(build);
+        }
+
+        function adoptProgram(build) {
             if (currentProgram) gl.deleteProgram(currentProgram);
-            currentProgram = program;
+            // Shaders live as long as the program they are attached to, so
+            // flagging them now frees them with it instead of leaking a pair
+            // per switch.
+            gl.deleteShader(build.vertexShader);
+            gl.deleteShader(build.fragmentShader);
+
+            currentProgram = build.program;
             gl.useProgram(currentProgram);
+            // Read from the program being adopted, not the request: the previous
+            // program keeps drawing until now and still needs its own uniform type.
+            iResolutionIsVec2 = /uniform\\s+vec2\\s+iResolution/.test(build.fragmentSource);
             cacheKioskUniforms();
-            configureFeedbackPass(fragmentSource);
+            configureFeedbackPass(build.fragmentSource);
 
             gl.bindBuffer(gl.ARRAY_BUFFER, quadBuffer);
-            const positionLocation = gl.getAttribLocation(currentProgram, 'position');
-            gl.enableVertexAttribArray(positionLocation);
-            gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
+            gl.enableVertexAttribArray(0);
+            gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+
+            // Linking is not the driver's last word: the first draw can still
+            // specialise the program. One scissored pixel pays that here rather
+            // than in the first full-resolution frame.
+            gl.enable(gl.SCISSOR_TEST);
+            gl.scissor(0, 0, 1, 1);
+            gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+            gl.disable(gl.SCISSOR_TEST);
         }
 
         function cacheKioskUniforms() {
@@ -502,7 +550,9 @@ const kioskHtmlContent = `<!DOCTYPE html>
             };
         }
         
-        // Create shader using prefixes passed from parent window
+        // Create shader using prefixes passed from parent window. Compile status is
+        // deliberately not queried here: it forces a synchronous round trip, and
+        // errors surface at link time in pollShaderProgram, which reads the logs.
         function createShader(type, source) {
             const shader = gl.createShader(type);
             
@@ -526,13 +576,6 @@ const kioskHtmlContent = `<!DOCTYPE html>
             
             gl.shaderSource(shader, fullSource);
             gl.compileShader(shader);
-            
-            if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-                console.error('Shader compilation error', gl.getShaderInfoLog(shader));
-                gl.deleteShader(shader);
-                return null;
-            }
-            
             return shader;
         }
         
@@ -555,6 +598,19 @@ const kioskHtmlContent = `<!DOCTYPE html>
             gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, audioData.length, 1, gl.LUMINANCE, gl.UNSIGNED_BYTE, audioData);
         }
         
+        // Pulled every frame instead of pushed on a timer. The opener's render
+        // loop stops while that window is hidden, so a pushed buffer froze here
+        // on the last spectrum, and the 20 Hz timer made the projector step
+        // where the operator's preview moved smoothly.
+        function pullOpenerAudio() {
+            try {
+                const read = window.opener && window.opener.pianoscopeReadAudio;
+                if (typeof read !== 'function') return;
+                const data = read();
+                if (data) updateAudioData(data);
+            } catch (e) {}
+        }
+
         function getOpenerDisplayText() {
             try {
                 const dt = window.opener && window.opener.PianoscopeDisplayText;
@@ -652,8 +708,12 @@ const kioskHtmlContent = `<!DOCTYPE html>
 
                 if (document.hidden) return;
                 resizeKioskCanvas();
-                
-                if (!gl || !currentProgram) return;
+
+                if (!gl) return;
+                // Promote a finished build before anything else, so the whole
+                // frame draws with one program.
+                pollShaderProgram();
+                if (!currentProgram) return;
                 
                 // Calculate time values
                 const nowSec = now / 1000;
@@ -781,6 +841,8 @@ const kioskHtmlContent = `<!DOCTYPE html>
                     if (kioskUniforms.iVideoBlendAmount) gl.uniform1f(kioskUniforms.iVideoBlendAmount, 0.0);
                 }
                 
+                pullOpenerAudio();
+
                 // Audio holds iChannel0 in both modes so video effects stay reactive.
                 if (kioskUniforms.iChannel0) {
                     gl.activeTexture(gl.TEXTURE0);
@@ -932,19 +994,6 @@ const kioskHtmlContent = `<!DOCTYPE html>
             animationFrameId = requestAnimationFrame(render);
         }
         
-        // Auto-enter fullscreen mode
-        function enterFullscreen() {
-            if (canvas.requestFullscreen) {
-                canvas.requestFullscreen();
-            } else if (canvas.webkitRequestFullscreen) {
-                canvas.webkitRequestFullscreen();
-            } else if (canvas.mozRequestFullScreen) {
-                canvas.mozRequestFullScreen();
-            } else if (canvas.msRequestFullscreen) {
-                canvas.msRequestFullscreen();
-            }
-        }
-        
         function announceToOpener() {
             if (!window.opener || window.opener.closed) return;
             try {
@@ -1075,50 +1124,6 @@ function sendCurrentShaderToKiosk() {
     }, '*');
 }
 
-// Function to send audio data to the kiosk window
-function sendAudioDataToKiosk() {
-    if (!window.kioskWindow || window.kioskWindow.closed) return;
-    
-    // Get the audio data from your visualizer
-    // This assumes you have a global variable for this
-    let audioData = null;
-    
-    if (window.audioData) {
-        audioData = window.audioData;
-    } else if (window.visualizer && window.visualizer.audioData) {
-        audioData = window.visualizer.audioData;
-    }
-    
-    if (!audioData) return;
-    
-    // Send the audio data to the kiosk window
-    window.kioskWindow.postMessage({
-        type: 'audio-data',
-        audioData: audioData
-    }, '*');
-}
-
-// Hook into the shader update and audio update functions
-// This will need to be customized based on your visualizer's architecture
-
-// For shader updates - add this where you update your shaders
-function onShaderUpdate() {
-    // Call this after you update the shader in your main window
-    if (window.kioskWindow && !window.kioskWindow.closed) {
-        sendCurrentShaderToKiosk();
-    }
-}
-
-// For audio updates - add this to your audio processing loop
-function setupAudioSync() {
-    // Set up a periodic sync of audio data
-    setInterval(function() {
-        if (window.kioskWindow && !window.kioskWindow.closed) {
-            sendAudioDataToKiosk();
-        }
-    }, 50); // Update every 50ms (20fps)
-}
-
 // Add button to open kiosk mode
 document.addEventListener('DOMContentLoaded', function() {
     const buttonContainer = document.querySelector('.button-container');
@@ -1132,8 +1137,7 @@ document.addEventListener('DOMContentLoaded', function() {
         buttonContainer.appendChild(kioskButton);
     }
 
+    // Audio is not pushed from here: the kiosk pulls it each frame through
+    // window.pianoscopeReadAudio (see visualizer-with-shadertoy.js).
     window.addEventListener('message', handleKioskMessage);
-    
-    // Set up audio sync when the page is loaded
-    setupAudioSync();
 });

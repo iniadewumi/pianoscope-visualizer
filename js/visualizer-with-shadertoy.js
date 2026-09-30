@@ -183,6 +183,7 @@ function createFeedbackState(gl, isWebGL2, width, height, desc) {
     let currentDb = 0;
     let lastRenderedDb = -1;
     let nextVolumeReadoutMs = 0;
+    let lastAudioSampleMs = -Infinity;
     
     // === SHADER SOURCES === 
     // Default vertex shader
@@ -1092,6 +1093,7 @@ function createFeedbackState(gl, isWebGL2, width, height, desc) {
         if (!isListening || !analyser) return;
 
         analyser.getByteFrequencyData(frequencyArray);
+        lastAudioSampleMs = performance.now();
 
         const count = Math.min(audioData.length, frequencyArray.length);
         let sumOfSquares = 0;
@@ -1109,6 +1111,22 @@ function createFeedbackState(gl, isWebGL2, width, height, desc) {
         const rms = Math.sqrt(sumOfSquares / count);
         currentDb = rms > 0 ? Math.max(20 * Math.log10(rms), 0) : 0;
     }
+
+    /**
+     * The kiosk pulls the spectrum from its own render loop rather than being
+     * sent it. This window's loop stops whenever the window is hidden
+     * (minimised, or covered by fullscreen DJ software), and forwarding its
+     * samples froze the projector on the last spectrum exactly then. While the
+     * loop is running it owns the analyser and the kiosk reuses its latest read:
+     * smoothing is applied per read, so reading at both windows' combined rate
+     * would change how every shader responds.
+     */
+    window.pianoscopeReadAudio = () => {
+        if (!animationRunning || performance.now() - lastAudioSampleMs > 50) {
+            sampleAudio();
+        }
+        return audioData;
+    };
 
     function uploadAudioTexture() {
         gl.activeTexture(gl.TEXTURE0);
