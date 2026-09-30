@@ -1318,8 +1318,8 @@ window.PianoscopeDisplayText = (function () {
         }).join('|');
     }
 
-    function commitVisuals() {
-        paintOverlay();
+    function commitVisuals(options) {
+        if (!options || options.overlay !== false) paintOverlay();
         const font = activeFont();
         const linesA = autoWrap(splitLines(currentText, false), font);
 
@@ -1458,7 +1458,9 @@ window.PianoscopeDisplayText = (function () {
             scrambleTimer = setInterval(function () {
                 if (!settlePending) { clearInterval(scrambleTimer); scrambleTimer = 0; return; }
                 morph = currentMorph();
-                commitVisuals();
+                // Only the sheets carry the scrambling incoming text. The overlay
+                // shows the resting text, which a tick never changes.
+                commitVisuals({ overlay: false });
             }, 1000 / SCRAMBLE_FPS);
         }
         return next;

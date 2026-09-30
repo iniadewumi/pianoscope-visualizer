@@ -38,7 +38,7 @@ You are working in **pianoscope-visualizer**: Shadertoy-style GLSL fragments, mi
 | `PIANOSCOPE Amapiano Kente Loom` | **Shipped (v1)** | `js/test-shaders.js` |
 | `PIANOSCOPE 3-Step Cornrow Curves` | **Not built** | recipe in `howto/06-genre-shader-recipes.md` |
 | `PIANOSCOPE Adinkra Symbol Field Abstract` | Optional | brief only |
-| `PIANOSCOPE Word Ladder` | **Built, uncommitted** (branch `feat/kinetic-text`) | `js/test-shaders.js` — first in picker; see [`howto/10`](howto/10-display-text-and-sequencer.md) |
+| `PIANOSCOPE Word Ladder` | **Shipped (v1)** | `js/test-shaders.js` — first in picker; see [`howto/10`](howto/10-display-text-and-sequencer.md) |
 | `PIANOSCOPE Kick Afterglow` | **Sequencer via `SEQ_COVER`** — original size, shared `seqSample` | `js/test-shaders.js` |
 | `PIANOSCOPE Chrome Stage` | **Removed** | — |
 

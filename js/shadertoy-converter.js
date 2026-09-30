@@ -978,17 +978,8 @@ void main() {
 
             showMessage(resetSuccess ? 'Reset to default shader' : 'Error resetting shader', resetSuccess ? 'success' : 'error');
 
-            // Update textarea content after attempting reset
-            // Check if getDefaultFragmentShaderSource exists, otherwise use fallback
-            let defaultFragSource = '';
-            if (typeof window.visualizer !== 'undefined' && window.visualizer && typeof window.visualizer.getDefaultFragmentShaderSource === 'function') {
-                defaultFragSource = window.visualizer.getDefaultFragmentShaderSource();
-            }
-            // If function doesn't exist or returns empty, use the hardcoded fallback
-            if (!defaultFragSource) {
-                defaultFragSource = SAMPLE_SHADERS[defaultShaderName] || Object.values(SAMPLE_SHADERS)[0] || '';
-            }
-            shaderTextarea.value = defaultFragSource;
+            // Update textarea with fallback from sample shaders.
+            shaderTextarea.value = SAMPLE_SHADERS[defaultShaderName] || Object.values(SAMPLE_SHADERS)[0] || '';
 
         });
 

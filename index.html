@@ -20,8 +20,7 @@
          interpolate at runtime; `@50..150,100..900` returns the real variable file.
          Verified by pulling the woff2 the API serves and checking for fvar. -->
     <link href="https://fonts.googleapis.com/css2?family=Anton&family=Anybody:wdth,wght@50..150,100..900&family=Bagel+Fat+One&family=Bricolage+Grotesque:opsz,wdth,wght@12..96,75..100,200..800&family=Instrument+Serif:ital@1&family=Inter:wght@300;400;500;600;700&family=Inter+Tight:wght@800&family=Oswald:wght@700&family=Space+Mono:wght@400;700&family=Saira:wdth,wght@50..125,100..900&family=Syne:wght@400..800&family=Unbounded:wght@200..900&display=swap" rel="stylesheet">
-</head>
-<style>
+    <style>
 @font-face {
     font-family: 'Akira Expanded';
     src: local('Akira Expanded'),
@@ -41,6 +40,7 @@
     width: 3rem;
 }
 </style>
+</head>
 <body>
     <!-- Main visualization canvas -->
     <canvas id="visualizer"></canvas>
@@ -49,7 +49,7 @@
     <h1 class="main-text">Please allow the use of your microphone</h1>
     <h1 class="sub-text"></h1>
     <div class="logo">
-        <img style="padding-left:8px" src="images/pianoscope-logo.png" alt="" class="logo">
+        <img style="padding-left:8px" src="images/pianoscope-logo-small.png" alt="" class="logo">
         <h6 style="padding-top:10px" >Pianoscope</h6>
     </div>
     <!-- Updated Controls -->
@@ -64,7 +64,6 @@
     <div id="status" class="status"></div>
 
     <!-- Load scripts in correct order -->
-    <script type="module" src="js/shaders.js"></script>
     <script type="module" src="js/shadertoy-converter.js"></script>
     <script src="js/perf.js"></script>
     <script src="js/display-text.js"></script>
@@ -81,7 +80,9 @@
         window.addEventListener('error', function (event) {
             const errorLog = document.getElementById('error-log');
             errorLog.style.display = 'block';
-            errorLog.innerHTML += event.message + '<br>';
+            const errorDiv = document.createElement('div');
+            errorDiv.textContent = event.message;
+            errorLog.appendChild(errorDiv);
             console.error(event.error);
 
             // Auto-hide after 10 seconds

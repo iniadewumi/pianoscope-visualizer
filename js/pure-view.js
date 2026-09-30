@@ -124,6 +124,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const isTyping = active && (
             active.tagName === 'INPUT' ||
             active.tagName === 'TEXTAREA' ||
+            active.tagName === 'SELECT' ||
             active.isContentEditable
         );
 
@@ -133,14 +134,14 @@ document.addEventListener('DOMContentLoaded', function() {
             // Ctrl+P for pure view toggle
             togglePureViewMode();
             e.preventDefault(); // Prevent browser print dialog
-        } else if ((e.key === 'm' || e.key === 'M') && !isTyping) {
+        } else if ((e.key === 'm' || e.key === 'M') && !isTyping && !e.metaKey && !e.ctrlKey && !e.altKey) {
             e.preventDefault();
             if (miniMicToggle) {
                 miniMicToggle.click();
             } else if (mainMicToggle) {
                 mainMicToggle.click();
             }
-        } else if ((e.key === 'f' || e.key === 'F') && !isTyping) {
+        } else if ((e.key === 'f' || e.key === 'F') && !isTyping && !e.metaKey && !e.ctrlKey && !e.altKey) {
             e.preventDefault();
             toggleFullscreen();
         }
