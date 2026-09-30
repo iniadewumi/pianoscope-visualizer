@@ -94,7 +94,9 @@ const kioskHtmlContent = `<!DOCTYPE html>
         let displayTextW = 1;
         let displayTextH = 1;
         let lastDisplayTextVersion = -1;
-        
+        // Reused every frame so the render loop allocates nothing for iChannelResolution.
+        const channelResolution = new Float32Array(12);
+
         // Shader prefix constants passed from parent window
         let shaderPrefixes = null;
         let kioskUniforms = {};
@@ -310,8 +312,11 @@ const kioskHtmlContent = `<!DOCTYPE html>
         
         // Listen for messages from parent window
         window.addEventListener('message', function(event) {
+            // Only the page that opened us may drive the kiosk.
+            if (event.source !== window.opener) return;
+
             const message = event.data;
-            
+
             if (message.type === 'init') {
                 // Store shader prefixes
                 shaderPrefixes = message.shaderPrefixes;
@@ -926,12 +931,19 @@ const kioskHtmlContent = `<!DOCTYPE html>
                     const videoEffectActive = videoState && videoState.effectLook;
                     const videoW = videoEffectActive ? videoState.width : 1;
                     const videoH = videoEffectActive ? videoState.height : 1;
-                    gl.uniform3fv(kioskUniforms.iChannelResolution, new Float32Array([
-                        256, 1, 1,
-                        videoW, videoH, 1,
-                        1, 1, 1,
-                        displayTextW, displayTextH, 1
-                    ]));
+                    channelResolution[0] = 256;
+                    channelResolution[1] = 1;
+                    channelResolution[2] = 1;
+                    channelResolution[3] = videoW;
+                    channelResolution[4] = videoH;
+                    channelResolution[5] = 1;
+                    channelResolution[6] = 1;
+                    channelResolution[7] = 1;
+                    channelResolution[8] = 1;
+                    channelResolution[9] = displayTextW;
+                    channelResolution[10] = displayTextH;
+                    channelResolution[11] = 1;
+                    gl.uniform3fv(kioskUniforms.iChannelResolution, channelResolution);
                 }
                 
                 if (usesFeedbackPass && feedbackState) {
@@ -1027,6 +1039,11 @@ function createKioskHtmlFile() {
 }
 
 function handleKioskMessage(event) {
+    // The kiosk is a blob: URL minted by this page, so it reports our origin
+    // (the string "null" on both sides under file://). Anything else could be
+    // a stray window trying to become kioskWindow and receive shader sources.
+    if (!event.source || event.origin !== window.location.origin) return;
+
     const message = event.data;
     if (!message || typeof message !== 'object') return;
 
@@ -1063,13 +1080,30 @@ function openKioskMode() {
     
     // Store a reference to the kiosk window
     window.kioskWindow = kioskWindow;
-    
-    // Try to position on second screen if available
+
+    moveKioskToOtherScreen(kioskWindow);
+}
+
+// window.screen only describes the screen this page is on, so landing the
+// popup elsewhere needs the Window Management API. Unsupported, denied or
+// single-screen all leave the popup where it opened.
+async function moveKioskToOtherScreen(kioskWindow) {
+    if (typeof window.getScreenDetails !== 'function') return;
+    // A single screen has nowhere to go; don't raise a permission prompt for it.
+    if (window.screen && window.screen.isExtended === false) return;
+
     try {
-        if (window.screen.isExtended) {
-            kioskWindow.moveTo(window.screen.availLeft, 0);
-            kioskWindow.resizeTo(window.screen.availWidth, window.screen.availHeight);
-        }
+        // Called before any await so the click's user activation still counts.
+        const details = await window.getScreenDetails();
+        const current = details.currentScreen;
+        const others = details.screens.filter(function(s) {
+            return s !== current && !(current && s.left === current.left && s.top === current.top);
+        });
+        const target = others.find(function(s) { return !s.isPrimary; }) || others[0];
+        if (!target || kioskWindow.closed) return;
+
+        kioskWindow.moveTo(target.availLeft, target.availTop);
+        kioskWindow.resizeTo(target.availWidth, target.availHeight);
     } catch (e) {
         console.log('Could not position on second screen', e);
     }
