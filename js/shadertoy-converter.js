@@ -171,6 +171,15 @@ void main() {
 #endif
 `;
 
+    // Source-string numbers for #line. The operator's code is wrapped in ~100
+    // lines of preamble, so without these every compiler error pointed 100-odd
+    // lines past the line actually at fault. They also say whose code an error
+    // is in: 0 is the operator's, 1 the injected sequencer helpers, 2 the wrapper.
+    const SOURCE_USER = 0;
+    const SOURCE_SEQ = 1;
+    const SOURCE_WRAPPER = 2;
+    const SOURCE_LABELS = ['Line ', 'Sequencer helpers line ', 'Wrapper line '];
+
     /**
      * Converts a Shadertoy fragment shader to WebGL format
      * @param {string} shadertoyCode - The Shadertoy shader code
@@ -184,7 +193,7 @@ void main() {
         // Check if code already contains a main function
         if (shadertoyCode.includes("void main()")) {
             // Already has a main function, could be a regular WebGL shader
-            return shadertoyCode;
+            return '#line 1 ' + SOURCE_USER + '\n' + shadertoyCode;
         }
 
         // Check if it's a Shadertoy shader (should have mainImage function)
@@ -199,7 +208,14 @@ void main() {
             !/vec3\s+seqSample\s*\(/.test(shadertoyCode)) {
             const idx = shadertoyCode.search(/void\s+mainImage\s*\(/);
             if (idx >= 0) {
-                shadertoyCode = shadertoyCode.slice(0, idx) + SEQ_GLSL + '\n' + shadertoyCode.slice(idx);
+                // The helpers get their own numbering, and the count is put back
+                // after them, so an error below the insertion still names the
+                // line the operator wrote.
+                const resumeLine = shadertoyCode.slice(0, idx).split('\n').length;
+                shadertoyCode = shadertoyCode.slice(0, idx)
+                    + '\n#line 1 ' + SOURCE_SEQ + '\n' + SEQ_GLSL
+                    + '\n#line ' + resumeLine + ' ' + SOURCE_USER + '\n'
+                    + shadertoyCode.slice(idx);
             }
         }
 
@@ -212,7 +228,30 @@ void main() {
             .replace(/vec3\s*\(\s*iResolution\s*,\s*0\.0\s*\)/g, 'vec3(iResolution.xy, 0.0)');
 
         // Combine the shader parts
-        return WEBGL_PREAMBLE + convertedCode + WEBGL_MAIN;
+        return WEBGL_PREAMBLE
+            + '#line 1 ' + SOURCE_USER + '\n' + convertedCode
+            + '\n#line 1 ' + SOURCE_WRAPPER + '\n' + WEBGL_MAIN;
+    }
+
+    /**
+     * Turns a driver info log into lines the editor can show: "Line 12: ..." for
+     * the operator's code, labelled otherwise for code injected around it.
+     * ANGLE writes each entry as "ERROR: <source>:<line>: <message>", ends with
+     * a compilation-error tally, and pads the log with a trailing NUL.
+     * @param {string} log
+     * @return {string[]}
+     */
+    function formatCompileLog(log) {
+        return String(log || '')
+            .replace(/\u0000/g, '')
+            .split('\n')
+            .map((line) => line.trim())
+            .filter((line) => line && !/compilation errors?\./i.test(line))
+            .map((line) => {
+                const m = /^(?:ERROR|WARNING):\s*(\d+):(\d+):\s*(.*)$/.exec(line);
+                if (!m) return line;
+                return (SOURCE_LABELS[Number(m[1])] || SOURCE_LABELS[SOURCE_USER]) + m[2] + ': ' + m[3];
+            });
     }
 
     /**
@@ -690,10 +729,30 @@ void main() {
             button.addEventListener('click', () => setActiveTab(button.dataset.tab));
         });
 
-        // Function to show status messages with animation
-        function showMessage(message, type = 'success') {
+        // Fade timers of the message on screen. A new message cancels them:
+        // otherwise the previous message's timer hid the new one early, and
+        // "Compiling…" would take a sticky compile error down with it.
+        let messageTimers = [];
+
+        function clearMessageTimers() {
+            messageTimers.forEach(clearTimeout);
+            messageTimers = [];
+        }
+
+        function hideMessage() {
+            if (!errorDisplay) return;
+            clearMessageTimers();
+            errorDisplay.style.opacity = '0'; errorDisplay.style.transform = 'translateY(10px)';
+            messageTimers.push(setTimeout(() => { errorDisplay.style.display = 'none'; }, 300));
+        }
+
+        // Function to show status messages with animation. Sticky messages stay
+        // until replaced - a compile error has to outlast the time it takes to
+        // read it and find the line.
+        function showMessage(message, type = 'success', options = {}) {
             // Ensure errorDisplay exists before manipulating it
             if (!errorDisplay) return;
+            clearMessageTimers();
 
             errorDisplay.textContent = message;
 
@@ -718,11 +777,18 @@ void main() {
             });
 
 
+            if (options.sticky) return;
+
             // Auto hide after delay
-            setTimeout(() => {
-                errorDisplay.style.opacity = '0'; errorDisplay.style.transform = 'translateY(10px)';
-                setTimeout(() => { errorDisplay.style.display = 'none'; }, 300); // Wait for fade out transition
-            }, 3000);
+            messageTimers.push(setTimeout(hideMessage, 3000));
+        }
+
+        /** The first few compiler errors, in editor line numbers. */
+        function describeCompileFailure(detail) {
+            const lines = formatCompileLog(detail);
+            if (!lines.length) return 'Shader failed to compile';
+            const shown = lines.slice(0, 3).join('\n');
+            return lines.length > 3 ? shown + '\n(+' + (lines.length - 3) + ' more)' : shown;
         }
 
         function syncClearEnabled() {
@@ -883,8 +949,15 @@ void main() {
                 setTimeout(() => { applyButton.style.transform = ''; }, 150);
 
                 if (convertedShader && onShaderApply) {
-                    const success = onShaderApply(convertedShader);
-                    showMessage(success ? 'Shader applied successfully!' : 'Error applying shader', success ? 'success' : 'error');
+                    // The program links on a later frame, so the verdict arrives
+                    // through this callback. The return value only means queued.
+                    const queued = onShaderApply(convertedShader, (ok, detail) => {
+                        if (ok) showMessage('Shader applied successfully!', 'success');
+                        else if (detail === 'superseded') hideMessage();
+                        else showMessage(describeCompileFailure(detail), 'error', { sticky: true });
+                    });
+                    if (queued) showMessage('Compiling…', 'info', { sticky: true });
+                    else showMessage('Error applying shader', 'error');
                 }
             } catch (error) {
                 showMessage('Error: ' + error.message, 'error');
@@ -962,6 +1035,7 @@ void main() {
     // Public API
     return {
         convertShaderToyToWebGL: convertShaderToyToWebGL,
+        formatCompileLog: formatCompileLog,
         createShaderTestUI: createShaderTestUI,
         SAMPLE_SHADERS: SAMPLE_SHADERS // Expose sample shaders if needed elsewhere
     };

@@ -279,6 +279,9 @@
     margin-top: 4px;
     border-left: 3px solid;
     transition: all 0.3s ease;
+    /* Compile errors are one entry per line and can carry long identifiers. */
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
 }
 
 /* Grouped cards inside the Shader tab. */

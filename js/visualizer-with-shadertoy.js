@@ -519,9 +519,9 @@ function createFeedbackState(gl, isWebGL2, width, height, desc) {
      *   known, which is at least one frame later.
      * @returns {boolean} whether the request was accepted, not whether it linked.
      */
-    function queueFragmentShader(fragShaderSource, label) {
+    function queueFragmentShader(fragShaderSource, label, onDone) {
         if (label) currentShaderLabel = label;
-        return requestShaderProgram(vertexShaderSource, fragShaderSource);
+        return requestShaderProgram(vertexShaderSource, fragShaderSource, onDone);
     }
 
     function requestShaderProgram(vertexSource, fragmentSource, onDone) {
@@ -624,7 +624,12 @@ function createFeedbackState(gl, isWebGL2, width, height, desc) {
                 || gl.getProgramInfoLog(build.program)
                 || 'unknown link failure';
             console.error('Shader link error:', detail);
-            if (statusEl) statusEl.textContent = 'Shader Error: ' + detail.substring(0, 100) + '...';
+            if (statusEl) {
+                const readable = window.ShaderConverter && window.ShaderConverter.formatCompileLog
+                    ? window.ShaderConverter.formatCompileLog(detail)[0]
+                    : null;
+                statusEl.textContent = 'Shader Error: ' + (readable || detail).substring(0, 100);
+            }
             destroyBuild(build);
             if (build.onDone) build.onDone(false, detail);
             return;
@@ -1540,14 +1545,15 @@ window.getCurrentShaderInfo = () => {
     // === SHADERTOY INTEGRATION ===
     // Create the shader test UI if the ShaderConverter is available
     if (window.ShaderConverter) {
-        const shaderUI = window.ShaderConverter.createShaderTestUI(document.body, (newShaderSource) => {
-            // When user applies a new shader, set it up
+        const shaderUI = window.ShaderConverter.createShaderTestUI(document.body, (newShaderSource, onResult) => {
+            // Queued now, linked on a later frame: success is only announced
+            // once the program has actually linked. A failure has already put
+            // the error in the status bar by the time onResult hears of it.
             leaveVideoMode();
-            if (queueFragmentShader(newShaderSource, 'editor')) {
-                if (statusEl) statusEl.textContent = 'New shader applied successfully';
-                return true;
-            }
-            return false;
+            return queueFragmentShader(newShaderSource, 'editor', (ok, detail) => {
+                if (ok && statusEl) statusEl.textContent = 'New shader applied successfully';
+                if (onResult) onResult(ok, detail);
+            });
         });
 
         // Hand the video tab over to the controller now that the shell exists
