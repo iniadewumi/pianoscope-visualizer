@@ -13,8 +13,8 @@
 | Key | Genre | Status | Primary techniques |
 |-----|-------|--------|-------------------|
 | `PIANOSCOPE Afrotech Fractal Settlement` | Afrotech | Documented in learnings; verify in `test-shaders.js` | Fill+stroke rings, explicit layers |
-| `PIANOSCOPE Afrohouse Mudcloth Bloom` | Afrohouse | **In `test-shaders.js`** | fBM, warp, brick-offset marks |
-| `PIANOSCOPE Amapiano Kente Loom` | Amapiano | **In `test-shaders.js`** | fract grid, weave, stripes |
+| `PIANOSCOPE Afrohouse Mudcloth Bloom` | Afrohouse | **Removed** (source at commit `554f5ca`) | fBM, warp, brick-offset marks |
+| `PIANOSCOPE Amapiano Kente Loom` | Amapiano | **Removed** (source at commit `554f5ca`) | fract grid, weave, stripes |
 | `PIANOSCOPE 3-Step Cornrow Curves` | 3-Step | Not built | sine braids, triplet pulse |
 | `PIANOSCOPE Adinkra Symbol Field Abstract` | Optional | Brief only | Radial arcs, smoke emergence |
 
@@ -112,7 +112,7 @@ mainImage
 
 **Upgrades (not yet required):** double domain warp; Voronoise bloom field; IQ uniform crack lines.
 
-**Reference implementation:** `js/test-shaders.js` → `"PIANOSCOPE Afrohouse Mudcloth Bloom"`.
+**Reference implementation:** removed from the picker; read it with `git show 554f5ca:js/test-shaders.js`.
 
 **Techniques:** [`04-pattern-tiling-truchet.md`](04-pattern-tiling-truchet.md) + [`05-iquilez-sdf-noise-warp.md`](05-iquilez-sdf-noise-warp.md).
 

@@ -88,7 +88,7 @@ Enable mic when testing audio reactivity.
 **Console:**
 
 ```js
-setShaderByName("PIANOSCOPE Afrohouse Mudcloth Bloom")
+setShaderByName("PIANOSCOPE Hairpin")
 getCurrentShaderInfo()
 ```
 

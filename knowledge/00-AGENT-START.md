@@ -33,14 +33,22 @@ You are working in **pianoscope-visualizer**: Shadertoy-style GLSL fragments, mi
 
 | Shader key (`TEST_SHADERS`) | Status | File |
 |-----------------------------|--------|------|
-| `PIANOSCOPE Afrohouse Mudcloth Bloom` | **Shipped (v1)** | `js/test-shaders.js` |
+| `PIANOSCOPE Afrohouse Mudcloth Bloom` | **Removed** by the owner — last source at commit `554f5ca` | `git show 554f5ca:js/test-shaders.js` |
 | `PIANOSCOPE Afrotech Fractal Settlement` | **Documented** — architecture in learnings; re-add to `test-shaders.js` if missing | see learnings doc |
-| `PIANOSCOPE Amapiano Kente Loom` | **Shipped (v1)** | `js/test-shaders.js` |
+| `PIANOSCOPE Amapiano Kente Loom` | **Removed** by the owner — last source at commit `554f5ca` | `git show 554f5ca:js/test-shaders.js` |
 | `PIANOSCOPE 3-Step Cornrow Curves` | **Not built** | recipe in `howto/06-genre-shader-recipes.md` |
 | `PIANOSCOPE Adinkra Symbol Field Abstract` | Optional | brief only |
 | `PIANOSCOPE Word Ladder` | **Shipped (v1)** | `js/test-shaders.js` — first in picker; see [`howto/10`](howto/10-display-text-and-sequencer.md) |
 | `PIANOSCOPE Kick Afterglow` | **Sequencer via `SEQ_COVER`** — original size, shared `seqSample` | `js/test-shaders.js` |
 | `PIANOSCOPE Chrome Stage` | **Removed** | — |
+| `PIANOSCOPE Hairpin` | **Shipped (v1)** — CRESCENDO set | `js/test-shaders.js` |
+| `PIANOSCOPE Four on the Floor` | **Shipped (v1)** — CRESCENDO set | `js/test-shaders.js` |
+| `PIANOSCOPE Piano Stab` | **Shipped (v1)** — CRESCENDO set; keys light relative to the room (`spectrumStats`) | `js/test-shaders.js` |
+| `PIANOSCOPE 33 RPM` | **Shipped (v1)** — CRESCENDO set | `js/test-shaders.js` |
+| `PIANOSCOPE The Warehouse` | **Shipped (v1)** — CRESCENDO set | `js/test-shaders.js` |
+| `PIANOSCOPE Shepard Rise` | **Shipped (v1)** — CRESCENDO set | `js/test-shaders.js` |
+
+The CRESCENDO set is deliberately flat: solid colour, smooth gradients, edges anti-aliased to one pixel (`1.0 / iResolution.y`), no fBm/value-noise surfaces. The owner rejected noise-textured versions as blotchy on the projector. Keep it that way when tuning.
 
 **Implementation order (from brief):** Afrotech → Mudcloth → Kente → Cornrow → visual approval between each.
 
@@ -65,7 +73,7 @@ You are working in **pianoscope-visualizer**: Shadertoy-style GLSL fragments, mi
 ## Console helpers (after page load)
 
 ```js
-setShaderByName("PIANOSCOPE Afrohouse Mudcloth Bloom")
+setShaderByName("PIANOSCOPE Hairpin")
 getCurrentShaderInfo()
 ```
 

@@ -38,7 +38,7 @@
         hud: false
     };
 
-    const HEAVY_NAME = /kaliset|mandelbulb|fireworks|elevator|hyperloop|kente loom|^fish$/i;
+    const HEAVY_NAME = /kaliset|mandelbulb|fireworks|elevator|hyperloop|^fish$/i;
 
     /**
      * Heuristic fill-rate bias from source + label. 1 is full resolution;
