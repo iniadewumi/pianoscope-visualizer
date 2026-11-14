@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>Pianoscope Kiosk Mode</title>
+    <style>
+        html, body {
+            width: 100%;
+            height: 100%;
+            padding: 0;
+            margin: 0;
+            background-color: #121212;
+            overflow: hidden;
+            position: relative;
+        }
+
+        #kiosk-canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+            padding: 0;
+            margin: 0;
+            image-rendering: auto;
+        }
+
+        #kiosk-text-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 2;
+        }
+    </style>
+</head>
+<body>
+    <!-- The projector window. Opened by the Kiosk Mode button in index.html
+         (js/kiosk-mode.js); it does nothing useful when opened on its own. -->
+    <canvas id="kiosk-canvas"></canvas>
+    <canvas id="kiosk-text-overlay"></canvas>
+
+    <script src="js/gl-shared.js"></script>
+    <script src="js/kiosk-window.js"></script>
+</body>
+</html>

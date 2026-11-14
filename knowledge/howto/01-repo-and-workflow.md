@@ -13,7 +13,10 @@
 | `js/test-shaders.js` | `export const TEST_SHADERS = { "Name": \`...\` }` | **Yes — only here** |
 | `js/shadertoy-converter.js` | Merges `TEST_SHADERS` first into picker | Verify spread order |
 | `js/shaders.js`, `js/shaders2.js` | Reference library (~16k lines) | **No** — study only; patch only for compile fixes |
-| `js/visualizer-with-shadertoy.js` | WebGL runtime, audio upload, uniforms | Rarely (uniform uploads) |
+| `js/visualizer-with-shadertoy.js` | Operator window: WebGL runtime, audio, texture binding | Rarely |
+| `js/gl-shared.js` | GL code both windows run: compile, uniform table, per-frame uniforms, feedback, draw | When adding a uniform |
+| `kiosk.html`, `js/kiosk-window.js` | Projector window; pulls its sources from the operator window | Rarely |
+| `js/kiosk-mode.js` | Kiosk button and handshake on the operator side | Rarely |
 | `cursor inst.md` | Creative brief | Read, don’t duplicate |
 | `PIANOSCOPE_SHADER_LEARNINGS.md` | Postmortems | Append failures; link to `knowledge/` |
 | `knowledge/` | HOW-TO library | **This folder** |
