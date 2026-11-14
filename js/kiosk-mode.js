@@ -69,6 +69,9 @@ const kioskHtmlContent = `<!DOCTYPE html>
         // 0 means nothing has been allocated yet.
         let videoTexWidth = 0;
         let videoTexHeight = 0;
+        // The opener's person matte (js/person-mask.js), copied in when it changes.
+        let personTexture = null;
+        let personTextureVersion = -1;
         let displayTextTexture = null;
         let fittedTextTexture = null;
         let fittedTextW = 1;
@@ -232,7 +235,20 @@ const kioskHtmlContent = `<!DOCTYPE html>
             usesFeedbackPass = fragmentSource.indexOf('iWriteFeedback') !== -1;
             feedbackWantsHDR = fragmentSource.indexOf('FEEDBACK_HDR') !== -1;
             if (usesFeedbackPass) {
+                const reused = feedbackState;
                 setupFeedbackBuffers(canvas.width, canvas.height);
+                // A buffer kept across a program swap still holds the previous
+                // program's numbers, which the new one would read as its own history.
+                if (feedbackState && feedbackState === reused) {
+                    gl.viewport(0, 0, feedbackState.width, feedbackState.height);
+                    gl.clearColor(0, 0, 0, 0);
+                    feedbackState.fbos.forEach(function (fbo) {
+                        gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+                        gl.clear(gl.COLOR_BUFFER_BIT);
+                    });
+                    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+                    gl.viewport(0, 0, canvas.width, canvas.height);
+                }
             } else {
                 destroyFeedbackState(feedbackState);
                 feedbackState = null;
@@ -515,6 +531,9 @@ const kioskHtmlContent = `<!DOCTYPE html>
                 iVideoResolution: gl.getUniformLocation(currentProgram, 'iVideoResolution'),
                 iFitMode: gl.getUniformLocation(currentProgram, 'iFitMode'),
                 iVideoMirror: gl.getUniformLocation(currentProgram, 'iVideoMirror'),
+                iVideoNewFrame: gl.getUniformLocation(currentProgram, 'iVideoNewFrame'),
+                iPerson: gl.getUniformLocation(currentProgram, 'iPerson'),
+                iPersonActive: gl.getUniformLocation(currentProgram, 'iPersonActive'),
                 iTextMorph: gl.getUniformLocation(currentProgram, 'iTextMorph'),
                 iTextLineH: gl.getUniformLocation(currentProgram, 'iTextLineH'),
                 iTextExtent: gl.getUniformLocation(currentProgram, 'iTextExtent'),
@@ -597,6 +616,39 @@ const kioskHtmlContent = `<!DOCTYPE html>
                 p.u * canvas.width, p.v * canvas.height,
                 p.down ? clickX : -clickX,
                 fresh ? clickY : -clickY);
+        }
+
+        // The opener runs the segmenter; this window only copies each new matte
+        // into its own context, on unit 8 as in the opener.
+        function bindOpenerPersonMask(wanted) {
+            let mask = null;
+            try {
+                const read = window.opener && window.opener.pianoscopeReadPersonMask;
+                if (wanted && typeof read === 'function') mask = read();
+            } catch (e) {}
+            const active = !!(mask && mask.active && mask.data);
+
+            gl.activeTexture(gl.TEXTURE8);
+            if (!personTexture) {
+                personTexture = gl.createTexture();
+                gl.bindTexture(gl.TEXTURE_2D, personTexture);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+                gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, 1, 1, 0, gl.RED, gl.UNSIGNED_BYTE, new Uint8Array(1));
+            }
+            gl.bindTexture(gl.TEXTURE_2D, personTexture);
+            if (active && mask.version !== personTextureVersion) {
+                personTextureVersion = mask.version;
+                gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+                gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+                gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, mask.width, mask.height, 0,
+                    gl.RED, gl.UNSIGNED_BYTE, mask.data);
+                gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
+            }
+            if (kioskUniforms.iPerson) gl.uniform1i(kioskUniforms.iPerson, 8);
+            if (kioskUniforms.iPersonActive) gl.uniform1f(kioskUniforms.iPersonActive, active ? 1.0 : 0.0);
         }
 
         // Pulled every frame instead of pushed on a timer. The opener's render
@@ -742,6 +794,7 @@ const kioskHtmlContent = `<!DOCTYPE html>
                 // be uploaded straight into this context instead of shipping pixels
                 // through postMessage. One decoder feeds both canvases in sync.
                 const videoState = getOpenerVideoState();
+                let videoFrameFresh = false;
                 
                 if (videoState) {
                     try {
@@ -797,11 +850,13 @@ const kioskHtmlContent = `<!DOCTYPE html>
                             }
 
                             gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, el);
+                            videoFrameFresh = true;
 
                             gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.BROWSER_DEFAULT_WEBGL);
                         }
                     } catch (e) {
                         videoHasNewFrame = true;
+                        videoFrameFresh = false;
                     }
 
                     // iChannel1 = video is the video-effect look's legacy contract;
@@ -823,6 +878,9 @@ const kioskHtmlContent = `<!DOCTYPE html>
                     }
                     if (kioskUniforms.iFitMode) gl.uniform1f(kioskUniforms.iFitMode, videoState.fitMode);
                     if (kioskUniforms.iVideoMirror) gl.uniform1f(kioskUniforms.iVideoMirror, videoState.mirror);
+                    if (kioskUniforms.iVideoNewFrame) {
+                        gl.uniform1f(kioskUniforms.iVideoNewFrame, videoFrameFresh ? 1.0 : 0.0);
+                    }
                     if (kioskUniforms.iVideoActive) {
                         gl.uniform1f(kioskUniforms.iVideoActive, videoState.active ? 1.0 : 0.0);
                     }
@@ -833,8 +891,13 @@ const kioskHtmlContent = `<!DOCTYPE html>
                         gl.uniform1f(kioskUniforms.iVideoBlendAmount,
                             typeof videoState.blendAmount === 'number' ? videoState.blendAmount : 1);
                     }
+                    if (kioskUniforms.iPerson || kioskUniforms.iPersonActive) {
+                        bindOpenerPersonMask(videoState.blend >= 5);
+                    }
                 } else {
                     if (kioskUniforms.iVideoActive) gl.uniform1f(kioskUniforms.iVideoActive, 0.0);
+                    if (kioskUniforms.iVideoNewFrame) gl.uniform1f(kioskUniforms.iVideoNewFrame, 0.0);
+                    if (kioskUniforms.iPersonActive) gl.uniform1f(kioskUniforms.iPersonActive, 0.0);
                     if (kioskUniforms.iVideoBlend) gl.uniform1f(kioskUniforms.iVideoBlend, 0.0);
                     if (kioskUniforms.iVideoBlendAmount) gl.uniform1f(kioskUniforms.iVideoBlendAmount, 0.0);
                 }

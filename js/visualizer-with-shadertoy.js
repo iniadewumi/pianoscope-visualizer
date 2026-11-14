@@ -420,6 +420,8 @@ function createFeedbackState(gl, width, height, desc) {
     let frameCount = 0;
     let lastTime = 0;
     let deltaTime = 0;
+    // True on render frames where a new source frame was uploaded (iVideoNewFrame).
+    let videoFrameFresh = false;
     let uniforms = {};
     
     // Lets us poll link completion instead of blocking on it. Broadly available
@@ -639,6 +641,9 @@ function createFeedbackState(gl, width, height, desc) {
             iVideoResolution: gl.getUniformLocation(currentProgram, 'iVideoResolution'),
             iFitMode: gl.getUniformLocation(currentProgram, 'iFitMode'),
             iVideoMirror: gl.getUniformLocation(currentProgram, 'iVideoMirror'),
+            iVideoNewFrame: gl.getUniformLocation(currentProgram, 'iVideoNewFrame'),
+            iPerson: gl.getUniformLocation(currentProgram, 'iPerson'),
+            iPersonActive: gl.getUniformLocation(currentProgram, 'iPersonActive'),
             iTextMorph: gl.getUniformLocation(currentProgram, 'iTextMorph'),
             iTextLineH: gl.getUniformLocation(currentProgram, 'iTextLineH'),
             iTextExtent: gl.getUniformLocation(currentProgram, 'iTextExtent'),
@@ -848,7 +853,13 @@ function createFeedbackState(gl, width, height, desc) {
             if (!noiseTexture) {
                 noiseTexture = createNoiseTexture(gl);
             }
+            const reused = feedbackState;
             setupFeedbackBuffers(canvas.width, canvas.height);
+            // A buffer kept across a program swap still holds the previous
+            // program's numbers, which the new one would read as its own history.
+            if (feedbackState && feedbackState === reused) {
+                clearFeedbackTextures(gl, feedbackState);
+            }
         } else {
             destroyFeedbackState(gl, feedbackState);
             feedbackState = null;
@@ -876,6 +887,44 @@ function createFeedbackState(gl, width, height, desc) {
         gl.uniform1i(uniforms.iVideo, 6);
     }
 
+    // The person matte (js/person-mask.js) on unit 8, re-uploaded only when the
+    // segmenter has produced a new one. Starts as a 1x1 zero so an unbound read
+    // means "no person" rather than whatever unit 0 holds.
+    let personTexture = null;
+    let personTextureVersion = -1;
+    let personActive = false;
+
+    function uploadPersonMask(wanted) {
+        const pm = window.PianoscopePersonMask;
+        const mask = wanted && pm ? pm.read() : null;
+        personActive = !!(mask && mask.active);
+        gl.activeTexture(gl.TEXTURE8);
+        if (!personTexture) {
+            personTexture = gl.createTexture();
+            gl.bindTexture(gl.TEXTURE_2D, personTexture);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, 1, 1, 0, gl.RED, gl.UNSIGNED_BYTE, new Uint8Array(1));
+        }
+        if (!personActive || mask.version === personTextureVersion) return;
+        personTextureVersion = mask.version;
+        gl.bindTexture(gl.TEXTURE_2D, personTexture);
+        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+        gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, mask.width, mask.height, 0,
+            gl.RED, gl.UNSIGNED_BYTE, mask.data);
+        gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
+    }
+
+    function bindPersonChannel() {
+        if (!uniforms.iPerson || !personTexture) return;
+        gl.activeTexture(gl.TEXTURE8);
+        gl.bindTexture(gl.TEXTURE_2D, personTexture);
+        gl.uniform1i(uniforms.iPerson, 8);
+    }
+
     function bindTextureChannels(isVideoMode, feedbackReadTexture) {
         // Shader-mode feedback keeps its original layout: noise on 0, the previous
         // frame on 1, audio on 2.
@@ -896,6 +945,7 @@ function createFeedbackState(gl, width, height, desc) {
             bindDisplayTextChannel();
         bindFittedTextSheet();
             bindVideoChannel();
+            bindPersonChannel();
             return;
         }
 
@@ -929,6 +979,7 @@ function createFeedbackState(gl, width, height, desc) {
         bindDisplayTextChannel();
         bindFittedTextSheet();
         bindVideoChannel();
+        bindPersonChannel();
     }
 
     function setShaderUniforms(currentTime, isVideoMode) {
@@ -952,6 +1003,12 @@ function createFeedbackState(gl, width, height, desc) {
         }
         if (uniforms.iVideoMirror && videoController) {
             gl.uniform1f(uniforms.iVideoMirror, videoController.getMirror());
+        }
+        if (uniforms.iVideoNewFrame) {
+            gl.uniform1f(uniforms.iVideoNewFrame, videoFrameFresh ? 1.0 : 0.0);
+        }
+        if (uniforms.iPersonActive) {
+            gl.uniform1f(uniforms.iPersonActive, personActive ? 1.0 : 0.0);
         }
         if (uniforms.iVideoActive) {
             const live = videoController && videoController.hasSource()
@@ -1311,9 +1368,14 @@ function createFeedbackState(gl, width, height, desc) {
         // video-effect look always needs it, and any library shader that declares
         // iVideo needs it too, whether or not iVideoActive is on. Every other
         // shader saves the upload cost entirely.
+        videoFrameFresh = false;
         if (hasSource && (isVideoMode || window.currentShaderIsVideoDisplay || uniforms.iVideo)) {
-            videoController.updateVideoTexture();
+            videoFrameFresh = videoController.updateVideoTexture() === true;
         }
+        const wantsPerson = !!(videoController && videoController.wantsPersonMask
+            && videoController.wantsPersonMask());
+        if (wantsPerson) videoController.updatePersonMask(now);
+        uploadPersonMask(wantsPerson);
         uploadAudioTexture();
 
         setShaderUniforms(currentTime, isVideoMode);
@@ -1383,9 +1445,8 @@ const DEFAULT_SHADER_NAME = 'Pianoscope Text';
 // Pinned slots: shader 2, 3, 4 (0-based indices 1, 2, 3)
 const PINNED_SHADER_SLOTS = [
     null,
-    'PIANOSCOPE Adinkra Symbol Field Abstract',
-    'Sunset on river -  Raph',
-    'Ocean Waves',
+    'Procgen Cats'
+
 ];
 let currentShaderIndex = -1;
 let shaderKeys = [];

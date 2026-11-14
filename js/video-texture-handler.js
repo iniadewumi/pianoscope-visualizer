@@ -350,40 +350,48 @@ class VideoTextureHandler {
             this.texHeight = h;
         }
 
+        let uploaded = true;
         try {
             gl.texSubImage2D(
                 gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, source
             );
         } catch (e) {
             this.hasNewFrame = true;
+            uploaded = false;
         }
 
         gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.BROWSER_DEFAULT_WEBGL);
+        return uploaded;
     }
     
+    /**
+     * Returns true when a new frame landed in the texture on this call. A
+     * camera delivers ~30 fps into a 60+ fps loop, so effects that compare
+     * against the previous frame need to know which draws saw new pixels.
+     */
     updateVideoTexture() {
         if (this.still) {
-            if (!this.videoLoaded || !this.hasNewFrame) return;
+            if (!this.videoLoaded || !this.hasNewFrame) return false;
             const w = this.imageElement.naturalWidth;
             const h = this.imageElement.naturalHeight;
-            if (!w || !h) return;
+            if (!w || !h) return false;
             this.hasNewFrame = false;
-            this.uploadTexture(this.imageElement, w, h);
-            return;
+            return this.uploadTexture(this.imageElement, w, h);
         }
 
         if (this.videoLoaded && this.isPlaying &&
             this.videoElement.readyState >= this.videoElement.HAVE_CURRENT_DATA) {
 
-            if (this.usingFrameCallback && !this.hasNewFrame) return;
+            if (this.usingFrameCallback && !this.hasNewFrame) return false;
 
             const w = this.videoElement.videoWidth;
             const h = this.videoElement.videoHeight;
-            if (!w || !h) return;
+            if (!w || !h) return false;
 
             this.hasNewFrame = false;
-            this.uploadTexture(this.videoElement, w, h);
+            return this.uploadTexture(this.videoElement, w, h);
         }
+        return false;
     }
     
     play() {

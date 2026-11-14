@@ -182,6 +182,8 @@ class VideoController {
                                 <option value="over">Media over</option>
                                 <option value="key">Luma key</option>
                                 <option value="multiply">Multiply</option>
+                                <option value="body">Shader on body</option>
+                                <option value="room">Shader on room</option>
                             </select>
                         </label>
                         <label>
@@ -1239,7 +1241,7 @@ class VideoController {
     updateVideoTexture() {
         // The caller (the render loop) already decides whether the current
         // program can see the source at all; this just does the upload.
-        this.videoHandler.updateVideoTexture();
+        return this.videoHandler.updateVideoTexture();
     }
 
     getVideoTexture() {
@@ -1326,12 +1328,38 @@ class VideoController {
     }
 
     getBlendMode() {
-        const map = { off: 0, under: 1, over: 2, key: 3, multiply: 4 };
+        const map = { off: 0, under: 1, over: 2, key: 3, multiply: 4, body: 5, room: 6 };
         return map[this.blendMode] ?? 1;
     }
 
     getBlendAmount() {
         return this.blendAmount;
+    }
+
+    /** The body/room blends are the only thing that needs the segmenter running. */
+    wantsPersonMask() {
+        return this.hasSource() && this.look === 'shader'
+            && (this.blendMode === 'body' || this.blendMode === 'room');
+    }
+
+    updatePersonMask(nowMs) {
+        const pm = window.PianoscopePersonMask;
+        if (!pm) return;
+        if (this.personMaskSource !== this.activeSrc) {
+            this.personMaskSource = this.activeSrc;
+            pm.reset();
+        }
+
+        const handler = this.videoHandler;
+        const size = handler.getVideoSize();
+        if (handler.isStill()) {
+            const img = handler.imageElement;
+            if (img && img.complete) pm.update(img, size.width, size.height, img.currentSrc, nowMs);
+            return;
+        }
+        const video = handler.videoElement;
+        if (video.readyState < video.HAVE_CURRENT_DATA) return;
+        pm.update(video, size.width, size.height, video.currentTime, nowMs);
     }
 
     /**

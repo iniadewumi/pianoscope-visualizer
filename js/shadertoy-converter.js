@@ -52,6 +52,12 @@ uniform float iFitMode;
 uniform float iVideoMirror;
 uniform float iVideoBlend;
 uniform float iVideoBlendAmount;
+// 1.0 on draws where a new source frame was uploaded (camera ~30 fps vs a faster loop).
+uniform float iVideoNewFrame;
+// Person matte for the body/room blends (js/person-mask.js): R = person confidence,
+// in the source's own frame. iPersonActive is 0 until the segmenter has a mask.
+uniform sampler2D iPerson;
+uniform float iPersonActive;
 
 // Maps a 0..1 screen coordinate onto the live source, honouring the Fit
 // dropdown, and flips Y for WebGL texture orientation. Mirrors js/video-effects.js's
@@ -93,6 +99,12 @@ vec3 videoAt(vec2 uv) {
 
 float videoLuma(vec2 uv) {
     return dot(videoAt(uv), vec3(0.299, 0.587, 0.114));
+}
+
+// Person confidence under a 0..1 screen coordinate; 0 outside the source.
+// Only meaningful while iPersonActive is 1.
+float personAt(vec2 uv) {
+    return texture2D(iPerson, clamp(videoUV(uv), 0.0, 1.0)).r * videoInside(uv);
 }
 
 // Display text.
@@ -144,8 +156,14 @@ vec4 pianoscopeBlendVideo(vec4 col, vec2 fragCoord) {
     } else if (iVideoBlend < 3.5) {     // luma key: video shows where the shader is bright
         float sl = smoothstep(0.25, 0.75, dot(s, vec3(0.299, 0.587, 0.114)));
         outc = mix(s, v, sl * a * inside);
-    } else {                            // multiply
+    } else if (iVideoBlend < 4.5) {     // multiply
         outc = mix(s, s * mix(vec3(1.0), v, inside), a);
+    } else {                            // 5: shader on the body, 6: shader on the room
+        // Until a mask exists both show the plain shader rather than a guess.
+        float body = smoothstep(0.35, 0.65, personAt(uv));
+        float w = iVideoBlend < 5.5 ? body : 1.0 - body;
+        w = iPersonActive > 0.5 ? w : 1.0;
+        outc = mix(s, mix(v, s, w), a);
     }
     return vec4(outc, col.a);
 }
