@@ -12,9 +12,9 @@
  * a chain is free to break the promotion rule where the copy needs it.
  *
  * Timing is either a wall-clock interval or a bar count against a tapped tempo.
- * There is no automatic beat detection here on purpose: the analyser this project
- * feeds runs at smoothingTimeConstant 0.8, which deliberately flattens the
- * transients onset detection needs. Tap is reliable; inference is not.
+ * The analyser is now unsmoothed and a kick onset signal exists (iKickOnset /
+ * pianoscopeReadAudioFeatures()[5]), but the sequencer still runs on tapped
+ * tempo. Tap is reliable; inference is not.
  */
 window.PianoscopeTextSequencer = (function () {
     'use strict';
@@ -22,6 +22,8 @@ window.PianoscopeTextSequencer = (function () {
     const STORE_SEQ = 'pianoscope-seq-name';
     const STORE_BPM = 'pianoscope-seq-bpm';
     const STORE_BARS = 'pianoscope-seq-bars';
+    // sessionStorage, not local: a reload resumes the show, a new tab starts clean.
+    const STORE_RUN = 'pianoscope.show.seq';
 
     // Every state reads as a complete thought, because people look up at random
     // moments and a frame like "MUSIC | IS" asks the room to have been watching.
@@ -132,12 +134,19 @@ window.PianoscopeTextSequencer = (function () {
         }
     }
 
+    function saveRun() {
+        try {
+            sessionStorage.setItem(STORE_RUN, JSON.stringify({ running: running, index: index }));
+        } catch (e) {}
+    }
+
     function show(i) {
         const seq = sequence();
         const steps = seq.steps;
         if (!steps.length) return;
         index = ((i % steps.length) + steps.length) % steps.length;
         hasShown = true;
+        saveRun();
         const step = steps[index];
         const text = resolve(step);
         const d = dt();
@@ -159,19 +168,41 @@ window.PianoscopeTextSequencer = (function () {
 
     function armTimer() {
         if (!running) return;
+        if (timer) { clearTimeout(timer); timer = 0; }
         timer = setTimeout(function () {
-            // show(), not step(): step() is a manual cue and re-anchors the grid.
-            show(index + 1);
-            nextAt += stepMs();
-            // A throttled background tab or a sleeping laptop can leave the grid
-            // more than a whole step behind. Skip the missed slots rather than
-            // firing them back to back, and stay on the original phase.
-            const now = performance.now();
-            while (nextAt <= now) {
-                nextAt += stepMs();
-            }
-            armTimer();
+            timer = 0;
+            // poll() may already have fired this slot from the projector's frame;
+            // then nextAt is in the future and this just re-arms.
+            if (performance.now() >= nextAt) fireDue();
+            else armTimer();
         }, Math.max(0, nextAt - performance.now()));
+    }
+
+    function fireDue() {
+        if (!running) return;
+        // show(), not step(): step() is a manual cue and re-anchors the grid.
+        show(index + 1);
+        nextAt += stepMs();
+        // A throttled background tab or a sleeping laptop can leave the grid
+        // more than a whole step behind. Skip the missed slots rather than
+        // firing them back to back, and stay on the original phase.
+        const now = performance.now();
+        while (nextAt <= now) {
+            nextAt += stepMs();
+        }
+        armTimer();
+    }
+
+    /**
+     * Called every projector frame (via pianoscopeTick) so steps land on time
+     * while this window is hidden and its timers are throttled to ~1 Hz. The
+     * timeout stays as the backstop when no projector is open.
+     */
+    function poll() {
+        if (running && nextAt && performance.now() >= nextAt) {
+            if (timer) { clearTimeout(timer); timer = 0; }
+            fireDue();
+        }
     }
 
     /**
@@ -195,6 +226,7 @@ window.PianoscopeTextSequencer = (function () {
     function play() {
         if (running) return status();
         running = true;
+        saveRun();
         if (!hasShown) {
             lastLines = ['CRESCENDO', artist];
             show(0);
@@ -218,6 +250,7 @@ window.PianoscopeTextSequencer = (function () {
 
     function stop() {
         running = false;
+        saveRun();
         if (timer) { clearTimeout(timer); timer = 0; }
         emit();
         return status();
@@ -301,6 +334,28 @@ window.PianoscopeTextSequencer = (function () {
             if (n) barsPerStep = Math.max(1, Math.min(32, n));
         } catch (e) {}
         emit();
+        restoreRun();
+    }
+
+    // Resume a running sequence after a reload. The display text module may
+    // load after this one, so wait for it the way other init code would.
+    function restoreRun() {
+        let saved = null;
+        try { saved = JSON.parse(sessionStorage.getItem(STORE_RUN) || 'null'); } catch (e) {}
+        if (!saved || !saved.running || running) return;
+        let tries = 0;
+        (function go() {
+            if (!dt()) {
+                if (++tries < 100) setTimeout(go, 50);
+                return;
+            }
+            if (running) return;
+            running = true;
+            lastLines = ['CRESCENDO', artist];
+            show(typeof saved.index === 'number' ? saved.index : 0);
+            schedule();
+            emit();
+        })();
     }
 
     document.addEventListener('keydown', function (e) {
@@ -325,6 +380,7 @@ window.PianoscopeTextSequencer = (function () {
         stop: stop,
         toggle: toggle,
         step: step,
+        poll: poll,
         show: show,
         tap: tap,
         setSequence: setSequence,

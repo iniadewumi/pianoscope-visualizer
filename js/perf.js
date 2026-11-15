@@ -131,6 +131,20 @@
             if (this.supported) gl.getParameter(this.ext.GPU_DISJOINT_EXT);
         }
 
+        /**
+         * After a context loss every query object and the extension object are
+         * dead. Forget them without deleting and fetch the extension again.
+         */
+        reset() {
+            const gl = this.gl;
+            this.ext = gl.getExtension ? gl.getExtension('EXT_disjoint_timer_query_webgl2') : null;
+            this.supported = !!(this.ext && typeof gl.createQuery === 'function');
+            this.free = [];
+            this.pending = [];
+            this.active = null;
+            if (this.supported) gl.getParameter(this.ext.GPU_DISJOINT_EXT);
+        }
+
         begin() {
             if (!this.supported || this.active) return;
             const gl = this.gl;
@@ -297,6 +311,14 @@
         _resolutionDirty: false,
         _kioskLive: false,
 
+        // Projector feedback (see attachProjector). Times are performance.now()
+        // in this window, so a closed or stalled projector simply ages out.
+        projectorGpuMs: 0,
+        projectorFrameMs: 0,
+        _projectorSeenMs: 0,
+        _projectorGpuSupported: false,
+        _projectorWasLive: false,
+
         attach(gl, canvas, onScaleChange) {
             this.gl = gl;
             this.canvas = canvas;
@@ -412,23 +434,77 @@
             this.gpuTimer.end();
         },
 
+        /**
+         * Lets the projector window feed the controller with its own frames.
+         * Called from the kiosk window, so the driver closes over Perf rather
+         * than relying on `this`, and is built once so frames allocate nothing.
+         * @param {WebGL2RenderingContext} gl the projector's context
+         */
+        attachProjector(gl) {
+            const timer = new GpuTimer(gl);
+            Perf._projectorGpuSupported = timer.supported;
+            return {
+                beginGpuWork() { timer.begin(); },
+                endGpuWork() { timer.end(); },
+                endFrame(frameMs) {
+                    const gpuMs = timer.poll();
+                    Perf.projectorGpuMs = gpuMs;
+                    Perf.projectorFrameMs = frameMs;
+                    Perf._projectorSeenMs = performance.now();
+                    Perf._projectorGpuSupported = timer.supported;
+
+                    const next = Perf.controller.update(frameMs, gpuMs, timer.supported);
+                    if (next) {
+                        Perf.settings.scale = next;
+                        // The operator's preview follows on its next frame; the
+                        // projector re-reads bufferSize() at the top of its own.
+                        Perf._resolutionDirty = true;
+                    }
+                },
+                invalidate() { Perf.invalidate(); }
+            };
+        },
+
+        /** True while a projector driver has reported a frame in the last 500 ms. */
+        projectorLive() {
+            return this._projectorSeenMs > 0 && performance.now() - this._projectorSeenMs < 500;
+        },
+
         endFrame() {
             this.cpuMs = performance.now() - this._frameStart;
             this.gpuMs = this.gpuTimer.poll();
 
-            const next = this.controller.update(this.frameMs, this.gpuMs, this.gpuTimer.supported);
-            if (next) {
-                this.settings.scale = next;
-                // Apply on the *next* frame, before that draw. Changing
-                // canvas.width after present clears the backbuffer and the
-                // compositor shows a blank frame — the flash users saw.
-                this._resolutionDirty = true;
+            // The projector is what the room sees, so its frames steer when it is
+            // open. The controller keeps one set of samples; feeding it from two
+            // windows on two displays would mix two different workloads.
+            const live = this.projectorLive();
+            if (live !== this._projectorWasLive) {
+                this._projectorWasLive = live;
+                // Projector gone: start a fresh window for our own workload.
+                if (!live) this.invalidate();
+            }
+
+            if (!live) {
+                const next = this.controller.update(this.frameMs, this.gpuMs, this.gpuTimer.supported);
+                if (next) {
+                    this.settings.scale = next;
+                    // Apply on the *next* frame, before that draw. Changing
+                    // canvas.width after present clears the backbuffer and the
+                    // compositor shows a blank frame — the flash users saw.
+                    this._resolutionDirty = true;
+                }
             }
 
             if (this.settings.hud && this._frameStart > this._hudNextUpdate) {
                 this._hudNextUpdate = this._frameStart + 250;
                 this._renderHud();
             }
+        },
+
+        /** The operator's GL context was restored; its timer queries are gone. */
+        onContextRestored() {
+            if (this.gpuTimer) this.gpuTimer.reset();
+            this.invalidate();
         },
 
         /** Called on resize and shader switch so the controller re-measures. */
@@ -531,6 +607,14 @@
 
             if (this._kioskLive) {
                 lines.push(`kiosk  live, preview ×${this.previewScale().toFixed(2)}`);
+            }
+
+            if (this.projectorLive()) {
+                const pfps = this.projectorFrameMs > 0 ? 1000 / this.projectorFrameMs : 0;
+                const pgpu = this._projectorGpuSupported
+                    ? `gpu ${this.projectorGpuMs.toFixed(2)} ms`
+                    : 'gpu n/a';
+                lines.push(`proj   ${pfps.toFixed(0)} fps  ${pgpu}  (steering)`);
             }
 
             if (this._shaderLabel) {

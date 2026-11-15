@@ -7,9 +7,16 @@
  * like the source is; personAt(uv) in the converter preamble does that.
  *
  * Nothing loads until one of those blends is picked: the runtime is ~12 MB of
- * WASM. For a show without internet, copy the package's wasm/ folder and
+ * WASM. Inference runs in js/person-mask-worker.js (about 7 ms a frame, which the
+ * projector cannot spare on the shared main thread); the main thread only
+ * downscales the frame, posts it, and smooths the mask that comes back. If the
+ * worker cannot be built or cannot load the runtime, the same segmenter runs in
+ * the page instead, as it did before the worker existed.
+ *
+ * For a show without internet, copy the package's wasm/ folder and
  * vision_bundle.mjs, plus the .tflite model, next to the site and point
- * TASKS_BASE and MODEL_URL at them.
+ * TASKS_BASE and MODEL_URL at them. Copy js/person-mask-worker.js too: it is
+ * fetched as its own file, and it gets the two URLs from here.
  */
 window.PianoscopePersonMask = (function () {
     'use strict';
@@ -42,6 +49,54 @@ window.PianoscopePersonMask = (function () {
     let lastFrameKey = null;
     let lastTimestamp = 0;
     let warnedRun = false;
+
+    // Worker path. worker is null once we have fallen back to the in-page segmenter.
+    let worker = null;
+    let inFlight = false;
+    // Bumped by reset(); a mask that comes back for an older generation is dropped.
+    let generation = 0;
+
+    function startWorker() {
+        status = 'loading';
+        try {
+            worker = new Worker('js/person-mask-worker.js');
+        } catch (err) {
+            worker = null;
+            fallBack(err);
+            return;
+        }
+        worker.onmessage = (event) => {
+            const msg = event.data;
+            if (msg.type === 'ready') {
+                status = 'ready';
+            } else if (msg.type === 'failed') {
+                fallBack(msg.message);
+            } else if (msg.generation !== undefined) {
+                inFlight = false;
+                if (msg.type === 'mask' && msg.generation === generation) {
+                    writeMask(msg.confidence, msg.width, msg.height);
+                } else if (msg.type === 'error' && !warnedRun) {
+                    warnedRun = true;
+                    console.warn('Person mask: segmentation failed on a frame.', msg.message);
+                }
+            }
+        };
+        worker.onerror = (event) => {
+            if (status !== 'ready') fallBack(event.message || 'worker error');
+        };
+        worker.postMessage({ type: 'init', tasksBase: TASKS_BASE, modelUrl: MODEL_URL });
+    }
+
+    function fallBack(reason) {
+        if (worker) {
+            worker.terminate();
+            worker = null;
+        }
+        inFlight = false;
+        console.warn('Person mask: the worker did not start, so segmentation runs on the '
+            + 'main thread instead.', reason);
+        load();
+    }
 
     async function load() {
         status = 'loading';
@@ -85,10 +140,12 @@ window.PianoscopePersonMask = (function () {
      */
     function update(source, width, height, frameKey, nowMs) {
         if (status === 'idle') {
-            load();
+            if (typeof Worker === 'function') startWorker();
+            else fallBack('no Worker support');
             return;
         }
         if (status !== 'ready' || !source || !width || !height) return;
+        if (worker && inFlight) return;
         if (nowMs - lastRunMs < 1000 / MAX_FPS || frameKey === lastFrameKey) return;
         lastRunMs = nowMs;
         lastFrameKey = frameKey;
@@ -96,6 +153,35 @@ window.PianoscopePersonMask = (function () {
         const scale = Math.min(1, INPUT_LONG_EDGE / Math.max(width, height));
         const w = Math.max(1, Math.round(width * scale));
         const h = Math.max(1, Math.round(height * scale));
+
+        // VIDEO mode rejects a timestamp that does not move forward.
+        const timestamp = Math.max(Math.round(nowMs), lastTimestamp + 1);
+        lastTimestamp = timestamp;
+
+        if (worker) {
+            inFlight = true;
+            const sent = generation;
+            createImageBitmap(source, { resizeWidth: w, resizeHeight: h, resizeQuality: 'low' })
+                .then((bitmap) => {
+                    // Reset or fallback happened while the bitmap was being made.
+                    if (!worker || sent !== generation) {
+                        bitmap.close();
+                        inFlight = false;
+                        return;
+                    }
+                    worker.postMessage({ type: 'frame', bitmap, timestamp, generation: sent },
+                        [bitmap]);
+                })
+                .catch((err) => {
+                    inFlight = false;
+                    if (!warnedRun) {
+                        warnedRun = true;
+                        console.warn('Person mask: could not copy a frame.', err);
+                    }
+                });
+            return;
+        }
+
         if (!scratch) {
             scratch = document.createElement('canvas');
             scratchCtx = scratch.getContext('2d');
@@ -105,10 +191,6 @@ window.PianoscopePersonMask = (function () {
             scratch.height = h;
         }
         scratchCtx.drawImage(source, 0, 0, w, h);
-
-        // VIDEO mode rejects a timestamp that does not move forward.
-        const timestamp = Math.max(Math.round(nowMs), lastTimestamp + 1);
-        lastTimestamp = timestamp;
 
         let result = null;
         try {
@@ -135,6 +217,8 @@ window.PianoscopePersonMask = (function () {
         maskW = 0;
         maskH = 0;
         lastFrameKey = null;
+        generation++;
+        inFlight = false;
         version++;
     }
 

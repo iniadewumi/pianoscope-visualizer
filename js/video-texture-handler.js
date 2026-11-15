@@ -79,6 +79,20 @@ class VideoTextureHandler {
         this.bindEvents();
     }
 
+    /**
+     * The GL context was lost and restored: the old texture handle is dead, so
+     * drop it without deleting, forget its allocated size and make a fresh black
+     * one. hasNewFrame is what gates uploads (a still only ever sets it once), so
+     * raising it makes the next updateVideoTexture() re-upload the current frame.
+     */
+    onContextRestored() {
+        this.videoTexture = null;
+        this.texWidth = 0;
+        this.texHeight = 0;
+        this.setupVideoTexture();
+        this.hasNewFrame = true;
+    }
+
     watchFrames() {
         if (typeof this.videoElement.requestVideoFrameCallback !== 'function') return;
 

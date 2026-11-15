@@ -13,8 +13,29 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // === CONFIGURATION ===
     // Easy to modify settings
-    const audioSmoothingFactor = 0.8; // How smooth the audio response is (0-1)
+    // Envelope time constants. 74.7 ms is -(1000/60) / ln(0.8): what the old
+    // per-read smoothing of 0.8 amounted to at 60 reads a second, so the default
+    // look is unchanged, now the same on every display. Shorten AUDIO_RELEASE_MS
+    // for punchier kicks.
+    const AUDIO_ATTACK_MS = 74.7;
+    const AUDIO_RELEASE_MS = 74.7;
     const audioSensitivity = 1.5;     // Amplify the audio signal
+
+    // The browser's echo cancellation, noise suppression and automatic gain are
+    // built for speech; they thin out sustained music and flatten the difference
+    // between a breakdown and a drop. Set to true to get the old behaviour back
+    // (levels were originally tuned with it on).
+    const MIC_VOICE_PROCESSING = false;
+
+    // Kick onset detection (on the raw, unsmoothed kick band).
+    const KICK_ONSET_RISE_DB = 6;       // raw kick level must exceed its slow average by this much
+    const KICK_ONSET_FLOOR_DB = -70;    // ...and be at least this loud, so room noise never fires
+    const KICK_ONSET_MIN_GAP_MS = 120;  // minimum time between onsets
+    const KICK_AVG_MS = 300;            // time constant of the slow average
+    const KICK_PULSE_DECAY_MS = 150;    // the pulse falls back to 0 with this time constant
+    // Band edges in Hz: kick, bass, lowMid, mid, high.
+    const BANDS_HZ = [[40, 110], [60, 250], [250, 800], [800, 3000], [3000, 11000]];
+    const MIC_DEVICE_KEY = 'pianoscope.mic.deviceId';
     
     // === ELEMENTS ===
     const canvas = document.getElementById('visualizer');
@@ -48,7 +69,18 @@ document.addEventListener('DOMContentLoaded', () => {
     let isListening = false;
     let seconds = 0;
     const loud_volume_threshold = 30;
-    let frequencyArray;
+    // Analyser reads (dB), smoothed linear magnitudes and the band features,
+    // allocated once in startMic() and reused every read.
+    let floatSpectrum = null;
+    let envelope = null;
+    const audioFeatures = new Float32Array(6); // kick, bass, lowMid, mid, high, kickOnset
+    // [lo, hi) bin ranges for the five bands, computed once in startMic().
+    const bandRanges = new Int32Array(10);
+    let kickAvgDb = -100;
+    let lastKickOnsetMs = -Infinity;
+    let kickArmed = true;
+    let micEndedTrack = null;
+    let micEndedHandler = null;
     let currentDb = 0;
     let lastRenderedDb = -1;
     let nextVolumeReadoutMs = 0;
@@ -178,17 +210,30 @@ document.addEventListener('DOMContentLoaded', () => {
     // Asking for the discrete GPU makes context loss meaningfully more likely,
     // because switching GPUs drops the context. Without a handler that is a black
     // screen until the operator reloads, which is unacceptable mid-performance.
+    // While set, nothing may touch GL: every call on a lost context is a no-op
+    // that logs a warning, and every handle held below is already dead. The
+    // render loop keeps scheduling frames so it resumes by itself on restore.
+    let contextLost = false;
+
     canvas.addEventListener('webglcontextlost', (event) => {
         event.preventDefault();
-        animationRunning = false;
+        contextLost = true;
         if (statusEl) statusEl.textContent = 'GPU context lost — restoring…';
     });
 
     canvas.addEventListener('webglcontextrestored', () => {
-        if (statusEl) statusEl.textContent = 'GPU context restored — reloading shader';
-        // Every GL object belonged to the dead context. Reloading is far more
-        // reliable than trying to rebuild the whole graph by hand.
-        window.location.reload();
+        try {
+            rebuildAfterContextLoss();
+            contextLost = false;
+            ensureRenderLoop();
+            if (statusEl) statusEl.textContent = 'GPU context restored';
+        } catch (error) {
+            // Rebuilding in place keeps audio, the sequencer and the video element
+            // untouched, but if any step throws the page state is unknown and a
+            // reload is the only way back to a known-good picture.
+            console.error('GL context rebuild failed, reloading:', error);
+            window.location.reload();
+        }
     });
     
     // Initialize video controller after GL context is created
@@ -296,21 +341,13 @@ document.addEventListener('DOMContentLoaded', () => {
     // Lets us poll link completion instead of blocking on it. Broadly available
     // in Chrome, Edge and Safari; Firefox is the notable gap and takes the
     // one-frame deferral fallback in pollShaderProgram below.
-    const parallelCompileExt = gl.getExtension('KHR_parallel_shader_compile');
-
-    // The quad never changes, so its buffer and attribute state are configured
-    // once here and then left alone. Every program binds `position` to location 0
-    // before linking, which avoids the expensive desktop-GL emulation path for a
-    // disabled attrib 0 and stops ANGLE from re-specializing a program the first
-    // time it meets a vertex layout it did not see at link time.
-    const quadVao = gl.createVertexArray();
-    gl.bindVertexArray(quadVao);
-
-    const quadBuffer = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, quadBuffer);
-    gl.bufferData(gl.ARRAY_BUFFER, GLX.QUAD_VERTICES, gl.STATIC_DRAW);
-    gl.enableVertexAttribArray(0);
-    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+    // Assigned in createGLResources(), which also runs again after a context
+    // restore, so these are `let`.
+    let parallelCompileExt = null;
+    let quadVao = null;
+    let quadBuffer = null;
+    let audioTexture = null;
+    let extraTextures = [];
 
     // A build in flight. The previous program keeps rendering until this one is
     // ready, so switching shaders never shows a black frame or blocks the loop.
@@ -501,17 +538,58 @@ document.addEventListener('DOMContentLoaded', () => {
     // Create audio texture
     const audioTexWidth = GLX.AUDIO_TEX_WIDTH;
 
-    const audioTexture = gl.createTexture();
-    gl.bindTexture(gl.TEXTURE_2D, audioTexture);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-    
     // Create audio data array
     audioData = new Uint8Array(audioTexWidth);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE, audioTexWidth, 1, 0, gl.LUMINANCE, gl.UNSIGNED_BYTE, audioData);
-    
+
+    // Create additional channels/textures (initialize with null data)
+    const dummyTexture = new Uint8Array([0, 0, 0, 255]);
+
+    /**
+     * Every GL object this window owns that is not tied to a particular shader.
+     * Runs once at startup and again after a context restore, where the old
+     * handles are already dead and are simply overwritten, never deleted.
+     */
+    function createGLResources() {
+        parallelCompileExt = gl.getExtension('KHR_parallel_shader_compile');
+
+        // The quad never changes, so its buffer and attribute state are configured
+        // once here and then left alone. Every program binds `position` to location 0
+        // before linking, which avoids the expensive desktop-GL emulation path for a
+        // disabled attrib 0 and stops ANGLE from re-specializing a program the first
+        // time it meets a vertex layout it did not see at link time.
+        quadVao = gl.createVertexArray();
+        gl.bindVertexArray(quadVao);
+
+        quadBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, quadBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, GLX.QUAD_VERTICES, gl.STATIC_DRAW);
+        gl.enableVertexAttribArray(0);
+        gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+
+        audioTexture = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, audioTexture);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE, audioTexWidth, 1, 0, gl.LUMINANCE, gl.UNSIGNED_BYTE, audioData);
+
+        extraTextures = [];
+        for (let i = 1; i < 4; i++) {
+            const texture = gl.createTexture();
+            gl.activeTexture(gl.TEXTURE0 + i);
+            gl.bindTexture(gl.TEXTURE_2D, texture);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, dummyTexture);
+            extraTextures.push(texture);
+        }
+    }
+
+    createGLResources();
+
     // Initialize with default shader. Result arrives via pollShaderProgram on a
     // later frame; the loop simply draws nothing until then.
     requestShaderProgram(vertexShaderSource, fragmentShaderSource, (ok, detail) => {
@@ -521,21 +599,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
     
-    // Create additional channels/textures (initialize with null data)
-    const dummyTexture = new Uint8Array([0, 0, 0, 255]);
-    const extraTextures = [];
-    for (let i = 1; i < 4; i++) {
-        const texture = gl.createTexture();
-        gl.activeTexture(gl.TEXTURE0 + i);
-        gl.bindTexture(gl.TEXTURE_2D, texture);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, dummyTexture);
-        extraTextures.push(texture);
-    }
-
     if (window.PianoscopeDisplayText) {
         window.PianoscopeDisplayText.init(gl);
     }
@@ -700,7 +763,8 @@ document.addEventListener('DOMContentLoaded', () => {
         width: 0, height: 0, resolutionIsVec2: false,
         time: 0, delta: 0, frame: 0,
         pointer: pointerState, clickFresh: false,
-        videoNewFrame: false, personActive: false, sampleRate: 0
+        videoNewFrame: false, personActive: false, sampleRate: 0,
+        audioFeatures: audioFeatures // reused array, filled by sampleAudio()
     };
 
     function setShaderUniforms(currentTime) {
@@ -748,6 +812,86 @@ document.addEventListener('DOMContentLoaded', () => {
         document.addEventListener('keydown', onGesture, { once: true, capture: true });
     }
 
+    // --- Input device picker ---------------------------------------------
+    const micDeviceSelect = document.createElement('select');
+    micDeviceSelect.id = 'mic-device';
+    micDeviceSelect.className = 'mic-device';
+    micDeviceSelect.title = 'Audio input';
+    const canEnumerate = !!(navigator.mediaDevices && navigator.mediaDevices.enumerateDevices);
+
+    function savedMicDeviceId() {
+        try { return localStorage.getItem(MIC_DEVICE_KEY) || ''; } catch (e) { return ''; }
+    }
+    function saveMicDeviceId(id) {
+        try {
+            if (id) localStorage.setItem(MIC_DEVICE_KEY, id);
+            else localStorage.removeItem(MIC_DEVICE_KEY);
+        } catch (e) {}
+    }
+
+    // Labels are empty until permission is granted, so this runs again after a
+    // successful start and on devicechange.
+    function refreshMicDevices() {
+        if (!canEnumerate) return;
+        navigator.mediaDevices.enumerateDevices().then(devices => {
+            const wanted = savedMicDeviceId();
+            micDeviceSelect.textContent = '';
+            const def = document.createElement('option');
+            def.value = '';
+            def.textContent = 'Default input';
+            micDeviceSelect.appendChild(def);
+            let n = 0;
+            for (const d of devices) {
+                if (d.kind !== 'audioinput' || !d.deviceId || d.deviceId === 'default') continue;
+                n++;
+                const o = document.createElement('option');
+                o.value = d.deviceId;
+                o.textContent = d.label || ('Input ' + n);
+                micDeviceSelect.appendChild(o);
+            }
+            micDeviceSelect.value = wanted;
+            if (micDeviceSelect.value !== wanted) micDeviceSelect.value = '';
+        }).catch(() => {});
+    }
+
+    if (canEnumerate) {
+        const container = document.querySelector('.button-container');
+        if (container) container.appendChild(micDeviceSelect);
+        refreshMicDevices();
+        if (navigator.mediaDevices.addEventListener) {
+            navigator.mediaDevices.addEventListener('devicechange', refreshMicDevices);
+        }
+        micDeviceSelect.addEventListener('change', () => {
+            saveMicDeviceId(micDeviceSelect.value);
+            if (isListening) {
+                stopMic();
+                startMic();
+            }
+        });
+    }
+
+    async function getMicStream() {
+        const base = {
+            echoCancellation: MIC_VOICE_PROCESSING,
+            noiseSuppression: MIC_VOICE_PROCESSING,
+            autoGainControl: MIC_VOICE_PROCESSING
+        };
+        const id = canEnumerate ? savedMicDeviceId() : '';
+        if (!id) return navigator.mediaDevices.getUserMedia({ audio: base });
+        try {
+            return await navigator.mediaDevices.getUserMedia({
+                audio: Object.assign({ deviceId: { exact: id } }, base)
+            });
+        } catch (err) {
+            if (err && (err.name === 'OverconstrainedError' || err.name === 'NotFoundError')) {
+                // The saved device is gone: forget it and fall back to the default.
+                saveMicDeviceId('');
+                return navigator.mediaDevices.getUserMedia({ audio: base });
+            }
+            throw err;
+        }
+    }
+
     async function startMic() {
         if (micStarting || isListening) return;
         micStarting = true;
@@ -755,21 +899,49 @@ document.addEventListener('DOMContentLoaded', () => {
         // activation; a context made later starts suspended.
         const context = new (window.AudioContext || window.webkitAudioContext)();
         try {
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            const stream = await getMicStream();
             audioContext = context;
             micStream = stream;
 
             const source = audioContext.createMediaStreamSource(micStream);
             analyser = audioContext.createAnalyser();
             analyser.fftSize = 1024;
-            analyser.smoothingTimeConstant = audioSmoothingFactor;
+            // The envelope below does the smoothing as a function of time; the
+            // analyser's own smoothing is per read, so it must be off.
+            analyser.smoothingTimeConstant = 0;
             
             source.connect(analyser);
             
             const bufferLength = analyser.frequencyBinCount;
-            frequencyArray = new Uint8Array(bufferLength);
+            floatSpectrum = new Float32Array(bufferLength);
+            envelope = new Float32Array(bufferLength);
+            const hzPerBin = audioContext.sampleRate / analyser.fftSize;
+            for (let b = 0; b < BANDS_HZ.length; b++) {
+                const lo = Math.min(bufferLength - 1, Math.max(0, Math.round(BANDS_HZ[b][0] / hzPerBin)));
+                const hi = Math.min(bufferLength, Math.max(lo + 1, Math.round(BANDS_HZ[b][1] / hzPerBin) + 1));
+                bandRanges[b * 2] = lo;
+                bandRanges[b * 2 + 1] = hi;
+            }
+            kickAvgDb = -100;
+            lastKickOnsetMs = -Infinity;
+            lastAudioSampleMs = -Infinity;
             isListening = true;
+
+            // The input can vanish (unplugged interface, revoked permission).
+            const track = micStream.getAudioTracks()[0];
+            if (track) {
+                micEndedTrack = track;
+                micEndedHandler = () => {
+                    if (!isListening) return;
+                    stopMic();
+                    if (statusEl) statusEl.textContent = 'Audio input disconnected';
+                    if (h) h.textContent = 'Audio input disconnected';
+                };
+                track.addEventListener('ended', micEndedHandler);
+            }
+            refreshMicDevices();
             resumeAudioWhenAllowed();
+            try { sessionStorage.setItem('pianoscope.show.mic', '1'); } catch (e) {}
 
             if (statusEl) statusEl.textContent = 'Listening to audio';
             if (h) h.textContent = 'Listening...';
@@ -787,6 +959,7 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (err) {
             // Never became the live context, so nothing else will close it.
             context.close().catch(() => {});
+            try { sessionStorage.removeItem('pianoscope.show.mic'); } catch (e) {}
             if (statusEl) statusEl.textContent = 'Mic Error: ' + err.message;
             console.error('Error accessing microphone', err);
         } finally {
@@ -795,6 +968,14 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function stopMic() {
+        try { sessionStorage.removeItem('pianoscope.show.mic'); } catch (e) {}
+        // Stopping the tracks can fire 'ended' in some browsers; that is a
+        // deliberate stop, not a lost input.
+        if (micEndedTrack && micEndedHandler) {
+            micEndedTrack.removeEventListener('ended', micEndedHandler);
+        }
+        micEndedTrack = null;
+        micEndedHandler = null;
         if (micStream) {
             micStream.getTracks().forEach(track => track.stop());
         }
@@ -813,6 +994,8 @@ document.addEventListener('DOMContentLoaded', () => {
         
         // Clear audio data
         audioData.fill(0);
+        if (envelope) envelope.fill(0);
+        audioFeatures.fill(0);
         currentDb = 0;
         uploadAudioTexture();
     }
@@ -827,14 +1010,39 @@ document.addEventListener('DOMContentLoaded', () => {
     function sampleAudio() {
         if (!isListening || !analyser) return;
 
-        analyser.getByteFrequencyData(frequencyArray);
-        lastAudioSampleMs = performance.now();
+        analyser.getFloatFrequencyData(floatSpectrum); // dB; silence is -Infinity
+        const nowMs = performance.now();
+        let dt = nowMs - lastAudioSampleMs;
+        lastAudioSampleMs = nowMs;
+        // First read, or a long gap (hidden window): start fresh, snap to input.
+        const fresh = !isFinite(dt) || dt > 100;
+        if (fresh) dt = 0;
+        const kAttack = fresh ? 1 : 1 - Math.exp(-dt / AUDIO_ATTACK_MS);
+        const kRelease = fresh ? 1 : 1 - Math.exp(-dt / AUDIO_RELEASE_MS);
 
-        const count = Math.min(audioData.length, frequencyArray.length);
+        // Smoothing is on linear magnitude because that is what the Web Audio
+        // analyser smooths; dB only appears when writing the byte texture.
+        const count = Math.min(audioData.length, envelope.length);
         let sumOfSquares = 0;
+        let kickSq = 0;
+        const kLo = bandRanges[0];
+        const kHi = bandRanges[1];
+
+        for (let i = 0; i < envelope.length; i++) {
+            const d = floatSpectrum[i];
+            const lin = isFinite(d) ? Math.pow(10, d / 20) : 0;
+            if (i >= kLo && i < kHi) kickSq += lin * lin;
+            const e = envelope[i];
+            envelope[i] = e + (lin - e) * (lin > e ? kAttack : kRelease);
+        }
 
         for (let i = 0; i < count; i++) {
-            const raw = frequencyArray[i];
+            const env = envelope[i];
+            let raw = 0;
+            if (env > 0) {
+                raw = 255 * (20 * Math.log10(env) + 100) / 70;
+                raw = raw < 0 ? 0 : (raw > 255 ? 255 : raw);
+            }
             sumOfSquares += raw * raw;
             const boosted = raw * audioSensitivity;
             audioData[i] = boosted > 255 ? 255 : boosted;
@@ -845,6 +1053,44 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const rms = Math.sqrt(sumOfSquares / count);
         currentDb = rms > 0 ? Math.max(20 * Math.log10(rms), 0) : 0;
+
+        // Band levels: RMS of the smoothed magnitudes, on the analyser's
+        // -100..-30 dB scale.
+        for (let b = 0; b < 5; b++) {
+            const lo = bandRanges[b * 2];
+            const hi = bandRanges[b * 2 + 1];
+            let sq = 0;
+            for (let i = lo; i < hi; i++) sq += envelope[i] * envelope[i];
+            const level = Math.sqrt(sq / (hi - lo));
+            let v = 0;
+            if (level > 0) {
+                v = (20 * Math.log10(level) + 100) / 70 * audioSensitivity;
+                v = v < 0 ? 0 : (v > 1 ? 1 : v);
+            }
+            audioFeatures[b] = v;
+        }
+
+        // Kick onset: the raw band against its own slow average.
+        const kickRms = Math.sqrt(kickSq / (kHi - kLo));
+        let rawKickDb = kickRms > 0 ? 20 * Math.log10(kickRms) : -100;
+        if (rawKickDb < -100) rawKickDb = -100;
+        if (fresh) kickAvgDb = rawKickDb;
+        let pulse = audioFeatures[5] * Math.exp(-dt / KICK_PULSE_DECAY_MS);
+        // Fires on the rising edge only. A held bass note stays above its slow
+        // average for most of a second, and without the re-arm it fired again
+        // every KICK_ONSET_MIN_GAP_MS for as long as the note lasted.
+        if (rawKickDb < kickAvgDb + KICK_ONSET_RISE_DB * 0.5) {
+            kickArmed = true;
+        } else if (kickArmed
+            && rawKickDb > kickAvgDb + KICK_ONSET_RISE_DB
+            && rawKickDb > KICK_ONSET_FLOOR_DB
+            && nowMs - lastKickOnsetMs >= KICK_ONSET_MIN_GAP_MS) {
+            pulse = 1;
+            lastKickOnsetMs = nowMs;
+            kickArmed = false;
+        }
+        audioFeatures[5] = pulse;
+        kickAvgDb += (rawKickDb - kickAvgDb) * (1 - Math.exp(-dt / KICK_AVG_MS));
     }
 
     /**
@@ -861,6 +1107,15 @@ document.addEventListener('DOMContentLoaded', () => {
             sampleAudio();
         }
         return audioData;
+    };
+
+    // Same freshness rule as above: the projector calls pianoscopeReadAudio
+    // first, so this returns values from that same read.
+    window.pianoscopeReadAudioFeatures = () => {
+        if (!animationRunning || performance.now() - lastAudioSampleMs > 50) {
+            sampleAudio();
+        }
+        return audioFeatures;
     };
 
     function uploadAudioTexture() {
@@ -923,41 +1178,21 @@ document.addEventListener('DOMContentLoaded', () => {
     let drawIsVideoMode = false;
     const bindChannelsForDraw = (readTexture) => bindTextureChannels(drawIsVideoMode, readTexture);
 
-    function render(now) {
-        if (!animationRunning) return;
-        
-        requestAnimationFrame(render);
+    // Operator-window performance.now() of the last render() that ran; the
+    // projector's tick uses it to tell whether this window's loop is alive.
+    let lastRenderMs = -Infinity;
 
-        if (perf && !perf.beginFrame(now)) return;
-
-        // Calculate time values
-        const nowSec = now / 1000;
-        const currentTime = nowSec - startTime;
-        deltaTime = nowSec - lastTime;
-        lastTime = nowSec;
-        frameCount++;
-
-        // Promote a finished shader build before doing anything else, so the rest
-        // of the frame draws with a single consistent program.
+    // Jobs that must keep happening while this window is hidden (its rAF stops):
+    // promote a finished shader build, request the video-effect program or
+    // restore the saved shader, and update the person mask. nowMs must come
+    // from this window's performance.now().
+    function runHousekeeping(nowMs) {
+        if (contextLost) return;
+        // Promote a finished shader build first, so the rest of the frame draws
+        // with a single consistent program.
         pollShaderProgram();
 
-        // Cheap per-frame check; perf only resizes when it flips (see
-        // previewScaleWithKiosk in perf.js).
-        if (perf) perf.setKioskLive(window.kioskWindow && !window.kioskWindow.closed);
-
-        if (resizePending || (perf && perf.takeResolutionDirty())) {
-            resizePending = false;
-            resizeCanvas();
-        }
-
-        sampleAudio();
-        updateVolumeReadout(now);
-
-        // Check if we're in video mode
         const isVideoMode = videoController && videoController.isInVideoMode && videoController.isInVideoMode();
-        // Separate from look: is a source (clip/camera/screen) attached at all?
-        // Every program can sample it via iVideo regardless of which look is up.
-        const hasSource = videoController && videoController.hasSource();
 
         // Video mode swaps in an effect program. Adopting a new program deletes
         // the one it replaces, so the previous shader is restored by recompiling
@@ -978,7 +1213,68 @@ document.addEventListener('DOMContentLoaded', () => {
             window.currentShaderIsVideoDisplay = false;
             requestShaderProgram(vertexShaderSource, savedFragmentSource || fragmentShaderSource);
         }
+
+        if (videoController && videoController.wantsPersonMask && videoController.wantsPersonMask()) {
+            videoController.updatePersonMask(nowMs);
+        }
+    }
+
+    // The projector calls this every frame so the jobs above survive this window
+    // being hidden (rAF stopped, timers throttled to ~1 Hz). While our own loop
+    // is alive it is already doing them, so return at once.
+    window.pianoscopeTick = () => {
+        try {
+            if (contextLost || performance.now() - lastRenderMs < 100) return;
+            runHousekeeping(performance.now());
+            const seq = window.PianoscopeTextSequencer;
+            if (seq && seq.poll) seq.poll();
+        } catch (e) {}
+    };
+
+    // One clock for both windows: the projector reads this and offsets its own
+    // iTime to match.
+    window.pianoscopeReadClock = () => performance.now() / 1000 - startTime;
+
+    function render(now) {
+        if (!animationRunning) return;
         
+        requestAnimationFrame(render);
+        if (contextLost) return;
+
+        if (perf && !perf.beginFrame(now)) return;
+
+        // Calculate time values
+        const nowSec = now / 1000;
+        const currentTime = nowSec - startTime;
+        deltaTime = nowSec - lastTime;
+        lastTime = nowSec;
+        frameCount++;
+
+        lastRenderMs = performance.now();
+
+        // Promote a finished shader build before doing anything else, so the rest
+        // of the frame draws with a single consistent program. Also runs the
+        // video-look request and person-mask update (see runHousekeeping).
+        runHousekeeping(now);
+
+        // Cheap per-frame check; perf only resizes when it flips (see
+        // previewScaleWithKiosk in perf.js).
+        if (perf) perf.setKioskLive(window.kioskWindow && !window.kioskWindow.closed);
+
+        if (resizePending || (perf && perf.takeResolutionDirty())) {
+            resizePending = false;
+            resizeCanvas();
+        }
+
+        sampleAudio();
+        updateVolumeReadout(now);
+
+        // Check if we're in video mode
+        const isVideoMode = videoController && videoController.isInVideoMode && videoController.isInVideoMode();
+        // Separate from look: is a source (clip/camera/screen) attached at all?
+        // Every program can sample it via iVideo regardless of which look is up.
+        const hasSource = videoController && videoController.hasSource();
+
         // Set uniform values for shader if program exists
         if (!currentProgram) {
             if (perf) perf.endFrame();
@@ -998,7 +1294,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         const wantsPerson = !!(videoController && videoController.wantsPersonMask
             && videoController.wantsPersonMask());
-        if (wantsPerson) videoController.updatePersonMask(now);
         uploadPersonMask(wantsPerson);
         uploadAudioTexture();
 
@@ -1016,6 +1311,48 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
     
+    /**
+     * Rebuild every GL object in place after a context restore, so audio, the
+     * sequencer, the video element and page state carry on untouched. The old
+     * handles died with the context: they are overwritten or nulled, never
+     * deleted (adoptProgram would delete a non-null previous program).
+     */
+    function rebuildAfterContextLoss() {
+        createGLResources();
+
+        // A restored context starts with no extensions enabled. gl-shared caches
+        // which HDR feedback format works but does not re-request the extensions
+        // that make it renderable, so enable them here before any feedback
+        // buffer is rebuilt.
+        ['EXT_color_buffer_float', 'OES_texture_float_linear',
+            'EXT_color_buffer_half_float'].forEach((name) => gl.getExtension(name));
+
+        // Recreated on demand by configureFeedbackPass / uploadPersonMask.
+        noiseTexture = null;
+        feedbackState = null;
+        personTexture = null;
+        personTextureVersion = -1;
+
+        if (window.PianoscopeDisplayText && window.PianoscopeDisplayText.reinit) {
+            window.PianoscopeDisplayText.reinit(gl);
+        }
+        if (videoController && videoController.videoHandler) {
+            videoController.videoHandler.onContextRestored();
+        }
+        if (perf && perf.onContextRestored) perf.onContextRestored();
+
+        currentProgram = null;
+        currentVertexShader = null;
+        currentFragmentShader = null;
+        pendingProgram = null;
+        uniforms = {};
+
+        resizeCanvas();
+        requestShaderProgram(
+            window.currentVertexShaderSource || vertexShaderSource,
+            window.currentFragmentShaderSource || fragmentShaderSource);
+    }
+
     function ensureRenderLoop() {
         if (animationRunning) return;
         animationRunning = true;
@@ -1043,6 +1380,18 @@ document.addEventListener('DOMContentLoaded', () => {
             startMic();
         }
     });
+
+    // A reload while listening comes back listening. Permission persists, so
+    // there is no prompt, but with no click the context may start suspended.
+    let micWasOn = false;
+    try { micWasOn = sessionStorage.getItem('pianoscope.show.mic') === '1'; } catch (e) {}
+    if (micWasOn) {
+        startMic().then(() => {
+            if (isListening && audioContext && audioContext.state === 'suspended' && statusEl) {
+                statusEl.textContent = 'Click anywhere to resume audio';
+            }
+        });
+    }
 
 // === KEYBOARD SHADER NAVIGATION ===
 // -1 = default shader (Pianoscope Text), outside the numbered cycle
@@ -1096,6 +1445,25 @@ function logAppliedShader(shaderName) {
     console.log(`Applied shader: ${shaderName}`);
 }
 
+// A context-loss reload (or any reload) should come back to the same show.
+// sessionStorage survives a reload but not a fresh tab. Written only once a
+// program has linked, so a shader that fails can never become the boot shader.
+const SHOW_SHADER_KEY = 'pianoscope.show.shader';
+function rememberShader(name, source) {
+    try {
+        sessionStorage.setItem(SHOW_SHADER_KEY, JSON.stringify({ name: name || null, source: source || null }));
+    } catch (e) {}
+}
+function forgetShader() {
+    try { sessionStorage.removeItem(SHOW_SHADER_KEY); } catch (e) {}
+}
+function readRememberedShader() {
+    try {
+        const raw = sessionStorage.getItem(SHOW_SHADER_KEY);
+        return raw ? JSON.parse(raw) : null;
+    } catch (e) { return null; }
+}
+
 function applyDefaultShader() {
     leaveVideoMode();
     if (window.ShaderConverter && window.visualizer) {
@@ -1103,7 +1471,8 @@ function applyDefaultShader() {
         if (shaderSource) {
             try {
                 const convertedShader = window.ShaderConverter.convertShaderToyToWebGL(shaderSource);
-                const success = window.visualizer.applyShader(convertedShader, DEFAULT_SHADER_NAME);
+                const success = window.visualizer.applyShader(convertedShader, DEFAULT_SHADER_NAME,
+                    (ok) => { if (ok) rememberShader(DEFAULT_SHADER_NAME, null); });
                 if (success) {
                     currentShaderIndex = -1;
                     logAppliedShader(DEFAULT_SHADER_NAME);
@@ -1143,7 +1512,8 @@ function applyShaderAtIndex(newIndex) {
 
     try {
         const convertedShader = window.ShaderConverter.convertShaderToyToWebGL(shaderSource);
-        const success = window.visualizer.applyShader(convertedShader, shaderName);
+        const success = window.visualizer.applyShader(convertedShader, shaderName,
+            (ok) => { if (ok) rememberShader(shaderName, null); });
 
         if (success) {
             logAppliedShader(shaderName);
@@ -1214,7 +1584,8 @@ window.setShaderByName = (shaderName) => {
         if (window.visualizer) {
             try {
                 const convertedShader = window.ShaderConverter.convertShaderToyToWebGL(shaderSource);
-                const success = window.visualizer.applyShader(convertedShader, shaderName);
+                const success = window.visualizer.applyShader(convertedShader, shaderName,
+                    (ok) => { if (ok) rememberShader(shaderName, null); });
                 if (success) {
                     currentShaderIndex = index;
                     logAppliedShader(shaderName);
@@ -1258,7 +1629,12 @@ window.getCurrentShaderInfo = () => {
             // once the program has actually linked. A failure has already put
             // the error in the status bar by the time onResult hears of it.
             leaveVideoMode();
+            // The editor hands over converted source; the operator's own text
+            // is what a reload should bring back, so take it from the textarea.
+            const typedTextarea = document.querySelector('.shader-editor-textarea');
+            const typedSource = typedTextarea ? typedTextarea.value : null;
             return queueFragmentShader(newShaderSource, 'editor', (ok, detail) => {
+                if (ok && typedSource) rememberShader(null, typedSource);
                 if (ok && statusEl) statusEl.textContent = 'New shader applied successfully';
                 if (onResult) onResult(ok, detail);
             });
@@ -1271,9 +1647,9 @@ window.getCurrentShaderInfo = () => {
         
         // Add helper functions to window for console testing
         window.visualizer = {
-            applyShader: (fragShaderSource, label) => {
+            applyShader: (fragShaderSource, label, onDone) => {
                 leaveVideoMode();
-                return queueFragmentShader(fragShaderSource, label || 'custom');
+                return queueFragmentShader(fragShaderSource, label || 'custom', onDone);
             },
             setDisplayText: (text) => {
                 if (window.PianoscopeDisplayText) {
@@ -1306,6 +1682,55 @@ window.getCurrentShaderInfo = () => {
             }
         };
 
+        // Bring back the shader from before a reload, else the default. A
+        // failed restore clears the key so it cannot trap the next boot too.
+        function restoreRememberedShader() {
+            const saved = readRememberedShader();
+            if (!saved || (!saved.source && !saved.name)) { applyDefaultShader(); return; }
+            const fallBack = () => { forgetShader(); applyDefaultShader(); };
+            try {
+                if (saved.source) {
+                    leaveVideoMode();
+                    const converted = window.ShaderConverter.convertShaderToyToWebGL(saved.source);
+                    const queued = converted && queueFragmentShader(converted, 'editor', (ok) => {
+                        if (ok) {
+                            const ta = document.querySelector('.shader-editor-textarea');
+                            if (ta) ta.value = saved.source;
+                            if (statusEl) statusEl.textContent = 'Restored custom shader';
+                        } else {
+                            fallBack();
+                        }
+                    });
+                    if (!queued) fallBack();
+                    return;
+                }
+                if (saved.name === DEFAULT_SHADER_NAME) { applyDefaultShader(); return; }
+                if (window.ShaderConverter.SAMPLE_SHADERS[saved.name] && shaderKeys.indexOf(saved.name) !== -1) {
+                    // Library path: setShaderByName fixes the index and status
+                    // line; a link failure arrives late, so check it via the key.
+                    const source = window.ShaderConverter.SAMPLE_SHADERS[saved.name];
+                    const converted = window.ShaderConverter.convertShaderToyToWebGL(source);
+                    const index = shaderKeys.indexOf(saved.name);
+                    leaveVideoMode();
+                    const queued = queueFragmentShader(converted, saved.name, (ok) => {
+                        if (ok) {
+                            currentShaderIndex = index;
+                            const ta = document.querySelector('.shader-editor-textarea');
+                            if (ta) ta.value = source;
+                            if (statusEl) statusEl.textContent = `Shader: ${saved.name} (${index + 1}/${shaderKeys.length})`;
+                        } else {
+                            fallBack();
+                        }
+                    });
+                    if (!queued) fallBack();
+                    return;
+                }
+            } catch (error) {
+                console.error('Could not restore the remembered shader:', error);
+            }
+            fallBack();
+        }
+
         // Filter edits reload the page. Re-open the camera and last effect so
         // the operator is not dumped back on the default shader each save.
         // Must run *instead of* the default apply — that path persists
@@ -1316,10 +1741,10 @@ window.getCurrentShaderInfo = () => {
                 // A restored source with look:'shader' still needs a shader on
                 // screen — only skip the default apply when the effect look
                 // actually took over the program.
-                if (!restored || !videoController.isInVideoMode()) applyDefaultShader();
+                if (!restored || !videoController.isInVideoMode()) restoreRememberedShader();
             });
         } else {
-            applyDefaultShader();
+            restoreRememberedShader();
         }
     } else {
         console.warn('ShaderConverter module not found. Shadertoy integration is disabled.');

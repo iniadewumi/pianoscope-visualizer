@@ -43,6 +43,15 @@ uniform sampler2D iChannel2;
 uniform sampler2D iChannel3;
 uniform vec3 iChannelResolution[4];
 
+// Band levels computed in JS from whole frequency bands (iChannel0 is unchanged).
+// All 0 while the mic is off.
+uniform float iKick;      // 40-110 Hz, 0..1
+uniform float iBass;      // 60-250 Hz
+uniform float iLowMid;    // 250-800 Hz
+uniform float iMid;       // 800 Hz-3 kHz
+uniform float iHigh;      // 3-11 kHz
+uniform float iKickOnset; // 1 on a kick, decaying to 0 over ~150 ms
+
 // Live source (camera / screen / clip). Available in every shader; iVideoActive is 0 when
 // nothing is attached, and the sampler then holds a 1x1 black texel.
 uniform sampler2D iVideo;

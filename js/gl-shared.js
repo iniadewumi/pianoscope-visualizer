@@ -57,7 +57,8 @@ window.PianoscopeGL = (function () {
         'iFitMode', 'iVideoMirror', 'iVideoNewFrame',
         'iPerson', 'iPersonActive',
         'iTextMorph', 'iTextLineH', 'iTextExtent', 'iTextExtentB', 'iTextLegacyExtent',
-        'iTextTransition', 'iTextSheet', 'iTextSheetRes', 'iTextWords[0]', 'iTextWordCount'
+        'iTextTransition', 'iTextSheet', 'iTextSheetRes', 'iTextWords[0]', 'iTextWordCount',
+        'iKick', 'iBass', 'iLowMid', 'iMid', 'iHigh', 'iKickOnset'
     ];
 
     function locateUniforms(gl, program) {
@@ -353,7 +354,8 @@ window.PianoscopeGL = (function () {
      * `frame` is this window's own clock, buffer and pointer:
      *   width, height, resolutionIsVec2, time, delta, frame,
      *   pointer { u, v, clickU, clickV, down }, clickFresh,
-     *   videoNewFrame, personActive, sampleRate
+     *   videoNewFrame, personActive, sampleRate,
+     *   audioFeatures (Float32Array(6): kick, bass, lowMid, mid, high, kickOnset; or null)
      * `controller` is the operator window's VideoController and `text` its
      * PianoscopeDisplayText; the projector passes the opener's. Either may be
      * null.
@@ -413,6 +415,13 @@ window.PianoscopeGL = (function () {
         if (u.iFitMode && controller) gl.uniform1f(u.iFitMode, controller.getFitMode());
         if (u.iVideoMirror && controller) gl.uniform1f(u.iVideoMirror, controller.getMirror());
         if (u.iVideoNewFrame) gl.uniform1f(u.iVideoNewFrame, frame.videoNewFrame ? 1.0 : 0.0);
+        const af = frame.audioFeatures;
+        if (u.iKick) gl.uniform1f(u.iKick, af ? af[0] : 0);
+        if (u.iBass) gl.uniform1f(u.iBass, af ? af[1] : 0);
+        if (u.iLowMid) gl.uniform1f(u.iLowMid, af ? af[2] : 0);
+        if (u.iMid) gl.uniform1f(u.iMid, af ? af[3] : 0);
+        if (u.iHigh) gl.uniform1f(u.iHigh, af ? af[4] : 0);
+        if (u.iKickOnset) gl.uniform1f(u.iKickOnset, af ? af[5] : 0);
         if (u.iPersonActive) gl.uniform1f(u.iPersonActive, frame.personActive ? 1.0 : 0.0);
         if (u.iVideoActive) {
             const live = hasSource

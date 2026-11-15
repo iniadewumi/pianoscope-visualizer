@@ -56,13 +56,16 @@
     const startTime = performance.now() / 1000;
     let lastTime = startTime;
     let frameCount = 0;
+    // Seconds added to this window's own clock to match the operator's iTime.
+    let clockOffset = null;
 
     // This window's half of a frame's uniforms; one reused object.
     const frameState = {
         width: 1, height: 1, resolutionIsVec2: false,
         time: 0, delta: 0, frame: 0,
         pointer: null, clickFresh: false,
-        videoNewFrame: false, personActive: false, sampleRate: 0
+        videoNewFrame: false, personActive: false, sampleRate: 0,
+        audioFeatures: null
     };
 
     // --- The operator's window -----------------------------------------
@@ -142,8 +145,44 @@
         if (gl) gl.viewport(0, 0, size.width, size.height);
     }
 
-    window.addEventListener('resize', resizeKioskCanvas);
-    document.addEventListener('fullscreenchange', resizeKioskCanvas);
+    // The operator's PianoscopePerf the driver came from, and the driver it
+    // handed us. Tracking the owner lets us re-attach by ourselves after the
+    // operator window reloads, when the old driver belongs to a dead page.
+    let perfOwner = null;
+    let perfDriver = null;
+
+    function projectorPerf() {
+        try {
+            const perf = fromHost('PianoscopePerf');
+            if (perf !== perfOwner) {
+                perfOwner = perf;
+                perfDriver = (perf && typeof perf.attachProjector === 'function' && gl)
+                    ? perf.attachProjector(gl) : null;
+            }
+            return perfDriver;
+        } catch (e) {
+            perfOwner = null;
+            perfDriver = null;
+            return null;
+        }
+    }
+
+    // A real window resize or fullscreen toggle changes the workload, so the
+    // controller's samples are stale. Not done inside resizeKioskCanvas: that
+    // runs every frame and when the controller itself changes the scale, and
+    // invalidating there would reset the controller each time it acts.
+    function onKioskWindowResize() {
+        resizeKioskCanvas();
+        try {
+            if (perfDriver) perfDriver.invalidate();
+        } catch (e) {
+            perfOwner = null;
+            perfDriver = null;
+        }
+    }
+
+    window.addEventListener('resize', onKioskWindowResize);
+    document.addEventListener('fullscreenchange', onKioskWindowResize);
     if (typeof ResizeObserver !== 'undefined') {
         new ResizeObserver(resizeKioskCanvas).observe(canvas);
     }
@@ -165,6 +204,19 @@
     }
 
     canvas.addEventListener('dblclick', toggleFullscreen);
+
+    // A GPU reset leaves this window black. preventDefault() asks the browser
+    // to restore the context; on restore, reload. The page holds no state: on
+    // load it announces itself to the operator window and is sent the current
+    // shader again.
+    let contextLost = false;
+    canvas.addEventListener('webglcontextlost', function (event) {
+        event.preventDefault();
+        contextLost = true;
+    });
+    canvas.addEventListener('webglcontextrestored', function () {
+        window.location.reload();
+    });
 
     document.addEventListener('keydown', function (e) {
         if (e.key === 'f' || e.key === 'F') {
@@ -261,7 +313,7 @@
     // is, which on the projector was a visible freeze on every switch.
 
     function updateShaderProgram(vertexSource, fragmentSource) {
-        if (!gl) return;
+        if (!gl || contextLost) return;
 
         // Holding an arrow key in the operator's window outruns compilation,
         // and only the latest request is of any interest.
@@ -298,6 +350,8 @@
         gl.deleteShader(build.fragmentShader);
 
         currentProgram = build.program;
+        // The operator window resets its frame counter on every shader switch.
+        frameCount = 0;
         gl.useProgram(currentProgram);
         uniforms = GLX.locateUniforms(gl, currentProgram);
 
@@ -537,8 +591,18 @@
     }
 
     function drawOneFrame(now) {
+        const perfDrv = projectorPerf();
         const nowSec = now / 1000;
-        frameState.time = nowSec - startTime;
+        // iTime follows the operator's clock so both windows show the same moment
+        // of a time-driven shader. Only re-sync past 50 ms of drift: the host's
+        // clock is read at an arbitrary point inside its frame, so syncing every
+        // frame would inject that jitter into otherwise smooth motion.
+        const hostClock = callHost('pianoscopeReadClock');
+        if (typeof hostClock === 'number'
+            && (clockOffset === null || Math.abs((nowSec + clockOffset) - hostClock) > 0.05)) {
+            clockOffset = hostClock - nowSec;
+        }
+        frameState.time = nowSec + (clockOffset === null ? -startTime : clockOffset);
         frameState.delta = nowSec - lastTime;
         lastTime = nowSec;
         frameCount++;
@@ -578,6 +642,8 @@
                 frameState.personActive = uploadPersonMask(controller.wantsPersonMask());
             }
             uploadAudio();
+            // After uploadAudio so the features belong to the same analyser read.
+            frameState.audioFeatures = callHost('pianoscopeReadAudioFeatures') || null;
             uploadDisplayText(text);
         } catch (e) {
             controller = null;
@@ -588,8 +654,18 @@
             GLX.applyFrameUniforms(gl, uniforms, frameState, controller, text);
         } catch (e) {}
 
+        // The driver owns the GPU timer; the closing operator window must never
+        // be able to break this frame, so every call is guarded.
+        try { if (perfDrv) perfDrv.beginGpuWork(); } catch (e) { perfOwner = null; perfDriver = null; }
         GLX.drawFrame(gl, uniforms, usesFeedbackPass ? feedbackState : null,
             canvas.width, canvas.height, bindChannels);
+        try { if (perfDrv) perfDrv.endGpuWork(); } catch (e) { perfOwner = null; perfDriver = null; }
+
+        // This window's own frame interval is what the room sees, so it steers.
+        const frameMs = frameState.delta * 1000;
+        if (perfDrv && frameMs > 0 && isFinite(frameMs)) {
+            try { perfDrv.endFrame(frameMs); } catch (e) { perfOwner = null; perfDriver = null; }
+        }
 
         try {
             drawOverlay(text);
@@ -602,12 +678,16 @@
         function render(now) {
             animationFrameId = requestAnimationFrame(render);
 
-            if (document.hidden || !gl) return;
+            if (document.hidden || !gl || contextLost) return;
             resizeKioskCanvas();
 
             // Promote a finished build before anything else, so the whole
             // frame draws with one program.
             pollShaderProgram();
+            // Drive the operator window's housekeeping (shader promotion, video
+            // look, person mask, text sequencer) every frame so it survives that
+            // window being hidden. Exactly one call per frame, even with no program.
+            callHost('pianoscopeTick');
             if (!currentProgram) return;
 
             drawOneFrame(now);
@@ -646,6 +726,7 @@
                 hasProgram: !!currentProgram,
                 building: !!pendingBuild,
                 frames: frameCount,
+                time: frameState.time,
                 width: canvas.width,
                 height: canvas.height,
                 feedback: feedbackState ? feedbackState.format : null
@@ -656,6 +737,7 @@
             if (!gl) return false;
             resizeKioskCanvas();
             pollShaderProgram();
+            callHost('pianoscopeTick');
             if (!currentProgram) return false;
             drawOneFrame(performance.now());
             return true;
