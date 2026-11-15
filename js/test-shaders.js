@@ -33,9 +33,19 @@ float fft(float x) {
     return texture(iChannel0, vec2(clamp(x, 0.0, 1.0), 0.0)).x;
 }
 
-float getBass() { return (fft(0.01) + fft(0.03) + fft(0.05) + fft(0.07)) * 0.25; }
-float getMid()  { return (fft(0.15) + fft(0.25) + fft(0.35) + fft(0.45)) * 0.25; }
-float getHigh() { return (fft(0.55) + fft(0.70) + fft(0.85) + fft(0.95)) * 0.25; }
+// Band levels computed in JS from whole bands (sampleAudio in
+// js/visualizer-with-shadertoy.js): bass is the kick and the bass line, mid
+// is chords, high is hats. The old helpers point-sampled about 110-770 Hz,
+// 1.6-5 kHz and 6-10.5 kHz, so "bass" never saw the kick. Whole bands read
+// hotter than those probes did; the trims bring each back to the level the
+// gains below were tuned against. Tune the trims by eye. fft() stays for
+// uses that need the spectrum's shape.
+#define BASS_TRIM 0.20
+#define MID_TRIM  0.23
+#define HIGH_TRIM 0.04
+float getBass() { return clamp(max(iKick, iBass) - BASS_TRIM, 0.0, 1.0); }
+float getMid()  { return clamp(max(iLowMid, iMid) - MID_TRIM, 0.0, 1.0); }
+float getHigh() { return clamp(iHigh - HIGH_TRIM, 0.0, 1.0); }
 
 float fallbackBass() { return 0.32 + 0.22 * sin(iTime * 1.35); }
 float fallbackMid()  { return 0.24 + 0.14 * sin(iTime * 0.62 + 1.1); }
@@ -174,17 +184,21 @@ float fft(float x) {
     return texture(iChannel0, vec2(clamp(x, 0.0, 1.0), 0.0)).x;
 }
 
-float getBass() {
-    return (fft(0.01) + fft(0.03) + fft(0.05) + fft(0.07)) * 0.0425;
-}
+// Band levels computed in JS from whole bands (sampleAudio in
+// js/visualizer-with-shadertoy.js): bass is the kick and the bass line, mid
+// is chords, high is hats. The old helpers point-sampled about 110-770 Hz,
+// 1.6-5 kHz and 6-10.5 kHz, so "bass" never saw the kick. Whole bands read
+// hotter than those probes did; the trims bring each back to the level the
+// gains below were tuned against. Tune the trims by eye. fft() stays for
+// uses that need the spectrum's shape.
+#define BASS_TRIM 0.20
+#define MID_TRIM  0.23
+#define HIGH_TRIM 0.04
+float getBass() { return clamp(max(iKick, iBass) - BASS_TRIM, 0.0, 1.0) * 0.17; }
 
-float getMid() {
-    return (fft(0.15) + fft(0.25) + fft(0.35) + fft(0.45)) * 0.0525;
-}
+float getMid()  { return clamp(max(iLowMid, iMid) - MID_TRIM, 0.0, 1.0) * 0.21; }
 
-float getHigh() {
-    return (fft(0.55) + fft(0.70) + fft(0.85) + fft(0.95)) * 0.1;
-}
+float getHigh() { return clamp(iHigh - HIGH_TRIM, 0.0, 1.0) * 0.4; }
 
 float fallbackBass() { return 0.32 + 0.22 * sin(iTime * 0.75); }
 float fallbackMid()  { return 0.24 + 0.14 * sin(iTime * 0.52 + .51); }
@@ -226,7 +240,7 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
 
     // Afterglow is kick-only. Do not floor this with the iTime fallback or the
     // letters sit in a constant halo between hits.
-    float pulse = (fft(0.01) + fft(0.03) + fft(0.05) + fft(0.07)) * 0.25;
+    float pulse = clamp(max(iKick, iBass) - BASS_TRIM, 0.0, 1.0);
     float hit = smoothstep(HIT_GATE, 0.72, audioBoost(pulse));
     hit = hit * hit;
 
@@ -313,9 +327,19 @@ Note: Display text from the legacy sheet on iChannel3 (R sharp, G soft), drawn
 #define TAU 6.28318530718
 
 float fft(float x) { return texture(iChannel0, vec2(clamp(x, 0.0, 1.0), 0.0)).x; }
-float getBass() { return (fft(0.01) + fft(0.03) + fft(0.05) + fft(0.07)) * 0.25; }
-float getMid()  { return (fft(0.15) + fft(0.25) + fft(0.35) + fft(0.45)) * 0.25; }
-float getHigh() { return (fft(0.55) + fft(0.70) + fft(0.85) + fft(0.95)) * 0.25; }
+// Band levels computed in JS from whole bands (sampleAudio in
+// js/visualizer-with-shadertoy.js): bass is the kick and the bass line, mid
+// is chords, high is hats. The old helpers point-sampled about 110-770 Hz,
+// 1.6-5 kHz and 6-10.5 kHz, so "bass" never saw the kick. Whole bands read
+// hotter than those probes did; the trims bring each back to the level the
+// gains below were tuned against. Tune the trims by eye. fft() stays for
+// uses that need the spectrum's shape.
+#define BASS_TRIM 0.20
+#define MID_TRIM  0.23
+#define HIGH_TRIM 0.04
+float getBass() { return clamp(max(iKick, iBass) - BASS_TRIM, 0.0, 1.0); }
+float getMid()  { return clamp(max(iLowMid, iMid) - MID_TRIM, 0.0, 1.0); }
+float getHigh() { return clamp(iHigh - HIGH_TRIM, 0.0, 1.0); }
 float fallbackBass() { return 0.35 + 0.25 * sin(iTime * 1.2); }
 float fallbackMid()  { return 0.28 + 0.18 * sin(iTime * 0.7 + 1.0); }
 float fallbackHigh() { return 0.18 + 0.12 * sin(iTime * 2.8 + 2.0); }
@@ -438,9 +462,19 @@ Note: Display text from the legacy sheet on iChannel3 (R sharp, G soft), drawn
 #define TAU 6.28318530718
 
 float fft(float x) { return texture(iChannel0, vec2(clamp(x, 0.0, 1.0), 0.0)).x; }
-float getBass() { return (fft(0.01) + fft(0.03) + fft(0.05) + fft(0.07)) * 0.25; }
-float getMid()  { return (fft(0.15) + fft(0.25) + fft(0.35) + fft(0.45)) * 0.25; }
-float getHigh() { return (fft(0.55) + fft(0.70) + fft(0.85) + fft(0.95)) * 0.25; }
+// Band levels computed in JS from whole bands (sampleAudio in
+// js/visualizer-with-shadertoy.js): bass is the kick and the bass line, mid
+// is chords, high is hats. The old helpers point-sampled about 110-770 Hz,
+// 1.6-5 kHz and 6-10.5 kHz, so "bass" never saw the kick. Whole bands read
+// hotter than those probes did; the trims bring each back to the level the
+// gains below were tuned against. Tune the trims by eye. fft() stays for
+// uses that need the spectrum's shape.
+#define BASS_TRIM 0.20
+#define MID_TRIM  0.23
+#define HIGH_TRIM 0.04
+float getBass() { return clamp(max(iKick, iBass) - BASS_TRIM, 0.0, 1.0); }
+float getMid()  { return clamp(max(iLowMid, iMid) - MID_TRIM, 0.0, 1.0); }
+float getHigh() { return clamp(iHigh - HIGH_TRIM, 0.0, 1.0); }
 float fallbackBass() { return 0.35 + 0.25 * sin(iTime * 1.2); }
 float fallbackMid()  { return 0.28 + 0.18 * sin(iTime * 0.7 + 1.0); }
 float fallbackHigh() { return 0.18 + 0.12 * sin(iTime * 2.8 + 2.0); }
@@ -579,9 +613,19 @@ Note: Display text from the legacy sheet on iChannel3 (R sharp, G soft), drawn
 #define TAU 6.28318530718
 
 float fft(float x) { return texture(iChannel0, vec2(clamp(x, 0.0, 1.0), 0.0)).x; }
-float getBass() { return (fft(0.01) + fft(0.03) + fft(0.05) + fft(0.07)) * 0.25; }
-float getMid()  { return (fft(0.15) + fft(0.25) + fft(0.35) + fft(0.45)) * 0.25; }
-float getHigh() { return (fft(0.55) + fft(0.70) + fft(0.85) + fft(0.95)) * 0.25; }
+// Band levels computed in JS from whole bands (sampleAudio in
+// js/visualizer-with-shadertoy.js): bass is the kick and the bass line, mid
+// is chords, high is hats. The old helpers point-sampled about 110-770 Hz,
+// 1.6-5 kHz and 6-10.5 kHz, so "bass" never saw the kick. Whole bands read
+// hotter than those probes did; the trims bring each back to the level the
+// gains below were tuned against. Tune the trims by eye. fft() stays for
+// uses that need the spectrum's shape.
+#define BASS_TRIM 0.20
+#define MID_TRIM  0.23
+#define HIGH_TRIM 0.04
+float getBass() { return clamp(max(iKick, iBass) - BASS_TRIM, 0.0, 1.0); }
+float getMid()  { return clamp(max(iLowMid, iMid) - MID_TRIM, 0.0, 1.0); }
+float getHigh() { return clamp(iHigh - HIGH_TRIM, 0.0, 1.0); }
 float fallbackBass() { return 0.35 + 0.25 * sin(iTime * 1.2); }
 float fallbackMid()  { return 0.28 + 0.18 * sin(iTime * 0.7 + 1.0); }
 float fallbackHigh() { return 0.18 + 0.12 * sin(iTime * 2.8 + 2.0); }
@@ -761,9 +805,19 @@ Note: Display text from the legacy sheet on iChannel3 (R sharp, G soft), drawn
 #define TAU 6.28318530718
 
 float fft(float x) { return texture(iChannel0, vec2(clamp(x, 0.0, 1.0), 0.0)).x; }
-float getBass() { return (fft(0.01) + fft(0.03) + fft(0.05) + fft(0.07)) * 0.25; }
-float getMid()  { return (fft(0.15) + fft(0.25) + fft(0.35) + fft(0.45)) * 0.25; }
-float getHigh() { return (fft(0.55) + fft(0.70) + fft(0.85) + fft(0.95)) * 0.25; }
+// Band levels computed in JS from whole bands (sampleAudio in
+// js/visualizer-with-shadertoy.js): bass is the kick and the bass line, mid
+// is chords, high is hats. The old helpers point-sampled about 110-770 Hz,
+// 1.6-5 kHz and 6-10.5 kHz, so "bass" never saw the kick. Whole bands read
+// hotter than those probes did; the trims bring each back to the level the
+// gains below were tuned against. Tune the trims by eye. fft() stays for
+// uses that need the spectrum's shape.
+#define BASS_TRIM 0.20
+#define MID_TRIM  0.23
+#define HIGH_TRIM 0.04
+float getBass() { return clamp(max(iKick, iBass) - BASS_TRIM, 0.0, 1.0); }
+float getMid()  { return clamp(max(iLowMid, iMid) - MID_TRIM, 0.0, 1.0); }
+float getHigh() { return clamp(iHigh - HIGH_TRIM, 0.0, 1.0); }
 float fallbackBass() { return 0.35 + 0.25 * sin(iTime * 1.2); }
 float fallbackMid()  { return 0.28 + 0.18 * sin(iTime * 0.7 + 1.0); }
 float fallbackHigh() { return 0.18 + 0.12 * sin(iTime * 2.8 + 2.0); }
@@ -924,9 +978,19 @@ Note: Display text from the legacy sheet on iChannel3 (R sharp, G soft), drawn
 #define TAU 6.28318530718
 
 float fft(float x) { return texture(iChannel0, vec2(clamp(x, 0.0, 1.0), 0.0)).x; }
-float getBass() { return (fft(0.01) + fft(0.03) + fft(0.05) + fft(0.07)) * 0.25; }
-float getMid()  { return (fft(0.15) + fft(0.25) + fft(0.35) + fft(0.45)) * 0.25; }
-float getHigh() { return (fft(0.55) + fft(0.70) + fft(0.85) + fft(0.95)) * 0.25; }
+// Band levels computed in JS from whole bands (sampleAudio in
+// js/visualizer-with-shadertoy.js): bass is the kick and the bass line, mid
+// is chords, high is hats. The old helpers point-sampled about 110-770 Hz,
+// 1.6-5 kHz and 6-10.5 kHz, so "bass" never saw the kick. Whole bands read
+// hotter than those probes did; the trims bring each back to the level the
+// gains below were tuned against. Tune the trims by eye. fft() stays for
+// uses that need the spectrum's shape.
+#define BASS_TRIM 0.20
+#define MID_TRIM  0.23
+#define HIGH_TRIM 0.04
+float getBass() { return clamp(max(iKick, iBass) - BASS_TRIM, 0.0, 1.0); }
+float getMid()  { return clamp(max(iLowMid, iMid) - MID_TRIM, 0.0, 1.0); }
+float getHigh() { return clamp(iHigh - HIGH_TRIM, 0.0, 1.0); }
 float fallbackBass() { return 0.35 + 0.25 * sin(iTime * 1.2); }
 float fallbackMid()  { return 0.28 + 0.18 * sin(iTime * 0.7 + 1.0); }
 float fallbackHigh() { return 0.18 + 0.12 * sin(iTime * 2.8 + 2.0); }
@@ -1074,9 +1138,19 @@ Note: Display text from the legacy sheet on iChannel3 (R sharp, G soft), drawn
 #define TAU 6.28318530718
 
 float fft(float x) { return texture(iChannel0, vec2(clamp(x, 0.0, 1.0), 0.0)).x; }
-float getBass() { return (fft(0.01) + fft(0.03) + fft(0.05) + fft(0.07)) * 0.25; }
-float getMid()  { return (fft(0.15) + fft(0.25) + fft(0.35) + fft(0.45)) * 0.25; }
-float getHigh() { return (fft(0.55) + fft(0.70) + fft(0.85) + fft(0.95)) * 0.25; }
+// Band levels computed in JS from whole bands (sampleAudio in
+// js/visualizer-with-shadertoy.js): bass is the kick and the bass line, mid
+// is chords, high is hats. The old helpers point-sampled about 110-770 Hz,
+// 1.6-5 kHz and 6-10.5 kHz, so "bass" never saw the kick. Whole bands read
+// hotter than those probes did; the trims bring each back to the level the
+// gains below were tuned against. Tune the trims by eye. fft() stays for
+// uses that need the spectrum's shape.
+#define BASS_TRIM 0.20
+#define MID_TRIM  0.23
+#define HIGH_TRIM 0.04
+float getBass() { return clamp(max(iKick, iBass) - BASS_TRIM, 0.0, 1.0); }
+float getMid()  { return clamp(max(iLowMid, iMid) - MID_TRIM, 0.0, 1.0); }
+float getHigh() { return clamp(iHigh - HIGH_TRIM, 0.0, 1.0); }
 float fallbackBass() { return 0.35 + 0.25 * sin(iTime * 1.2); }
 float fallbackMid()  { return 0.28 + 0.18 * sin(iTime * 0.7 + 1.0); }
 float fallbackHigh() { return 0.18 + 0.12 * sin(iTime * 2.8 + 2.0); }
@@ -1580,9 +1654,19 @@ float aHigh;
 float fft(float x) {
     return texture(iChannel0, vec2(clamp(x, 0.0, 1.0), 0.0)).x;
 }
-float getBass() { return (fft(0.01) + fft(0.03) + fft(0.05) + fft(0.07)) * 0.25; }
-float getMid()  { return (fft(0.15) + fft(0.25) + fft(0.35) + fft(0.45)) * 0.25; }
-float getHigh() { return (fft(0.55) + fft(0.70) + fft(0.85) + fft(0.95)) * 0.25; }
+// Band levels computed in JS from whole bands (sampleAudio in
+// js/visualizer-with-shadertoy.js): bass is the kick and the bass line, mid
+// is chords, high is hats. The old helpers point-sampled about 110-770 Hz,
+// 1.6-5 kHz and 6-10.5 kHz, so "bass" never saw the kick. Whole bands read
+// hotter than those probes did; the trims bring each back to the level the
+// gains below were tuned against. Tune the trims by eye. fft() stays for
+// uses that need the spectrum's shape.
+#define BASS_TRIM 0.20
+#define MID_TRIM  0.23
+#define HIGH_TRIM 0.04
+float getBass() { return clamp(max(iKick, iBass) - BASS_TRIM, 0.0, 1.0); }
+float getMid()  { return clamp(max(iLowMid, iMid) - MID_TRIM, 0.0, 1.0); }
+float getHigh() { return clamp(iHigh - HIGH_TRIM, 0.0, 1.0); }
 float gate(float v, float lo, float hi) {
     float g = smoothstep(lo, hi, v);
     return g * g;
