@@ -8,6 +8,8 @@ package-lock.json
 
 # Local shader compile scratch (agent / dev)
 compile-*.html
+# ...except the shipped check page
+!dev/compile-all.html
 
 # Local / demo typefaces — Akira Expanded Demo is personal-use; do not redistribute
 fonts/*.otf
