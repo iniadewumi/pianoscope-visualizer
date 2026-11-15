@@ -10,7 +10,7 @@ Grep this file or search by tag. Format: `keyword → knowledge/howto/NN-file.md
 |----------|-----|---------|
 | onboarding, start, checklist | `00-AGENT-START.md` | full doc |
 | test-shaders, TEST_SHADERS, where to edit | `howto/01-repo-and-workflow.md` | Where code lives |
-| npx serve, file://, http server | `howto/01-repo-and-workflow.md` | Run locally |
+| http.server, file://, local server | `howto/01-repo-and-workflow.md` | Run locally |
 | shadertoy-converter, SAMPLE_SHADERS | `howto/01-repo-and-workflow.md` | Picker order |
 | setShaderByName, testing | `howto/01-repo-and-workflow.md` | Browser testing |
 
@@ -29,7 +29,7 @@ Grep this file or search by tag. Format: `keyword → knowledge/howto/NN-file.md
 
 | Keywords | Doc | Section |
 |----------|-----|---------|
-| WebGL 1, texture2D, const float | `howto/03-glsl-webgl-constraints.md` | Constraints |
+| WebGL 2, GLSL ES 3.00, texture2D | `howto/03-glsl-webgl-constraints.md` | Constraints |
 | iResolution vec3, uniform3f | `howto/03-glsl-webgl-constraints.md` | iResolution contract |
 | compile error, line number, preamble | `howto/03-glsl-webgl-constraints.md` | Error line mapping |
 | vec2 vec3 mismatch, smoothstep noise | `howto/03-glsl-webgl-constraints.md` | Common compile fixes |

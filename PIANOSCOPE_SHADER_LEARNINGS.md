@@ -1,5 +1,7 @@
 # PIANOSCOPE Shader Learnings (Agent Notes)
 
+> **Note:** the runtime has since moved to WebGL 2 only (GLSL ES 3.00). The WebGL 1 restrictions described below no longer apply; the history is kept as it happened.
+
 **New agents:** Start at [`knowledge/README.md`](knowledge/README.md) — local HOW-TO library with keyword index, pattern/IQ techniques, and genre recipes. Use this file for iteration postmortems and porting case studies.
 
 **Read this after [`cursor inst.md`](cursor inst.md).** The brief defines *what* to build and *why*. This doc captures *what we tried*, *what failed*, *what worked*, and *how to avoid repeating mistakes* — based on implementing the first PIANOSCOPE shader in this repo.
@@ -17,7 +19,7 @@
 3. Read this doc's **Iteration postmortem** and **Anti-patterns** before writing GLSL (also summarized in [`knowledge/howto/07-anti-patterns-and-failures.md`](knowledge/howto/07-anti-patterns-and-failures.md)).
 4. Study shaders per [`knowledge/howto/08-steal-from-library.md`](knowledge/howto/08-steal-from-library.md).
 5. Add new entries to `TEST_SHADERS` in [`js/test-shaders.js`](js/test-shaders.js) — do not edit `shaders.js` / `shaders2.js`.
-6. Serve over HTTP (`npx serve .`), not `file://` if modules fail.
+6. Serve over HTTP (`python3 -m http.server 8747`, then `http://localhost:8747`), not `file://` if modules fail.
 7. Test with mic on **and** off (fallback motion must work).
 8. Get visual approval before building the next genre shader.
 
@@ -123,23 +125,20 @@ We shipped three distinct approaches, then one polish pass on the winner. **Do n
 
 ## Anti-patterns (do not repeat)
 
+> Runtime is now WebGL 2 only; the former WebGL 1 rows (`fwidth`, global `const float`, `out` params, `bool`) were removed because those are legal now.
+
 | Anti-pattern | Symptom | Alternative |
 |--------------|---------|-------------|
 | Edge-only recursive `mod2` | Dot grid / halftone kaleidoscope | Explicit layers with fill, or filled Apollonian cells |
-| `fwidth()` / `aaLine` on WebGL 1 paths | Compile failures or inconsistent AA | `smoothstep` on fixed feather (~0.003 UV) |
-| `const float` at global scope | WebGL 1 compile errors | `#define` tuning constants |
-| `out` parameters in helper functions | WebGL 1 failures | Return `vec3` packs (e.g. `vec3(field, seed.x, seed.y)`) |
-| `bool` in GLSL helpers | WebGL 1 issues | `float` flags (`0.0` / `1.0`) |
 | Bokeh/grid sparks (`floor(uv * N)`) | Visual noise, fights composition | Sparks only at known node centers |
 | Copying `y = 0.25` audio from old `shaders.js` | Wrong frequency data | Always `texture(iChannel0, vec2(x, 0.0))` |
 | Generic radial lasers from center | Sci-fi HUD | Neighbor branch arcs with inset midpoint |
 | Building all 4 genre shaders at once | None compile/look good | One shader → visual approval → next |
-| Opening `index.html` as `file://` | ES module import failures (browser-dependent) | `npx serve .` → `http://localhost:...` |
+| Opening `index.html` as `file://` | ES module import failures (browser-dependent) | `python3 -m http.server 8747` → `http://localhost:8747` |
 | Rewriting from scratch after v3 works | Lose fill/stroke foundation, risk dot grid again | Polish pass on existing `settlementLayer` architecture |
 | Undefined palette vars in `mainImage` | Shader compile fail | Define `electric`, `deepCyan`, etc. in scope where used |
 | `uniform vec2 iResolution` in converter preamble | `vec3 p = iResolution` fails: *cannot convert from uniform 2-component…* | Preamble uses `uniform vec3 iResolution`; upload `(width, height, 1.0)` |
 | `vec3(3) - vec2(2) * diff` in smoothstep noise | `wrong operand types` on `-` | Use `vec2(3.0) - 2.0 * diff` (all `vec2`) |
-| Assuming error line = shader body line | Chasing wrong line in editor textarea | Error line = **full** compiled source (see compile pipeline below) |
 | Patching only the shader body, not the preamble | "Fixed" shader still fails | Check converter + runtime uniform uploads match |
 
 ---
@@ -209,10 +208,10 @@ float audioBoost(float v) {
 
 | Issue | Fix |
 |-------|-----|
-| Write `texture()` in source | Converter rewrites to `texture2D` for WebGL 1 |
+| Write `texture()` in source | Both `texture()` and old `texture2D()` work (WebGL 2; converter maps `texture2D`) |
 | No `uniform`, `precision`, `void main()` | Injected by `shadertoy-converter.js` |
 | `iFrame` is `float`, not `int` | Don't cast loops on `iFrame` as int index |
-| Loop bounds must be constant | `for (int i = 0; i < 12; i++)` + `if (fi >= count) break;` |
+| Loop bounds | Non-constant integer bounds are legal (WebGL 2); keep loops modest for performance |
 | Template string backticks in JS | Escape `` ` `` inside shader strings |
 | `inout` in helpers | Works, but prefer simple returns when possible |
 | Duplicate `settlementLayer` call without assignment | First layer silently skipped — always `col = settlementLayer(...)` |
@@ -221,7 +220,7 @@ float audioBoost(float v) {
 | `vec3(iResolution, 1.0)` / `vec3(iResolution, 0.0)` | Valid when `iResolution` was `vec2`; **breaks** with vec3 preamble (`constructor: too many arguments`). Use `iResolution` or `vec3(iResolution.xy, 0.0)` — converter rewrites these automatically |
 | Hermite smoothstep `t²(3−2t)` on `vec2` | Must stay same type: `diff * diff * (vec2(3.0) - 2.0 * diff)` — not `vec3(3) - vec2(2) * diff` |
 | Shaders with `void main()` already | `convertShaderToyToWebGL` returns them **as-is** (no preamble). Examples: `"Black Hole"`, `"DULL AMAP"` |
-| `out` params in library shaders (e.g. Murakami) | Compiles on **WebGL 2**; WebGL 1 fails (`varying` only at global scope). Don't expect full library on WebGL 1 without refactors |
+| `out` params in library shaders (e.g. Murakami) | Legal (WebGL 2 only runtime) |
 
 ---
 
@@ -240,7 +239,7 @@ createShader() prefix          #version 300 es, out fragColor, #define texture2D
   + WEBGL_MAIN                 void main() { mainImage(fragColor, gl_FragCoord.xy); }
 ```
 
-**The GLSL error line is 1-based in this full string**, not in the textarea / `shaders.js` string alone. A ~30-line preamble offset is normal. Map errors by assembling the full source or logging `gl.getShaderInfoLog` in DevTools.
+**Error line numbers are now the author's own** — the converter emits `#line` directives, so there is no preamble offset (older notes below describe the ~30-line offset). To see the full source, log by assembling the full source or logging `gl.getShaderInfoLog` in DevTools.
 
 Flow: `ShaderConverter.convertShaderToyToWebGL(body)` → `window.visualizer.applyShader(converted)` → `createShader()` adds another prefix.
 
@@ -251,7 +250,6 @@ Flow: `ShaderConverter.convertShaderToyToWebGL(body)` → `window.visualizer.app
 3. **Classify the error:**
    - `wrong operand types` on `-` / `+` → mixed `vec2`/`vec3`/`float` in one expression.
    - `dimension mismatch` + `uniform … 2-component` → `vec3 x = iResolution` with vec2 uniform (fixed: vec3 uniform in preamble).
-   - `'varying' : only allowed at global scope` → WebGL 1 + `in`/`out` function params (library shaders with `out float`, `out vec3` need WebGL 2 or refactor).
 4. **Grep the body** for `iResolution` without `.x`/`.y`/`.xy` swizzle — common in golf/shadertoy one-liners (`vec3 p = iResolution`).
 5. **Re-test on WebGL 2** — project prefers `webgl2` context; most library shaders assume it.
 

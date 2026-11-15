@@ -1,21 +1,20 @@
 # GLSL & WebGL Constraints
 
-**Keywords:** WebGL 1, compile, iResolution, vec3, preamble, texture2D, loops, feedback
+**Keywords:** WebGL 2, GLSL ES 3.00, compile, iResolution, vec3, preamble, texture2D, loops, feedback
 
 **Use when:** Shader fails to compile; porting from Shadertoy (including multi-buffer ones); mixed vec2/vec3 errors.
 
 ---
 
-## WebGL 1 rules (this project)
+## GLSL rules (WebGL 2 / GLSL ES 3.00)
+
+The app is WebGL 2 only; every shader compiles as `#version 300 es`. Global `const float`, `out`/`inout` params, `bool`, `fwidth()`/`dFdx()`/`dFdy()` and non-constant integer loop bounds are all legal.
 
 | Issue | Fix |
 |-------|-----|
-| `texture()` in source | Converter rewrites to `texture2D` |
-| Global `const float` | Use `#define` |
-| `out` parameters in helpers | Return `vec3` packs instead |
-| `bool` in helpers | Use `float` flags `0.0` / `1.0` |
-| `fwidth()` / heavy AA | Often fails WebGL 1 paths — use fixed feather `~0.003` UV |
-| Loop bounds | Must be constant: `for (int i = 0; i < 12; i++)` + `if (fi >= count) break;` |
+| `texture()` / `texture2D()` | Both work; the converter maps old `texture2D(...)` and `gl_FragColor` |
+| Tuning constants | Convention: `#define` at the top for quick tuning |
+| Edge AA | Style choice for projection: fixed feather (~0.003 UV) or `1.0 / iResolution.y`, solid fills |
 | `iFrame` | `float`, not `int` |
 
 ---
@@ -40,7 +39,7 @@ Converter auto-rewrites some patterns.
 
 Final fragment source = **runtime prefix** + **WEBGL_PREAMBLE** + **shader body** + **main wrapper**.
 
-**GLSL error line is 1-based in the full compiled string**, not the textarea line in `test-shaders.js`. Expect ~30-line preamble offset.
+**GLSL error lines are your own shader's line numbers** — the converter emits `#line` directives, so there is no preamble offset.
 
 **Debug flow:**
 
@@ -56,7 +55,6 @@ Final fragment source = **runtime prefix** + **WEBGL_PREAMBLE** + **shader body*
 |-------|-------|-----|
 | `wrong operand types` on `-` | Mixed vec2/vec3 in smoothstep noise | `vec2(3.0) - 2.0 * diff` not `vec3(3) - vec2(2) * diff` |
 | `2-component` + `iResolution` | vec2 vs vec3 uniform | Use vec3 preamble (current) |
-| `'varying' : only allowed at global scope` | `in`/`out` fn params | WebGL 2 only, or refactor |
 
 ---
 
@@ -112,9 +110,24 @@ Things that bite:
   available in every shader's preamble, mirroring the helpers in
   `js/video-effects.js` but sampling `iVideo`. The video dock's Look toggle
   (Effect / Shader) picks which program is on screen; the Blend row (Off /
-  Video under / Video over / Luma key / Multiply, plus an Amount slider) only
-  applies while Look is Shader, composited automatically via
-  `pianoscopeBlendVideo()` in the converter's generated `main()`.
+  Video under / Video over / Luma key / Multiply / Shader on body / Shader on
+  room, plus an Amount slider) only applies while Look is Shader, composited
+  automatically via `pianoscopeBlendVideo()` in the converter's generated `main()`.
+- **The camera is slower than the loop.** A camera gives ~30 fps into a 60–120 fps
+  render loop, so most draws see the same source frame as the last one.
+  `iVideoNewFrame` is 1.0 only on draws where a new frame was uploaded. Anything
+  that differences against the previous frame or scrolls per frame must step on
+  it and copy the buffer through otherwise, or motion flickers on and off and
+  speeds depend on the display's refresh rate. See `"Motion Trails"` and
+  `"Slit-Scan Loom"` in `js/video-effects.js`.
+- **Person matte.** The body/room blends load MediaPipe's selfie segmenter
+  (`js/person-mask.js`, ~12 MB from a CDN, only when one of those blends is
+  picked). Any library shader can read it: `personAt(uv)` returns person
+  confidence at a screen coordinate, valid while `iPersonActive` is 1. The
+  texture is on unit 8 and is in the source's frame, so it follows Fit and Mirror.
+- **Switching programs clears the feedback buffer.** Two feedback effects of the
+  same size and format share the storage, and it is cleared on the swap so the
+  new one never reads the old one's numbers as its own history.
 - **The buffer is RGBA8 unless you ask.** Add `#define FEEDBACK_HDR` and the
   visualizer allocates RGBA32F (or RGBA16F) where the driver can render to it.
   Required for anything storing a statistic rather than a colour: in 8 bits the
@@ -132,7 +145,7 @@ Things that bite:
 
 ```js
 const src = window.ShaderConverter.convertShaderToyToWebGL(
-  window.ShaderConverter.SAMPLE_SHADERS["PIANOSCOPE Afrohouse Mudcloth Bloom"]
+  window.ShaderConverter.SAMPLE_SHADERS["PIANOSCOPE Hairpin"]
 );
 window.visualizer.applyShader(src);
 ```

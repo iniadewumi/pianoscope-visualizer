@@ -1,6 +1,6 @@
 # Repo & Workflow
 
-**Keywords:** test-shaders, TEST_SHADERS, workflow, npx serve, shadertoy-converter, mainImage
+**Keywords:** test-shaders, TEST_SHADERS, workflow, http.server, shadertoy-converter, mainImage
 
 **Use when:** Starting any PIANOSCOPE shader task; unsure where to edit files.
 
@@ -12,8 +12,11 @@
 |------|------|-------------------------------|
 | `js/test-shaders.js` | `export const TEST_SHADERS = { "Name": \`...\` }` | **Yes — only here** |
 | `js/shadertoy-converter.js` | Merges `TEST_SHADERS` first into picker | Verify spread order |
-| `js/shaders.js`, `js/shaders2.js` | Reference library (~16k lines) | **No** — study only; patch only for compile fixes |
-| `js/visualizer-with-shadertoy.js` | WebGL runtime, audio upload, uniforms | Rarely (uniform uploads) |
+| `js/shaders.js`, `js/shaders2.js` | Reference library (~24,000 lines together: 92 + 32 shaders) | **No** — study only; patch only for compile fixes |
+| `js/visualizer-with-shadertoy.js` | Operator window: WebGL runtime, audio, texture binding | Rarely |
+| `js/gl-shared.js` | GL code both windows run: compile, uniform table, per-frame uniforms, feedback, draw | When adding a uniform |
+| `kiosk.html`, `js/kiosk-window.js` | Projector window; pulls its sources from the operator window | Rarely |
+| `js/kiosk-mode.js` | Kiosk button and handshake on the operator side | Rarely |
 | `cursor inst.md` | Creative brief | Read, don’t duplicate |
 | `PIANOSCOPE_SHADER_LEARNINGS.md` | Postmortems | Append failures; link to `knowledge/` |
 | `knowledge/` | HOW-TO library | **This folder** |
@@ -62,7 +65,7 @@ const SAMPLE_SHADERS = { ...TEST_SHADERS, ...SHADERS, ...SHADERS2 };
 
 - Entry: `void mainImage(out vec4 fragColor, in vec2 fragCoord)`
 - Use `iResolution`, `iTime`, `iChannel0`, `iFrame`, `iMouse` as needed
-- Tuning: `#define` at top (WebGL 1 — avoid global `const float`)
+- Tuning: `#define` at top (project convention for quick tuning)
 - Include header comment block (genre, audio mapping, cultural caution)
 - Copy standard audio helpers from [`02-audio-reactivity.md`](02-audio-reactivity.md)
 
@@ -72,10 +75,10 @@ const SAMPLE_SHADERS = { ...TEST_SHADERS, ...SHADERS, ...SHADERS2 };
 
 ```bash
 cd /path/to/pianoscope-visualizer
-npx serve .
+python3 -m http.server 8747
 ```
 
-Open `http://localhost:3000` (or printed port). **Avoid `file://`** — ES module imports may fail.
+Open `http://localhost:8747`. **Avoid `file://`** — ES module imports may fail.
 
 Enable mic when testing audio reactivity.
 
@@ -88,7 +91,7 @@ Enable mic when testing audio reactivity.
 **Console:**
 
 ```js
-setShaderByName("PIANOSCOPE Afrohouse Mudcloth Bloom")
+setShaderByName("PIANOSCOPE Hairpin")
 getCurrentShaderInfo()
 ```
 
@@ -100,7 +103,6 @@ getCurrentShaderInfo()
 
 1. One genre shader at a time
 2. Visual approval before next genre
-3. Order: Afrotech Settlement → Mudcloth → Kente → Cornrow
 
 See [`06-genre-shader-recipes.md`](06-genre-shader-recipes.md) for per-genre specs.
 
@@ -110,4 +112,4 @@ See [`06-genre-shader-recipes.md`](06-genre-shader-recipes.md) for per-genre spe
 
 Only when fixing a **broken compile** for an existing Shadertoy port — not for new PIANOSCOPE work.
 
-Read **Porting Shadertoy library shaders** in `PIANOSCOPE_SHADER_LEARNINGS.md` first. Error line numbers include preamble offset (~30 lines).
+Read **Porting Shadertoy library shaders** in `PIANOSCOPE_SHADER_LEARNINGS.md` first. Compiler error line numbers are your own shader's line numbers (the converter emits `#line` directives).

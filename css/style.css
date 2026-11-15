@@ -77,6 +77,19 @@ h1 {
     font-weight: 300;
 }
 
+/* Audio input picker, sits beside the mic button */
+.mic-device {
+    max-width: 180px;
+    height: 46px;
+    padding: 0 10px;
+    font-family: inherit;
+    font-size: 14px;
+    color: #eee;
+    background: #1a1a22;
+    border: 1px solid #444;
+    border-radius: 8px;
+}
+
 /* Modern button styling */
 button {
     padding: 12px 24px;
@@ -212,6 +225,17 @@ body.pure-view-mode .logo {
 body.pure-view-mode canvas {
     height: 100% !important;
     width: 100%;
+}
+
+/* Fullscreen covers the whole document so the display-text overlay canvas
+   comes along with the visualizer; everything that is not a canvas stays out
+   of the picture, as it did when only the visualizer canvas went fullscreen. */
+:root:fullscreen body > :not(canvas) {
+    display: none !important;
+}
+
+:root:fullscreen body > canvas {
+    height: 100% !important;
 }
 
 /* Show a minimal menu on hover in pure view mode */

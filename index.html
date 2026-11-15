@@ -20,8 +20,7 @@
          interpolate at runtime; `@50..150,100..900` returns the real variable file.
          Verified by pulling the woff2 the API serves and checking for fvar. -->
     <link href="https://fonts.googleapis.com/css2?family=Anton&family=Anybody:wdth,wght@50..150,100..900&family=Bagel+Fat+One&family=Bricolage+Grotesque:opsz,wdth,wght@12..96,75..100,200..800&family=Instrument+Serif:ital@1&family=Inter:wght@300;400;500;600;700&family=Inter+Tight:wght@800&family=Oswald:wght@700&family=Space+Mono:wght@400;700&family=Saira:wdth,wght@50..125,100..900&family=Syne:wght@400..800&family=Unbounded:wght@200..900&display=swap" rel="stylesheet">
-</head>
-<style>
+    <style>
 @font-face {
     font-family: 'Akira Expanded';
     src: local('Akira Expanded'),
@@ -40,7 +39,16 @@
     height: 2rem;
     width: 3rem;
 }
+
+.logo-img {
+    position: absolute;
+    top: 0;
+    left: 0;
+    height: 2rem;
+    width: 3rem;
+}
 </style>
+</head>
 <body>
     <!-- Main visualization canvas -->
     <canvas id="visualizer"></canvas>
@@ -49,7 +57,7 @@
     <h1 class="main-text">Please allow the use of your microphone</h1>
     <h1 class="sub-text"></h1>
     <div class="logo">
-        <img style="padding-left:8px" src="images/pianoscope-logo.png" alt="" class="logo">
+        <img style="padding-left:8px" src="images/pianoscope-logo-small.png" alt="" class="logo-img">
         <h6 style="padding-top:10px" >Pianoscope</h6>
     </div>
     <!-- Updated Controls -->
@@ -64,8 +72,8 @@
     <div id="status" class="status"></div>
 
     <!-- Load scripts in correct order -->
-    <script type="module" src="js/shaders.js"></script>
     <script type="module" src="js/shadertoy-converter.js"></script>
+    <script src="js/gl-shared.js"></script>
     <script src="js/perf.js"></script>
     <script src="js/display-text.js"></script>
     <script src="js/text-sequencer.js"></script>
@@ -78,40 +86,26 @@
 
     <script>
         // Error handler to catch and display JS errors
+        const MAX_ERROR_ENTRIES = 5;
+        let errorLogHideTimer = 0;
+
         window.addEventListener('error', function (event) {
             const errorLog = document.getElementById('error-log');
             errorLog.style.display = 'block';
-            errorLog.innerHTML += event.message + '<br>';
+            const errorDiv = document.createElement('div');
+            errorDiv.textContent = event.message;
+            errorLog.appendChild(errorDiv);
+            while (errorLog.childElementCount > MAX_ERROR_ENTRIES) {
+                errorLog.firstElementChild.remove();
+            }
             console.error(event.error);
 
-            // Auto-hide after 10 seconds
-            setTimeout(() => {
+            // Hide 10 seconds after the most recent error, then start fresh
+            clearTimeout(errorLogHideTimer);
+            errorLogHideTimer = setTimeout(() => {
                 errorLog.style.display = 'none';
+                errorLog.replaceChildren();
             }, 10000);
-        });
-
-        // Update button icons when mic state changes
-        document.addEventListener('DOMContentLoaded', function () {
-            const micToggle = document.getElementById('mic-toggle');
-            if (micToggle) {
-                const originalClickHandler = micToggle.onclick;
-
-                micToggle.onclick = function () {
-                    // Call the original handler
-                    if (originalClickHandler) {
-                        originalClickHandler.call(this);
-                    }
-
-                    // Update the icon based on the button's class
-                    setTimeout(() => {
-                        if (micToggle.classList.contains('red-button')) {
-                            micToggle.innerHTML = '<i class="fas fa-microphone-slash"></i><span>&nbsp;Stop Listen</span>';
-                        } else {
-                            micToggle.innerHTML = '<i class="fas fa-microphone"></i><span>&nbsp;Start Listen</span>';
-                        }
-                    }, 50);
-                };
-            }
         });
     </script>
     <!-- Pure View Toggle Button -->
@@ -138,6 +132,7 @@
     <script src="js/video-cache.js"></script>
     <script src="js/video-library.js"></script>
     <script src="js/video-effects.js"></script>
+    <script src="js/person-mask.js"></script>
     <script src="js/video-controller.js"></script>
 </body>
 

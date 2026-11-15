@@ -5,11 +5,13 @@ document.addEventListener('DOMContentLoaded', function() {
     const miniFullscreen = document.getElementById('mini-fullscreen');
     const miniShaderToggle = document.getElementById('mini-shader-toggle');
     const mainMicToggle = document.getElementById('mic-toggle');
-    const canvas = document.getElementById('visualizer');
     const body = document.body;
 
+    // The document goes fullscreen rather than the visualizer canvas, so the
+    // display-text overlay canvas beside it stays in the picture. style.css
+    // hides everything else while fullscreen.
     function toggleFullscreen() {
-        const target = canvas || document.documentElement;
+        const target = document.documentElement;
         if (document.fullscreenElement) {
             document.exitFullscreen();
         } else if (target.requestFullscreen) {
@@ -122,6 +124,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const isTyping = active && (
             active.tagName === 'INPUT' ||
             active.tagName === 'TEXTAREA' ||
+            active.tagName === 'SELECT' ||
             active.isContentEditable
         );
 
@@ -131,14 +134,14 @@ document.addEventListener('DOMContentLoaded', function() {
             // Ctrl+P for pure view toggle
             togglePureViewMode();
             e.preventDefault(); // Prevent browser print dialog
-        } else if ((e.key === 'm' || e.key === 'M') && !isTyping) {
+        } else if ((e.key === 'm' || e.key === 'M') && !isTyping && !e.metaKey && !e.ctrlKey && !e.altKey) {
             e.preventDefault();
             if (miniMicToggle) {
                 miniMicToggle.click();
             } else if (mainMicToggle) {
                 mainMicToggle.click();
             }
-        } else if ((e.key === 'f' || e.key === 'F') && !isTyping) {
+        } else if ((e.key === 'f' || e.key === 'F') && !isTyping && !e.metaKey && !e.ctrlKey && !e.altKey) {
             e.preventDefault();
             toggleFullscreen();
         }

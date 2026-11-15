@@ -78,7 +78,7 @@ grep "truchet" js/shaders.js
 When a library shader fails to compile:
 
 1. Read `PIANOSCOPE_SHADER_LEARNINGS.md` § Porting Shadertoy library shaders
-2. Map error line to **full** compiled source (preamble offset)
+2. Map error line to **full** compiled source (error lines are your own; the converter emits `#line`)
 3. Common fix: `vec2(3.0) - 2.0 * diff` in noise smoothsteps
 4. Common fix: `uniform vec3 iResolution` in preamble
 

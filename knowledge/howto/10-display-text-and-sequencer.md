@@ -86,11 +86,12 @@ Declared in the `WEBGL_PREAMBLE` in `js/shadertoy-converter.js`, so every shader
 | `iTextWords[8]` | per-word rects `(x0,y0,x1,y1)` in sheet UV, slot A |
 | `iTextWordCount` | how many of those are live |
 
-Every uniform is wired in **three** places. Miss one and it silently reads zero:
+Every uniform is wired in **two** places. Miss one and it silently reads zero:
 
 1. `js/shadertoy-converter.js` — the preamble declaration
-2. `js/visualizer-with-shadertoy.js` — `getShaderUniforms()` cache **and** the per-frame setter
-3. `js/kiosk-mode.js` — its own `kioskUniforms` cache **and** its own per-frame setter
+2. `js/gl-shared.js` — `UNIFORM_NAMES`, and `applyFrameUniforms()` if it is set per frame
+
+Both windows (operator and projector) run `gl-shared.js`, so a uniform added there reaches both. A new **sampler** still needs binding in each window, because the projector copies textures into its own context: `bindTextureChannels()` in `js/visualizer-with-shadertoy.js` and `bindChannels()` in `js/kiosk-window.js`.
 
 ---
 
@@ -103,8 +104,9 @@ Every uniform is wired in **three** places. Miss one and it silently reads zero:
 | `js/text-seq-glsl.js` | Shared `seqSample` GLSL, injected by the converter |
 | `js/test-shaders.js` | Word Ladder (`SEQ_LINE`); Kick Afterglow (`SEQ_COVER`, original size); Chrome Stage removed |
 | `js/shadertoy-converter.js` | Preamble uniforms + injects `SEQ_GLSL` before `mainImage` + sidebar |
-| `js/visualizer-with-shadertoy.js` | Binds unit 4, sets the new uniforms |
-| `js/kiosk-mode.js` | Second texture for the fitted sheet, forwards all new uniforms |
+| `js/gl-shared.js` | Uniform table and per-frame uniform setter, shared by both windows |
+| `js/visualizer-with-shadertoy.js` | Binds unit 4 in the operator's window |
+| `js/kiosk-window.js` | Projector window (`kiosk.html`): its own copy of the fitted sheet on unit 4 |
 | `css/shader-sidebar.css` | Transport styling (`.seq-transport`, `.seq-btn`, `.seq-num`) |
 | `index.html` | Loads `text-sequencer.js` after `display-text.js` |
 

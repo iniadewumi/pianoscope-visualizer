@@ -1318,8 +1318,8 @@ window.PianoscopeDisplayText = (function () {
         }).join('|');
     }
 
-    function commitVisuals() {
-        paintOverlay();
+    function commitVisuals(options) {
+        if (!options || options.overlay !== false) paintOverlay();
         const font = activeFont();
         const linesA = autoWrap(splitLines(currentText, false), font);
 
@@ -1458,7 +1458,9 @@ window.PianoscopeDisplayText = (function () {
             scrambleTimer = setInterval(function () {
                 if (!settlePending) { clearInterval(scrambleTimer); scrambleTimer = 0; return; }
                 morph = currentMorph();
-                commitVisuals();
+                // Only the sheets carry the scrambling incoming text. The overlay
+                // shows the resting text, which a tick never changes.
+                commitVisuals({ overlay: false });
             }, 1000 / SCRAMBLE_FPS);
         }
         return next;
@@ -1640,6 +1642,23 @@ window.PianoscopeDisplayText = (function () {
         }
     }
 
+    /**
+     * After a lost WebGL context both sheet textures are dead handles. Drop them
+     * without deleting (the driver already freed them), make new ones, and clear
+     * the "already uploaded" state so the current copy is re-rastered into them.
+     * Unlike init() this leaves the overlay, stored settings and fonts alone.
+     */
+    function reinit(webgl) {
+        gl = webgl;
+        legacyTexture = makeTexture();
+        uploadBlack(legacyTexture, 'legacy');
+        fitTexture = makeTexture();
+        uploadBlack(fitTexture, 'fit');
+        // legacyKey gates the fixed sheet's upload; empty never matches a real key.
+        legacyKey = '';
+        commitVisuals({ overlay: false });
+    }
+
     const api = {
         STORAGE_KEY: STORAGE_KEY,
         FONTS: FONTS,
@@ -1647,6 +1666,7 @@ window.PianoscopeDisplayText = (function () {
         TRANSITIONS: TRANSITIONS,
         MAX_WORDS: MAX_WORDS,
         init: init,
+        reinit: reinit,
         applyText: applyText,
         setFont: setFont,
         getFont: function () { return currentFontId; },

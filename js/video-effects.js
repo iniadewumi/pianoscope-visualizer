@@ -30,6 +30,10 @@ uniform vec3 iChannelResolution[4];
 uniform vec2 iVideoResolution;
 uniform float iFitMode;
 uniform float iVideoMirror;
+// 1.0 on draws where a new source frame was uploaded. A camera runs at ~30 fps
+// under a 60-120 fps loop, so anything that differences or scrolls per frame
+// must step on this rather than on every draw.
+uniform float iVideoNewFrame;
 
 // --- Audio helpers (knowledge/howto/02-audio-reactivity.md) ---
 float fft(float x) {
@@ -1264,6 +1268,235 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
     // col = vec3(col.b);   // deviation over mean on its own
 
     fragColor = vec4(col * videoInside(uv), 1.0);
+}
+`,
+
+        "Motion Trails": `
+/*
+Mode: live frame with glowing trails behind whatever moves. On a kick the plate
+      holds: it stops taking new pixels and movement drags the old ones along the
+      way it moved, a cheap datamosh that only tears while someone is moving.
+      Buffer: RGB = trail plate, A = last camera frame's luma, offset so 0 = empty
+Audio: bass = hold + trail tint; mid = trail length; high = drag distance
+Steps once per camera frame (iVideoNewFrame), so trail length does not depend on
+the display's refresh rate.
+*/
+#define TRAIL_KEEP      0.80    // share of the old trail kept per camera frame, at rest
+#define TRAIL_KEEP_MID  0.14    // ... added by mid
+#define MOTION_LO       0.03    // luma change between camera frames that counts as movement
+#define MOTION_HI       0.16
+#define DRAG_PX         1.5     // how far movement drags the plate, px per camera frame
+#define DRAG_HIGH       5.0     // ... added by high
+#define HOLD_LO         0.55    // raw kick where the hold starts
+#define HOLD_HI         0.85
+#define TRAIL_TINT      vec3(1.00, 0.62, 0.30)
+#define LUMA_FLOOR      0.02
+
+float packLuma(float l)   { return LUMA_FLOOR + (1.0 - LUMA_FLOOR) * clamp(l, 0.0, 1.0); }
+float unpackLuma(float a) { return (a - LUMA_FLOOR) / (1.0 - LUMA_FLOOR); }
+
+// Centre-weighted cross, so single-pixel sensor noise does not read as movement.
+float crossLuma(vec2 uv, vec2 px) {
+    return (videoLuma(uv) * 2.0
+        + videoLuma(uv + vec2(px.x, 0.0)) + videoLuma(uv - vec2(px.x, 0.0))
+        + videoLuma(uv + vec2(0.0, px.y)) + videoLuma(uv - vec2(0.0, px.y))) / 6.0;
+}
+
+// Raw FFT, never the time fallback: a silent room must not freeze the picture.
+float holdAmount() {
+    return smoothstep(HOLD_LO, HOLD_HI, audioBoost(getBass()));
+}
+
+vec4 advance(vec2 uv, vec2 px) {
+    vec4 prev = feedbackAt(uv);
+    float lum = crossLuma(uv, px);
+
+    if (prev.a < LUMA_FLOOR * 0.5) return vec4(videoAt(uv), packLuma(lum));
+    if (iVideoNewFrame < 0.5) return prev;
+
+    float mid  = audioBoost(safeAudio(getMid(),  fallbackMid()));
+    float high = audioBoost(safeAudio(getHigh(), fallbackHigh()));
+    float hold = holdAmount();
+
+    // Normal flow: the one component of motion a single frame pair can see is
+    // along the luma gradient, signed by whether the pixel got brighter or darker.
+    // Only its direction is used; the distance comes from the tuning above.
+    float dt = lum - unpackLuma(prev.a);
+    vec2 grad = vec2(
+        videoLuma(uv + vec2(2.0 * px.x, 0.0)) - videoLuma(uv - vec2(2.0 * px.x, 0.0)),
+        videoLuma(uv + vec2(0.0, 2.0 * px.y)) - videoLuma(uv - vec2(0.0, 2.0 * px.y)));
+    vec2 flow = -dt * grad;
+    vec2 dir = flow / max(length(flow), 1.0e-5);
+    float motion = smoothstep(MOTION_LO, MOTION_HI, abs(dt));
+
+    vec2 drag = dir * motion * (DRAG_PX + DRAG_HIGH * high) * px;
+    vec3 dragged = feedbackAt(uv - drag).rgb;
+
+    float keep = mix(TRAIL_KEEP + TRAIL_KEEP_MID * mid, 1.0, hold);
+    return vec4(mix(videoAt(uv), dragged, keep), packLuma(lum));
+}
+
+void mainImage(out vec4 fragColor, in vec2 fragCoord) {
+    vec2 uv = fragCoord / iResolution.xy;
+    vec2 px = 1.0 / iResolution.xy;
+
+    if (iWriteFeedback > 0.5) {
+        fragColor = advance(uv, px);
+        return;
+    }
+
+    float bass = audioBoost(safeAudio(getBass(), fallbackBass()));
+    float hold = holdAmount();
+
+    vec3 live = videoAt(uv);
+    vec4 plate = feedbackAt(uv);
+    vec3 trail = plate.a < LUMA_FLOOR * 0.5 ? live : plate.rgb;
+
+    // Lighten, not mix: the live frame always shows at full strength and the
+    // trail only adds where it is brighter, so a mover is never see-through.
+    // The tint keeps a still frame's trail (== the frame) under the live one.
+    vec3 tinted = trail * mix(vec3(1.0), TRAIL_TINT, 0.35 + 0.45 * bass);
+    vec3 col = max(live, tinted);
+    col = mix(col, trail, hold);
+
+    fragColor = vec4(clamp(col, 0.0, 1.0) * videoInside(uv), 1.0);
+}
+`,
+
+        "Slit-Scan Loom": `
+/*
+Mode: slit-scan weave. A thin slit at the centre of the frame is fed in at the
+      edge of each band and scrolls across, so the picture becomes time laid out
+      sideways: a still body draws straight stripes, a moving arm rakes colour
+      through them. Alternate bands run in opposite directions, weft passing
+      both ways. Starts from the live frame and is woven over from the edges.
+Audio: bass = scroll speed; mid = slit width (wider squeezes more of the centre
+       into each strip); high = how much of the live frame shows through
+Steps once per camera frame, by whole pixels, so nothing blurs as it scrolls.
+*/
+#define BANDS        8.0
+#define SHIFT_PX     3.0     // scroll per camera frame at 1080p, at rest
+#define SHIFT_BASS   9.0     // ... added on a kick
+#define SLIT         0.004   // slit width as a fraction of the frame, at rest
+#define SLIT_MID     0.030   // ... added by mid
+#define LIVE_MIX     0.00
+#define LIVE_HIGH    0.22
+#define SELVEDGE     0.55    // darkening of the seam between bands
+
+float shiftPx() {
+    float bass = audioBoost(safeAudio(getBass(), fallbackBass()));
+    float kick = smoothstep(0.30, 0.85, bass);
+    return max(1.0, floor((SHIFT_PX + SHIFT_BASS * kick) * iResolution.y / 1080.0));
+}
+
+vec4 advance(vec2 fragCoord) {
+    vec2 res = iResolution.xy;
+    vec2 uv = fragCoord / res;
+    vec4 prev = feedbackAt(uv);
+
+    if (prev.a < 0.5) return vec4(videoAt(uv), 1.0);
+    if (iVideoNewFrame < 0.5) return prev;
+
+    float mid = audioBoost(safeAudio(getMid(), fallbackMid()));
+    float slit = SLIT + SLIT_MID * mid;
+    float shift = shiftPx();
+    float leftward = 1.0 - mod(floor(uv.y * BANDS), 2.0);
+
+    // Leftward bands are fed at the right edge, rightward bands at the left.
+    // Whole-pixel shifts land every read on a texel centre, so the plate never
+    // softens no matter how long it scrolls.
+    float head = leftward > 0.5 ? fragCoord.x - (res.x - shift) : fragCoord.x;
+    if (head >= 0.0 && head < shift) {
+        float t = head / shift;
+        return vec4(videoAt(vec2(0.5 + (t - 0.5) * slit, uv.y)), 1.0);
+    }
+    vec2 from = fragCoord + vec2(leftward > 0.5 ? shift : -shift, 0.0);
+    return vec4(feedbackAt(from / res).rgb, 1.0);
+}
+
+void mainImage(out vec4 fragColor, in vec2 fragCoord) {
+    vec2 uv = fragCoord / iResolution.xy;
+
+    if (iWriteFeedback > 0.5) {
+        fragColor = advance(fragCoord);
+        return;
+    }
+
+    float high = audioBoost(safeAudio(getHigh(), fallbackHigh()));
+
+    vec3 live = videoAt(uv);
+    vec4 plate = feedbackAt(uv);
+    vec3 col = plate.a < 0.5 ? live : plate.rgb;
+    col = mix(col, live, LIVE_MIX + LIVE_HIGH * high);
+
+    float bandPx = iResolution.y / BANDS;
+    float f = fract(uv.y * BANDS);
+    float seam = 1.0 - smoothstep(0.5, 1.5, min(f, 1.0 - f) * bandPx);
+    col *= 1.0 - SELVEDGE * seam;
+
+    fragColor = vec4(clamp(col, 0.0, 1.0), 1.0);
+}
+`,
+
+        "Rutt/Etra Lines": `
+/*
+Mode: Rutt/Etra scan processor. The frame is redrawn as horizontal scanlines,
+      each lifted by the brightness under it, so a face becomes a relief of lines
+      on black rather than a picture
+Audio: bass = lift height; mid = phosphor glow; high = line density
+Fragment-only: each pixel checks the few lines whose lift can reach it, nearest
+first, and keeps the brightest.
+*/
+#define LINE_PX       9.0     // line spacing at 1080p, at rest
+#define LINE_PX_HIGH -3.0     // ... highs pack the lines tighter
+#define LIFT          0.05    // lift at full white, fraction of frame height, at rest
+#define LIFT_BASS     0.09    // ... added by bass
+#define LINE_WIDTH    1.1     // line width in px at 1080p
+#define GLOW          0.30
+#define COLOR_MIX     0.60    // 0 = phosphor only, 1 = the source's own colour
+#define PHOSPHOR      vec3(0.45, 1.00, 0.62)
+// Enough lines to cover the tallest lift at the tightest spacing, plus the glow.
+#define MAX_LINES     32
+
+void mainImage(out vec4 fragColor, in vec2 fragCoord) {
+    vec2 res = iResolution.xy;
+    float scale = res.y / 1080.0;
+
+    float bass = audioBoost(safeAudio(getBass(), fallbackBass()));
+    float mid  = audioBoost(safeAudio(getMid(),  fallbackMid()));
+    float high = audioBoost(safeAudio(getHigh(), fallbackHigh()));
+
+    float spacing = max(3.0, (LINE_PX + LINE_PX_HIGH * high) * scale);
+    float lift = (LIFT + LIFT_BASS * bass) * res.y;
+    float width = LINE_WIDTH * scale;
+    float glowW = width * 4.0;
+
+    float u = fragCoord.x / res.x;
+    float y = fragCoord.y;
+    float dx = 1.0 / res.x;
+
+    vec3 col = vec3(0.0);
+    float first = floor((y + glowW) / spacing);
+    for (int i = 0; i < MAX_LINES; i++) {
+        float baseY = (first - float(i) + 0.5) * spacing;
+        if (baseY < 0.0 || y - baseY > lift + glowW) break;
+
+        vec2 p = vec2(u, baseY / res.y);
+        vec3 src = videoAt(p);
+        float l = dot(src, vec3(0.299, 0.587, 0.114));
+
+        // Distance to the lifted line measured across it, not straight down, so
+        // steep flanks of a bright shape stay as thick as the flat parts.
+        float slope = (videoLuma(p + vec2(dx, 0.0)) - l) * lift;
+        float d = abs(y - (baseY + l * lift)) / sqrt(1.0 + slope * slope);
+
+        float core = 1.0 - smoothstep(width * 0.5, width * 1.5, d);
+        float halo = exp(-d / glowW) * GLOW * (0.4 + mid);
+        vec3 ink = mix(PHOSPHOR * (0.25 + 0.75 * l), src, COLOR_MIX);
+        col = max(col, ink * (core + halo) * videoInside(p));
+    }
+
+    fragColor = vec4(clamp(col, 0.0, 1.0), 1.0);
 }
 `
     };

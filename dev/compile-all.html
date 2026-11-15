@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Pianoscope — compile every shader</title>
+    <style>
+        body { background: #121218; color: #e8e8f0; font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; padding: 20px; }
+        h1 { font-size: 16px; margin: 0 0 4px; }
+        #summary { margin: 8px 0 16px; font-size: 14px; }
+        .ok { color: #7bd88f; }
+        .bad { color: #ff4d6d; }
+        table { border-collapse: collapse; width: 100%; }
+        td { padding: 3px 10px 3px 0; vertical-align: top; border-top: 1px solid #26262f; }
+        td.name { white-space: nowrap; }
+        td.log { color: #ffb3c1; white-space: pre-wrap; }
+    </style>
+</head>
+<body>
+    <!--
+        Compiles and links every library shader and every video effect through
+        the same converter and GL code the app uses, and lists the ones that
+        fail. Open it before a show, or after touching the converter preamble,
+        js/gl-shared.js or a shader:
+
+            python3 -m http.server 8747
+            http://localhost:8747/dev/compile-all.html
+
+        Results are also left on window.compileResults ({ done, total, failed })
+        so a script or a headless browser can read them.
+    -->
+    <h1>Compile every shader</h1>
+    <div id="summary">Starting…</div>
+    <table id="failures"></table>
+
+    <script src="../js/gl-shared.js"></script>
+    <script src="../js/video-effects.js"></script>
+    <script type="module">
+        import '../js/shadertoy-converter.js';
+
+        const GLX = window.PianoscopeGL;
+        const VERTEX = 'attribute vec2 position;\nvoid main() { gl_Position = vec4(position, 0.0, 1.0); }\n';
+
+        const summary = document.getElementById('summary');
+        const table = document.getElementById('failures');
+        const results = window.compileResults = { done: false, total: 0, compiled: 0, failed: [] };
+
+        const canvas = document.createElement('canvas');
+        canvas.width = canvas.height = 16;
+        const gl = canvas.getContext('webgl2', GLX.CONTEXT_ATTRIBUTES);
+
+        function report(kind, name, lines) {
+            results.failed.push({ kind, name, log: lines });
+            const row = table.insertRow();
+            row.insertCell().textContent = kind;
+            const nameCell = row.insertCell();
+            nameCell.className = 'name';
+            nameCell.textContent = name;
+            const logCell = row.insertCell();
+            logCell.className = 'log';
+            logCell.textContent = lines.join('\n');
+        }
+
+        function jobs() {
+            const list = [];
+            const library = window.ShaderConverter.SAMPLE_SHADERS;
+            for (const name of Object.keys(library)) {
+                list.push({
+                    kind: 'shader',
+                    name,
+                    source: () => window.ShaderConverter.convertShaderToyToWebGL(library[name])
+                });
+            }
+            if (window.VideoEffects) {
+                for (const name of window.VideoEffects.names()) {
+                    list.push({ kind: 'effect', name, source: () => window.VideoEffects.build(name) });
+                }
+            }
+            return list;
+        }
+
+        async function run() {
+            if (!gl) {
+                summary.textContent = 'WebGL 2 is not available in this browser.';
+                summary.className = 'bad';
+                results.done = true;
+                return;
+            }
+            const parallel = gl.getExtension('KHR_parallel_shader_compile');
+            const list = jobs();
+            results.total = list.length;
+
+            for (const job of list) {
+                let build = null;
+                try {
+                    build = GLX.startBuild(gl, VERTEX, job.source());
+                    // Yield while the driver works, so the page stays responsive
+                    // and the count below keeps moving.
+                    while (!GLX.buildFinished(gl, parallel, build)) {
+                        await new Promise((resolve) => setTimeout(resolve, 4));
+                    }
+                    if (!GLX.buildLinked(gl, build)) {
+                        report(job.kind, job.name, window.ShaderConverter.formatCompileLog(GLX.buildLog(gl, build)));
+                    }
+                } catch (err) {
+                    report(job.kind, job.name, [String(err && err.message || err)]);
+                } finally {
+                    if (build) GLX.destroyBuild(gl, build);
+                }
+                results.compiled++;
+                summary.textContent = `${results.compiled} / ${results.total} compiled, ${results.failed.length} failed`;
+            }
+
+            results.done = true;
+            summary.className = results.failed.length ? 'bad' : 'ok';
+            summary.textContent = results.failed.length
+                ? `${results.failed.length} of ${results.total} failed to compile`
+                : `All ${results.total} compiled and linked`;
+        }
+
+        run();
+    </script>
+</body>
+</html>

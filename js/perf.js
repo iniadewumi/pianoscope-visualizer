@@ -30,11 +30,15 @@
         // QHD ceiling: 4K projectors scale down, 1080p/Retina laptops stay near
         // native. The old 1920×1080 cap was the main "looks worse" complaint.
         maxPixelCount: 2560 * 1440,
+        // While the kiosk is open the room watches the projector, and both
+        // windows draw the same shader on one GPU. The operator's preview drops
+        // to this fraction of its resolution so the projector gets the headroom.
+        previewScaleWithKiosk: 0.5,
         fpsCap: 0,
         hud: false
     };
 
-    const HEAVY_NAME = /kaliset|mandelbulb|fireworks|elevator|hyperloop|kente loom|^fish$/i;
+    const HEAVY_NAME = /kaliset|mandelbulb|fireworks|elevator|hyperloop|^fish$/i;
 
     /**
      * Heuristic fill-rate bias from source + label. 1 is full resolution;
@@ -124,6 +128,20 @@
             this.lastMs = 0;
 
             // Clear any disjoint state left over from before we started.
+            if (this.supported) gl.getParameter(this.ext.GPU_DISJOINT_EXT);
+        }
+
+        /**
+         * After a context loss every query object and the extension object are
+         * dead. Forget them without deleting and fetch the extension again.
+         */
+        reset() {
+            const gl = this.gl;
+            this.ext = gl.getExtension ? gl.getExtension('EXT_disjoint_timer_query_webgl2') : null;
+            this.supported = !!(this.ext && typeof gl.createQuery === 'function');
+            this.free = [];
+            this.pending = [];
+            this.active = null;
             if (this.supported) gl.getParameter(this.ext.GPU_DISJOINT_EXT);
         }
 
@@ -291,6 +309,15 @@
         shaderBias: 1,
         _costLabel: 'light',
         _resolutionDirty: false,
+        _kioskLive: false,
+
+        // Projector feedback (see attachProjector). Times are performance.now()
+        // in this window, so a closed or stalled projector simply ages out.
+        projectorGpuMs: 0,
+        projectorFrameMs: 0,
+        _projectorSeenMs: 0,
+        _projectorGpuSupported: false,
+        _projectorWasLive: false,
 
         attach(gl, canvas, onScaleChange) {
             this.gl = gl;
@@ -308,18 +335,24 @@
             return this;
         },
 
-        /** Device pixels per CSS pixel that the drawing buffer should use. */
-        pixelRatio() {
-            const dpr = window.devicePixelRatio || 1;
-            return Math.min(dpr, this.settings.dprCap) * this.settings.scale * this.shaderBias;
+        /**
+         * Device pixels per CSS pixel that the drawing buffer should use.
+         * @param {number} [dpr] density of the screen being drawn to. Defaults
+         *   to this window's; the kiosk passes its own because it sits on a
+         *   different screen, and a Retina laptop's density applied to a 1080p
+         *   projector renders ~1.8x the pixels the projector can show.
+         */
+        pixelRatio(dpr) {
+            const density = dpr || window.devicePixelRatio || 1;
+            return Math.min(density, this.settings.dprCap) * this.settings.scale * this.shaderBias;
         },
 
         /**
          * Drawing-buffer size for a CSS box. Applies DPR cap, adaptive scale,
          * shader bias, then the absolute pixel ceiling.
          */
-        bufferSize(cssWidth, cssHeight) {
-            const ratio = this.pixelRatio();
+        bufferSize(cssWidth, cssHeight, dpr) {
+            const ratio = this.pixelRatio(dpr);
             let width = Math.max(1, Math.round(cssWidth * ratio));
             let height = Math.max(1, Math.round(cssHeight * ratio));
             const maxPx = this.settings.maxPixelCount || 0;
@@ -329,6 +362,36 @@
                 height = Math.max(1, Math.round(height * shrink));
             }
             return { width: width, height: height };
+        },
+
+        /** Fraction of full resolution the operator's own canvas renders at. */
+        previewScale() {
+            if (!this._kioskLive) return 1;
+            return clamp(this.settings.previewScaleWithKiosk || 1, 0.25, 1);
+        },
+
+        /**
+         * bufferSize for the operator's canvas, reduced while the kiosk is live.
+         * The kiosk sizes itself through bufferSize() directly, so the
+         * projector never sees this reduction.
+         */
+        previewBufferSize(cssWidth, cssHeight) {
+            const size = this.bufferSize(cssWidth, cssHeight);
+            const factor = this.previewScale();
+            if (factor >= 1) return size;
+            return {
+                width: Math.max(1, Math.round(size.width * factor)),
+                height: Math.max(1, Math.round(size.height * factor))
+            };
+        },
+
+        /** Called every frame with whether a kiosk window is open; acts on change. */
+        setKioskLive(live) {
+            live = !!live;
+            if (live === this._kioskLive) return;
+            this._kioskLive = live;
+            this.invalidate();
+            this._resolutionDirty = true;
         },
 
         markResolutionDirty() {
@@ -371,23 +434,77 @@
             this.gpuTimer.end();
         },
 
+        /**
+         * Lets the projector window feed the controller with its own frames.
+         * Called from the kiosk window, so the driver closes over Perf rather
+         * than relying on `this`, and is built once so frames allocate nothing.
+         * @param {WebGL2RenderingContext} gl the projector's context
+         */
+        attachProjector(gl) {
+            const timer = new GpuTimer(gl);
+            Perf._projectorGpuSupported = timer.supported;
+            return {
+                beginGpuWork() { timer.begin(); },
+                endGpuWork() { timer.end(); },
+                endFrame(frameMs) {
+                    const gpuMs = timer.poll();
+                    Perf.projectorGpuMs = gpuMs;
+                    Perf.projectorFrameMs = frameMs;
+                    Perf._projectorSeenMs = performance.now();
+                    Perf._projectorGpuSupported = timer.supported;
+
+                    const next = Perf.controller.update(frameMs, gpuMs, timer.supported);
+                    if (next) {
+                        Perf.settings.scale = next;
+                        // The operator's preview follows on its next frame; the
+                        // projector re-reads bufferSize() at the top of its own.
+                        Perf._resolutionDirty = true;
+                    }
+                },
+                invalidate() { Perf.invalidate(); }
+            };
+        },
+
+        /** True while a projector driver has reported a frame in the last 500 ms. */
+        projectorLive() {
+            return this._projectorSeenMs > 0 && performance.now() - this._projectorSeenMs < 500;
+        },
+
         endFrame() {
             this.cpuMs = performance.now() - this._frameStart;
             this.gpuMs = this.gpuTimer.poll();
 
-            const next = this.controller.update(this.frameMs, this.gpuMs, this.gpuTimer.supported);
-            if (next) {
-                this.settings.scale = next;
-                // Apply on the *next* frame, before that draw. Changing
-                // canvas.width after present clears the backbuffer and the
-                // compositor shows a blank frame — the flash users saw.
-                this._resolutionDirty = true;
+            // The projector is what the room sees, so its frames steer when it is
+            // open. The controller keeps one set of samples; feeding it from two
+            // windows on two displays would mix two different workloads.
+            const live = this.projectorLive();
+            if (live !== this._projectorWasLive) {
+                this._projectorWasLive = live;
+                // Projector gone: start a fresh window for our own workload.
+                if (!live) this.invalidate();
+            }
+
+            if (!live) {
+                const next = this.controller.update(this.frameMs, this.gpuMs, this.gpuTimer.supported);
+                if (next) {
+                    this.settings.scale = next;
+                    // Apply on the *next* frame, before that draw. Changing
+                    // canvas.width after present clears the backbuffer and the
+                    // compositor shows a blank frame — the flash users saw.
+                    this._resolutionDirty = true;
+                }
             }
 
             if (this.settings.hud && this._frameStart > this._hudNextUpdate) {
                 this._hudNextUpdate = this._frameStart + 250;
                 this._renderHud();
             }
+        },
+
+        /** The operator's GL context was restored; its timer queries are gone. */
+        onContextRestored() {
+            if (this.gpuTimer) this.gpuTimer.reset();
+            this.invalidate();
         },
 
         /** Called on resize and shader switch so the controller re-measures. */
@@ -487,6 +604,18 @@
                 `pxcap  ${(this.settings.maxPixelCount / 1e6).toFixed(2)} MP  cost ${this._costLabel} \u00d7${this.shaderBias.toFixed(2)}`,
                 `mode   ${this.settings.adaptive ? 'adaptive' : 'manual'}${this.settings.fpsCap ? '  cap ' + this.settings.fpsCap : ''}`
             ];
+
+            if (this._kioskLive) {
+                lines.push(`kiosk  live, preview ×${this.previewScale().toFixed(2)}`);
+            }
+
+            if (this.projectorLive()) {
+                const pfps = this.projectorFrameMs > 0 ? 1000 / this.projectorFrameMs : 0;
+                const pgpu = this._projectorGpuSupported
+                    ? `gpu ${this.projectorGpuMs.toFixed(2)} ms`
+                    : 'gpu n/a';
+                lines.push(`proj   ${pfps.toFixed(0)} fps  ${pgpu}  (steering)`);
+            }
 
             if (this._shaderLabel) {
                 lines.push(`shader ${this._shaderLabel.slice(0, 22)}`);

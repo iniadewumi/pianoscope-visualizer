@@ -14,7 +14,7 @@
 | — | [`KEYWORDS.md`](KEYWORDS.md) | Tag → file lookup (grep / semantic search entry point) |
 | 1 | [`howto/01-repo-and-workflow.md`](howto/01-repo-and-workflow.md) | Where code lives, how to run, test, ship shaders |
 | 2 | [`howto/02-audio-reactivity.md`](howto/02-audio-reactivity.md) | `iChannel0`, FFT helpers, gains, fallback motion |
-| 3 | [`howto/03-glsl-webgl-constraints.md`](howto/03-glsl-webgl-constraints.md) | WebGL 1 rules, compile pipeline, error line numbers |
+| 3 | [`howto/03-glsl-webgl-constraints.md`](howto/03-glsl-webgl-constraints.md) | GLSL rules (WebGL 2 / GLSL ES 3.00), compile pipeline, error line numbers |
 | 4 | [`howto/04-pattern-tiling-truchet.md`](howto/04-pattern-tiling-truchet.md) | Book of Shaders Ch. 09 — grids, brick offset, Truchet |
 | 5 | [`howto/05-iquilez-sdf-noise-warp.md`](howto/05-iquilez-sdf-noise-warp.md) | IQ articles — SDF 2D, fBM, warp, Voronoise, palettes |
 | 6 | [`howto/06-genre-shader-recipes.md`](howto/06-genre-shader-recipes.md) | Per-genre architecture, palette, audio mapping, status |
