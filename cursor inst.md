@@ -49,7 +49,7 @@ const SAMPLE_SHADERS = { ...TEST_SHADERS, ...SHADERS, ...SHADERS2 };
 
 3. Use human-readable display names as object keys (matching existing style in `shaders.js`, e.g. `"Pianoscope Text"`).
 
-4. Write shaders in **Shadertoy style** with `void mainImage(out vec4 fragColor, in vec2 fragCoord)`. The converter prepends WebGL uniforms and appends a `main()` wrapper. It also rewrites `texture(` → `texture2D(` for WebGL 1.0 — write `texture()` in source as you would on Shadertoy.
+4. Write shaders in **Shadertoy style** with `void mainImage(out vec4 fragColor, in vec2 fragCoord)`. The converter prepends WebGL uniforms and appends a `main()` wrapper. Old `texture2D(...)` and `gl_FragColor` are still mapped, but write `texture()` in source as you would on Shadertoy.
 
 5. Do **not** add `precision`, `uniform` declarations, or `void main()` — those are injected by `shadertoy-converter.js`.
 
@@ -83,7 +83,7 @@ float high = texture(iChannel0, vec2(0.70, 0.0)).x;
 
 ## Local dev and UI
 
-- **ES modules**: serve the repo over HTTP (`npx serve .`, `python -m http.server`, etc.). Opening `index.html` as `file://` will break imports.
+- **ES modules**: serve the repo over HTTP (`python3 -m http.server 8747`, then open `http://localhost:8747`). Opening `index.html` as `file://` will break imports.
 - **Microphone**: requires user gesture + browser permission. Works on `localhost` or HTTPS. Click **Start Listen** before judging audio reactivity.
 - **Shader editor**: click the **code icon** (bottom-right) to open the Shadertoy editor panel. Search dropdown lists all `SAMPLE_SHADERS` keys. **Apply Shader** or `Ctrl+Enter` in the textarea compiles and runs the pasted/edited source.
 - **Keyboard navigation**: `←` / `→` cycles shaders. Index `-1` is the default shader `"Pianoscope Text"` (from `shaders.js`, not `TEST_SHADERS`). Prepended `TEST_SHADERS` keys are first in the cycle after the default.
@@ -108,14 +108,14 @@ Shader frequency helpers should sample **`y = 0.0` only**. Many older entries in
 
 ## GLSL compatibility (common compile failures)
 
-The runtime targets **WebGL 2 with WebGL 1 fallback**. Store shaders as raw Shadertoy `mainImage` bodies; conversion happens at load time.
+The runtime is **WebGL 2 only** (GLSL ES 3.00); there is no WebGL 1 fallback. Store shaders as raw Shadertoy `mainImage` bodies; conversion happens at load time.
 
 | Do | Don't (for V1 PIANOSCOPE shaders) |
 |----|-----------------------------------|
 | Write `texture(iChannel0, …)` in source | Pre-convert to WebGL or add your own `uniform` / `main()` |
 | Use `mainImage(out vec4 fragColor, in vec2 fragCoord)` | `texelFetch`, multipass buffers, `iWriteFeedback` |
 | Keep fragment loops ≤ ~64 iterations, constant bounds | Heavy raymarching, nested high-count loops |
-| Use `float` loop indices or small fixed `for (int i = 0; i < N; i++)` | Dynamic loop limits that fail on WebGL 1 |
+| Use `float` loop indices or small fixed `for (int i = 0; i < N; i++)` | Unbounded or very high-count loops (performance) |
 | Escape `` ` `` and `${` inside JS template strings | Raw backticks inside shader strings without escaping |
 
 Uniform types injected by the converter (note: **`iFrame` is `float`**, not `int`):
@@ -128,7 +128,7 @@ uniform float iFrame;
 uniform vec4 iMouse;  // Y is flipped to match WebGL coords
 ```
 
-`shadertoy-converter.js` maps `texture` → `texture2D`, and on WebGL 2 also defines `texture2D` → `texture`. `textureLod` / `textureCube` aliases exist in the preamble — but prefer simple `texture()` calls.
+`shadertoy-converter.js` maps old `texture2D` → `texture`. `textureLod` / `textureCube` aliases exist in the preamble — but prefer simple `texture()` calls.
 
 ## Script load order
 

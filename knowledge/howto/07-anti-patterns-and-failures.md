@@ -25,9 +25,6 @@
 | Avoid | Symptom | Do instead |
 |-------|---------|------------|
 | Edge-only recursive `mod2` | Dot grid / halftone kaleidoscope | Explicit layers + **fill+stroke** |
-| `fwidth()` on WebGL 1 paths | Compile fail / inconsistent AA | `smoothstep` fixed feather ~0.003 UV |
-| Global `const float` | WebGL 1 compile error | `#define` |
-| `out` params in helpers | WebGL 1 failures | Return packed `vec3` |
 | Bokeh/grid sparks `floor(uv*N)` | Full-screen noise | Sparks at **semantic positions** only |
 | `iChannel0` at `y=0.25` | Wrong frequency data | Always `y=0.0` |
 | Rewriting after v3 works | Lose fill/stroke foundation | Polish winning architecture |

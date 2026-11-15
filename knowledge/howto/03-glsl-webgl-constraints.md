@@ -1,21 +1,20 @@
 # GLSL & WebGL Constraints
 
-**Keywords:** WebGL 1, compile, iResolution, vec3, preamble, texture2D, loops, feedback
+**Keywords:** WebGL 2, GLSL ES 3.00, compile, iResolution, vec3, preamble, texture2D, loops, feedback
 
 **Use when:** Shader fails to compile; porting from Shadertoy (including multi-buffer ones); mixed vec2/vec3 errors.
 
 ---
 
-## WebGL 1 rules (this project)
+## GLSL rules (WebGL 2 / GLSL ES 3.00)
+
+The app is WebGL 2 only; every shader compiles as `#version 300 es`. Global `const float`, `out`/`inout` params, `bool`, `fwidth()`/`dFdx()`/`dFdy()` and non-constant integer loop bounds are all legal.
 
 | Issue | Fix |
 |-------|-----|
-| `texture()` in source | Converter rewrites to `texture2D` |
-| Global `const float` | Use `#define` |
-| `out` parameters in helpers | Return `vec3` packs instead |
-| `bool` in helpers | Use `float` flags `0.0` / `1.0` |
-| `fwidth()` / heavy AA | Often fails WebGL 1 paths — use fixed feather `~0.003` UV |
-| Loop bounds | Must be constant: `for (int i = 0; i < 12; i++)` + `if (fi >= count) break;` |
+| `texture()` / `texture2D()` | Both work; the converter maps old `texture2D(...)` and `gl_FragColor` |
+| Tuning constants | Convention: `#define` at the top for quick tuning |
+| Edge AA | Style choice for projection: fixed feather (~0.003 UV) or `1.0 / iResolution.y`, solid fills |
 | `iFrame` | `float`, not `int` |
 
 ---
@@ -40,7 +39,7 @@ Converter auto-rewrites some patterns.
 
 Final fragment source = **runtime prefix** + **WEBGL_PREAMBLE** + **shader body** + **main wrapper**.
 
-**GLSL error line is 1-based in the full compiled string**, not the textarea line in `test-shaders.js`. Expect ~30-line preamble offset.
+**GLSL error lines are your own shader's line numbers** — the converter emits `#line` directives, so there is no preamble offset.
 
 **Debug flow:**
 
@@ -56,7 +55,6 @@ Final fragment source = **runtime prefix** + **WEBGL_PREAMBLE** + **shader body*
 |-------|-------|-----|
 | `wrong operand types` on `-` | Mixed vec2/vec3 in smoothstep noise | `vec2(3.0) - 2.0 * diff` not `vec3(3) - vec2(2) * diff` |
 | `2-component` + `iResolution` | vec2 vs vec3 uniform | Use vec3 preamble (current) |
-| `'varying' : only allowed at global scope` | `in`/`out` fn params | WebGL 2 only, or refactor |
 
 ---
 

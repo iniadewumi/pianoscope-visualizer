@@ -233,9 +233,9 @@ Compare visually: https://www.shadertoy.com/view/st2BRd
 
 ## HOW-TO: Projection-friendly AA
 
-For ~15 ft projection, prefer **fixed feather** in UV space (~0.003–0.01) over `fwidth()` on WebGL 1 paths.
+For ~15 ft projection, prefer a **fixed feather** in UV space (~0.003–0.01) or `1.0 / iResolution.y` — a projector style choice (solid fills, one-pixel edges), not a limitation.
 
-When WebGL 2 available: `smoothstep(w + fwidth(d), w - fwidth(d), d)`.
+`fwidth()` is available (WebGL 2): `smoothstep(w + fwidth(d), w - fwidth(d), d)`.
 
 See IQ filtering article for adaptive supersampling (usually overkill for v1 PIANOSCOPE).
 

@@ -19,11 +19,11 @@ You are working in **pianoscope-visualizer**: Shadertoy-style GLSL fragments, mi
 3. [`howto/02-audio-reactivity.md`](howto/02-audio-reactivity.md) — **Critical:** this repo’s FFT layout is *not* classic Shadertoy.
 4. [`howto/07-anti-patterns-and-failures.md`](howto/07-anti-patterns-and-failures.md) — Avoid known failures.
 5. [`howto/10-display-text-and-sequencer.md`](howto/10-display-text-and-sequencer.md) — **Required if the task touches display text, transitions or the sequencer.**
-5. **Technique docs** (pick by task):
+6. **Technique docs** (pick by task):
    - Grid / textile / woven → [`howto/04-pattern-tiling-truchet.md`](howto/04-pattern-tiling-truchet.md)
    - Organic / mudcloth / noise → [`howto/05-iquilez-sdf-noise-warp.md`](howto/05-iquilez-sdf-noise-warp.md)
    - Building a genre shader → [`howto/06-genre-shader-recipes.md`](howto/06-genre-shader-recipes.md)
-6. [`PIANOSCOPE_SHADER_LEARNINGS.md`](../PIANOSCOPE_SHADER_LEARNINGS.md) — Full Afrotech iteration history when touching settlement/radial shaders.
+7. [`PIANOSCOPE_SHADER_LEARNINGS.md`](../PIANOSCOPE_SHADER_LEARNINGS.md) — Full Afrotech iteration history when touching settlement/radial shaders.
 
 ---
 
@@ -34,7 +34,7 @@ You are working in **pianoscope-visualizer**: Shadertoy-style GLSL fragments, mi
 | Shader key (`TEST_SHADERS`) | Status | File |
 |-----------------------------|--------|------|
 | `PIANOSCOPE Afrohouse Mudcloth Bloom` | **Removed** by the owner — last source at commit `554f5ca` | `git show 554f5ca:js/test-shaders.js` |
-| `PIANOSCOPE Afrotech Fractal Settlement` | **Documented** — architecture in learnings; re-add to `test-shaders.js` if missing | see learnings doc |
+| `PIANOSCOPE Afrotech Fractal Settlement` | **Not in the code** — documented only (architecture in learnings); re-add to `test-shaders.js` if wanted | see learnings doc |
 | `PIANOSCOPE Amapiano Kente Loom` | **Removed** by the owner — last source at commit `554f5ca` | `git show 554f5ca:js/test-shaders.js` |
 | `PIANOSCOPE 3-Step Cornrow Curves` | **Not built** | recipe in `howto/06-genre-shader-recipes.md` |
 | `PIANOSCOPE Adinkra Symbol Field Abstract` | Optional | brief only |
@@ -50,7 +50,7 @@ You are working in **pianoscope-visualizer**: Shadertoy-style GLSL fragments, mi
 
 The CRESCENDO set is deliberately flat: solid colour, smooth gradients, edges anti-aliased to one pixel (`1.0 / iResolution.y`), no fBm/value-noise surfaces. The owner rejected noise-textured versions as blotchy on the projector. Keep it that way when tuning.
 
-**Implementation order (from brief):** Afrotech → Mudcloth → Kente → Cornrow → visual approval between each.
+**Recent work** is the CRESCENDO set; Mudcloth Bloom and Kente Loom were removed by the owner.
 
 ---
 
@@ -62,8 +62,8 @@ The CRESCENDO set is deliberately flat: solid colour, smooth gradients, edges an
 [ ] mainImage() only — no precision, uniforms, or void main() in body
 [ ] iChannel0 sampled at y = 0.0 only
 [ ] Fallback motion when mic silent / denied
-[ ] #define tuning constants at top (not const float at global scope)
-[ ] Served over HTTP: npx serve .
+[ ] #define tuning constants at top (project convention)
+[ ] Served over HTTP: python3 -m http.server 8747
 [ ] Compiles clean; test mic on AND off
 [ ] Readable fullscreen; no strobe / white blowout
 ```
